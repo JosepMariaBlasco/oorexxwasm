@@ -1,0 +1,1349 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
+Date: Sun, 4 Oct 2026 12:06:15 +0200
+Subject: [PATCH 3/5] WebAssembly port, Node: RexxAPI shared between processes
+
+Under Node the API server runs as a daemon (rexx.js --orx-wasm-rxapi,
+started on first use like rxapi, outlives the session) reached over a Unix
+domain socket (rexxapi/common/platform/unix/SysNodeConnection), so external
+data queues, registrations and the macrospace are shared between WASM
+processes, as natively.  The data path writes to the socket fd directly
+and reads through a receive ring, without round trips to the JS main
+thread.  ORX_WASM_RXAPI=inprocess keeps the in-process server; it is also
+the fallback if the daemon cannot be reached.  rxqueue and rxsubcom are
+multi-call tools of the rexx executable (launchers from wasm/build-node.sh);
+getpid()/getppid() return the real process ids under Node (the daemon keys
+sessions by pid).  qualify-node-cli.sh checks queues across processes.
+---
+ CMakeLists.txt                                |  15 +-
+ common/platform/unix/SysProcess.cpp           |  31 +
+ rexxapi/client/LocalAPIManager.cpp            |  14 +
+ .../platform/unix/SysLocalAPIManager.cpp      |  42 +-
+ .../platform/unix/SysLocalAPIManager.hpp      |   4 +
+ .../platform/unix/SysNodeConnection.cpp       | 782 ++++++++++++++++++
+ .../platform/unix/SysNodeConnection.hpp       |  89 ++
+ utilities/rexx/platform/unix/rexx.cpp         |  29 +-
+ wasm/README.md                                |  16 +-
+ wasm/build-node.sh                            |   7 +-
+ wasm/rxqueue-main.cpp                         |  43 +
+ wasm/rxsubcom-main.cpp                        |  43 +
+ wasm/tests/qualify-node-cli.sh                |  13 +
+ 13 files changed, 1112 insertions(+), 16 deletions(-)
+ create mode 100644 rexxapi/common/platform/unix/SysNodeConnection.cpp
+ create mode 100644 rexxapi/common/platform/unix/SysNodeConnection.hpp
+ create mode 100644 wasm/rxqueue-main.cpp
+ create mode 100644 wasm/rxsubcom-main.cpp
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 5c639db..52e3ccb 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -682,12 +682,15 @@ else ()
+ endif ()
+ # Library definition
+ if (EMSCRIPTEN)
+-  # No rxapi daemon in a WASM process: the API server (queues, registrations,
+-  # macrospace) is linked in and reached through SysLoopbackConnection.
++  # The API server (queues, registrations, macrospace) is linked in.  Under
++  # Node it runs as a daemon (rexx.js --orx-wasm-rxapi) reached over a Unix
++  # socket (SysNodeConnection); in the browser it is used in-process through
++  # SysLoopbackConnection.
+   add_library(rexxapi STATIC
+               ${common_rexxapi_sources}
+               ${platform_rexxapi_sources}
+               ${build_rexxapi_common_platform_dir}/SysLoopbackConnection.cpp
++              ${build_rexxapi_common_platform_dir}/SysNodeConnection.cpp
+               ${build_rexxapi_server_dir}/APIServer.cpp
+               ${build_rexxapi_server_dir}/APIServerInstance.cpp
+               ${build_rexxapi_server_dir}/APIServerThread.cpp
+@@ -1067,8 +1070,12 @@ endif ()
+ add_executable(rexx_exe ${build_utilities_rexx_dir}/rexx.cpp
+                         ${platform_rexx_exe_sources})
+ if (EMSCRIPTEN)
+-  # rexxc is part of the WASM rexx executable (multi-call, see the file)
+-  target_sources(rexx_exe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/wasm/rexxc-main.cpp)
++  # rexxc, rxqueue and rxsubcom are part of the WASM rexx executable
++  # (multi-call, see wasm/rexxc-main.cpp)
++  target_sources(rexx_exe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/wasm/rexxc-main.cpp
++                                  ${CMAKE_CURRENT_SOURCE_DIR}/wasm/rxqueue-main.cpp
++                                  ${CMAKE_CURRENT_SOURCE_DIR}/wasm/rxsubcom-main.cpp)
++  target_include_directories(rexx_exe PRIVATE ${build_interpreter_platform_dir})
+ endif ()
+ # This allows the executable to have the same name as the library.
+ SET_TARGET_PROPERTIES(rexx_exe
+diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
+index 5481206..01c7232 100644
+--- a/common/platform/unix/SysProcess.cpp
++++ b/common/platform/unix/SysProcess.cpp
+@@ -269,6 +269,37 @@ EM_JS(int, wasmScriptDirectory, (char *buf, int size), {
+ });
+ #endif
+ 
++#if defined(__EMSCRIPTEN__)
++/*
++ * WASM: getpid()/getppid() return Emscripten's constants (42/41).  Under
++ * Node use the real process ids: the rxapi daemon keys sessions by pid, so
++ * all WASM processes would otherwise share one session; SysQueryProcess and
++ * friends report them too.  These override weak definitions in libc.
++ */
++EM_JS(int, wasmProcessId, (int parent), {
++    if (typeof process === 'object' && process.versions && process.versions.node)
++    {
++        return parent ? process.ppid : process.pid;
++    }
++    return parent ? 41 : 42;
++});
++
++extern "C" pid_t __syscall_getpid()
++{
++    static pid_t pid = 0;
++    if (pid == 0)
++    {
++        pid = (pid_t)wasmProcessId(0);
++    }
++    return pid;
++}
++
++extern "C" pid_t __syscall_getppid()
++{
++    return (pid_t)wasmProcessId(1);
++}
++#endif
++
+ 
+ #ifdef HAVE_KERN_PROC_ARGV
+ /**
+diff --git a/rexxapi/client/LocalAPIManager.cpp b/rexxapi/client/LocalAPIManager.cpp
+index 6c987a8..dbba146 100644
+--- a/rexxapi/client/LocalAPIManager.cpp
++++ b/rexxapi/client/LocalAPIManager.cpp
+@@ -246,7 +246,11 @@ void LocalAPIManager::establishServerConnection()
+         SysThread::sleep(50);
+ 
+         // now loop multiple times, with a sleep interval, until we finally connect.
++#if defined(__EMSCRIPTEN__)
++        int count = 500;     // the Node daemon needs longer than rxapi to start
++#else
+         int count = 200;
++#endif
+         while (count-- > 0)
+         {
+             try
+@@ -273,6 +277,16 @@ void LocalAPIManager::establishServerConnection()
+             // second delay on every launch, but that really should not happen.
+             SysThread::sleep(10);
+         }
++#if defined(__EMSCRIPTEN__)
++        // WASM under Node: the rxapi daemon could not be reached; run with the
++        // in-process server (not shared with other processes) rather than fail
++        if (SysLocalAPIManager::fallBackToInProcessServer())
++        {
++            connectionEstablished = false;
++            establishServerConnection();
++            return;
++        }
++#endif
+         throw new ServiceException(API_FAILURE, "Object REXX API Manager could not be started.  This could be due to a version conflict!");
+     }
+ }
+diff --git a/rexxapi/client/platform/unix/SysLocalAPIManager.cpp b/rexxapi/client/platform/unix/SysLocalAPIManager.cpp
+index 1b3f8d8..f727d82 100644
+--- a/rexxapi/client/platform/unix/SysLocalAPIManager.cpp
++++ b/rexxapi/client/platform/unix/SysLocalAPIManager.cpp
+@@ -51,6 +51,27 @@
+ #include "SysProcess.hpp"
+ #if defined(__EMSCRIPTEN__)
+ #include "SysLoopbackConnection.hpp"
++#include "SysNodeConnection.hpp"
++
++// WASM: use the in-process server instead of the Node rxapi daemon (browser,
++// ORX_WASM_RXAPI=inprocess, or the daemon could not be started/reached)
++bool SysLocalAPIManager::useInProcessServer = false;
++
++/**
++ * WASM: give up on the daemon and switch to the in-process server.
++ *
++ * @return true if this is a change (the caller can retry the connection).
++ */
++bool SysLocalAPIManager::fallBackToInProcessServer()
++{
++    if (useInProcessServer)
++    {
++        return false;
++    }
++    SysNodeConnection::trace("fallback to the in-process server");
++    useInProcessServer = true;
++    return true;
++}
+ #endif
+ 
+ #ifdef AIX
+@@ -77,7 +98,12 @@ int _rexxapi_fini()
+ void SysLocalAPIManager::startServerProcess()
+ {
+ #if defined(__EMSCRIPTEN__)
+-    throw new ServiceException(API_FAILURE, "rxapi service is unavailable in the WASM profile");
++    // Node: launch `rexx.js --orx-wasm-rxapi` detached (see SysNodeConnection);
++    // anywhere else, or if that fails, use the in-process server
++    if (useInProcessServer || !SysNodeConnection::available() || !SysNodeConnection::startDaemon())
++    {
++        useInProcessServer = true;
++    }
+ #else
+ #define RXAPI "rxapi"
+ #define DOTDOT_BIN_RXAPI "../bin/" RXAPI
+@@ -196,8 +222,18 @@ void SysLocalAPIManager::setActiveSessionQueue(QueueHandle sessionQueue)
+ ApiConnection *SysLocalAPIManager::newClientConnection()
+ {
+ #if defined(__EMSCRIPTEN__)
+-    // no rxapi daemon in a WASM process: talk to the server linked in-process
+-    return new SysLoopbackConnection();
++    if (useInProcessServer || !SysNodeConnection::available())
++    {
++        // browser (or fallback): the server linked in-process
++        return new SysLoopbackConnection();
++    }
++    SysNodeSocketConnection *nodeConnection = new SysNodeSocketConnection();
++    if (!nodeConnection->connect(SysNodeConnection::serviceName()))
++    {
++        delete nodeConnection;
++        throw new ServiceException(CONNECTION_FAILURE, "Failure connecting to rxapi server");
++    }
++    return nodeConnection;
+ #endif
+     SysLocalSocketConnection *connection = new SysLocalSocketConnection();
+ 
+diff --git a/rexxapi/client/platform/unix/SysLocalAPIManager.hpp b/rexxapi/client/platform/unix/SysLocalAPIManager.hpp
+index 339f053..87ca6c7 100644
+--- a/rexxapi/client/platform/unix/SysLocalAPIManager.hpp
++++ b/rexxapi/client/platform/unix/SysLocalAPIManager.hpp
+@@ -48,6 +48,10 @@ public:
+     static bool getActiveSessionQueue(QueueHandle &sessionQueue);
+     static void setActiveSessionQueue(QueueHandle sessionQueue);
+     static ApiConnection *newClientConnection();
++#if defined(__EMSCRIPTEN__)
++    static bool fallBackToInProcessServer();
++    static bool useInProcessServer;
++#endif
+ };
+ 
+ #endif
+diff --git a/rexxapi/common/platform/unix/SysNodeConnection.cpp b/rexxapi/common/platform/unix/SysNodeConnection.cpp
+new file mode 100644
+index 0000000..e2bbb47
+--- /dev/null
++++ b/rexxapi/common/platform/unix/SysNodeConnection.cpp
+@@ -0,0 +1,782 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under      */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:          */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* WASM under Node: RexxAPI over a Unix domain socket (client and daemon).    */
++/*                                                                            */
++/* Native ooRexx processes share queues, registrations and the macrospace     */
++/* through the rxapi daemon.  In the WASM build each process used to have its */
++/* own in-process server (SysLoopbackConnection), so a child `rexx` or        */
++/* `rxqueue` could not see the session queue of its parent (RXQUEUESESSION is */
++/* a server handle).  Under Node we now do what native does: the same        */
++/* rexx.js started as `rexx.js --orx-wasm-rxapi` is the daemon, listening on */
++/* a Unix socket next to the native one (".ooRexx-V.R.M-wasm-USER.service"),  */
++/* and clients connect to it; the daemon is launched on first use, detached. */
++/*                                                                            */
++/* Sockets live on the JS main thread (Node's net is asynchronous and needs  */
++/* the event loop, which is free: the interpreter runs on a pthread).        */
++/* Connect, listen, accept and close are proxied to the main thread with     */
++/* emscripten_proxy_sync_with_ctx(); the JS side completes them              */
++/* asynchronously and calls orxNetFinish(ctx), releasing the blocked caller. */
++/* The data path avoids those round trips (each costs a postMessage wakeup  */
++/* of the main thread): write() calls write(2) on the socket's host fd       */
++/* directly from the calling thread (fs.writeSync), and the main thread      */
++/* copies incoming data into a per-connection receive ring in wasm memory    */
++/* (NodeRing) that read() consumes, sleeping on a futex when it is empty.    */
++/* Thus read() blocks like recv(), one server thread per connection works as */
++/* in the native APIServer, and blocking PULLs only block their own thread.  */
++/*                                                                            */
++/* Note: EM_JS bodies lose backslashes: no escapes in the JS code here.      */
++/*                                                                            */
++/* Fallbacks: in the browser, or with ORX_WASM_RXAPI=inprocess, or when the  */
++/* daemon cannot be reached, the in-process server is used as before.         */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++
++#if defined(__EMSCRIPTEN__)
++
++#include "SysNodeConnection.hpp"
++#include "APIServer.hpp"
++#include "ServiceException.hpp"
++#include "rexx.h"
++#include <emscripten.h>
++#include <emscripten/proxying.h>
++#include <emscripten/threading.h>
++#include <stdlib.h>
++#include <stdio.h>
++#include <stdint.h>
++#include <string.h>
++#include <unistd.h>
++
++namespace
++{
++// operation codes, shared with the JS side
++enum
++{
++    OP_CONNECT = 1,
++    OP_READ = 2,
++    OP_WRITE = 3,
++    OP_CLOSE = 4,
++    OP_LISTEN = 5,
++    OP_ACCEPT = 6,
++    OP_CLOSE_SERVER = 7,
++    OP_START_DAEMON = 8,
++    OP_PUMP = 9
++};
++
++// one proxied operation; all fields 32 bits (wasm32), read by JS by offset:
++// op 0, id 4, path 8, buf 12, size 16, result 20, buf2 24, size2 28
++struct NodeOp
++{
++    int32_t op;
++    int32_t id;
++    const char *path;
++    void *buf;
++    int32_t size;
++    int32_t result;
++    void *buf2;
++    int32_t size2;
++};
++}
++
++/*
++ * Receive ring of a connection: the main thread copies incoming socket data
++ * into it (single producer) and the thread reading the connection consumes
++ * it (single consumer) without a round trip to the main thread.  head and
++ * tail are byte counters (mod 2^32); seq changes (and is notified) on every
++ * producer update, so a reader can sleep on it without missing one.
++ * Layout read by JS by offset: seq 0, head 4, tail 8, state 12, data 16.
++ */
++#define NODE_RING_SIZE 65536          // power of two
++#define NODE_RING_CLOSED  1           // end of file / error: no more data
++#define NODE_RING_PENDING 2           // more data waits on the JS side (ring was full)
++struct NodeRing
++{
++    int32_t seq;
++    uint32_t head;
++    uint32_t tail;
++    int32_t state;
++    uint8_t data[NODE_RING_SIZE];
++};
++
++
++/**
++ * Called by the JS side (on the main thread) when an operation is complete.
++ */
++extern "C" EMSCRIPTEN_KEEPALIVE void orxNetFinish(em_proxying_ctx *ctx)
++{
++    emscripten_proxy_finish(ctx);
++}
++
++
++// Start operation `op` on the main thread; ctx is finished when it is done
++// (possibly later, from an event handler).  ctx is 0 for a synchronous call
++// made on the main thread itself (only used for OP_CLOSE).
++EM_JS(void, orxNetStart, (em_proxying_ctx *ctx, void *op), {
++    var net = require('net');
++    var fs = require('fs');
++    var st = globalThis.__orxNet;
++    if (!st)
++    {
++        st = globalThis.__orxNet = { next: 1, socks: new Map(), servers: new Map() };
++    }
++    var i32 = function() { return new Int32Array(wasmMemory.buffer); };
++    var p = op >> 2;
++    var code = i32()[p];
++    var id = i32()[p + 1];
++    var done = function(result) {
++        i32()[p + 5] = result;
++        if (ctx) _orxNetFinish(ctx);
++    };
++
++    // register a connected socket, return its id
++    var addSocket = function(sock) {
++        var s = { sock: sock, chunks: [], closed: false, reader: null, ring: 0 };
++        var sid = st.next++;
++        st.socks.set(sid, s);
++        // deliver data to a waiting reader (one per connection at a time)
++        var serve = function() {
++            var r = s.reader;
++            if (!r) return;
++            if (s.chunks.length > 0)
++            {
++                var c = s.chunks[0];
++                var n = Math.min(r.size, c.length);
++                new Uint8Array(wasmMemory.buffer).set(c.subarray(0, n), r.buf);
++                if (n === c.length) s.chunks.shift(); else s.chunks[0] = c.subarray(n);
++                s.reader = null;
++                r.finish(n);
++            }
++            else if (s.closed)
++            {
++                s.reader = null;
++                r.finish(0);
++            }
++        };
++        // copy pending chunks into the receive ring (NodeRing), if attached
++        var pump = function() {
++            var r = s.ring;
++            if (!r) return;
++            var m = i32(), q = r >> 2, size = 65536;
++            var head = Atomics.load(m, q + 1) >>> 0;
++            var tail = Atomics.load(m, q + 2) >>> 0;
++            var u8 = new Uint8Array(wasmMemory.buffer);
++            while (s.chunks.length > 0)
++            {
++                var room = size - ((head - tail) >>> 0);
++                if (room <= 0) break;
++                var c = s.chunks[0];
++                var n = Math.min(room, c.length);
++                var at = head & (size - 1);
++                var first = Math.min(n, size - at);
++                u8.set(c.subarray(0, first), r + 16 + at);
++                if (n > first) u8.set(c.subarray(first, n), r + 16);
++                head = (head + n) >>> 0;
++                if (n === c.length) s.chunks.shift(); else s.chunks[0] = c.subarray(n);
++            }
++            Atomics.store(m, q + 1, head | 0);
++            var state = (s.closed && s.chunks.length === 0 ? 1 : 0) | (s.chunks.length > 0 ? 2 : 0);
++            Atomics.store(m, q + 3, state);
++            Atomics.add(m, q, 1);
++            Atomics.notify(m, q);
++        };
++        s.pump = pump;
++        var arrive = function() { if (s.ring) pump(); else serve(); };
++        s.serve = serve;
++        sock.on('data', function(d) { s.chunks.push(d); arrive(); });
++        sock.on('end', function() { s.closed = true; arrive(); });
++        sock.on('close', function() { s.closed = true; arrive(); });
++        sock.on('error', function() { s.closed = true; arrive(); });
++        return sid;
++    };
++
++    switch (code)
++    {
++        case 1:                                     // CONNECT path
++        {
++            var path = UTF8ToString(i32()[p + 2]);
++            var sock = net.createConnection(path);
++            var settled = false;
++            sock.once('connect', function() {
++                if (settled) return;
++                settled = true;
++                i32()[p + 7] = (sock._handle && sock._handle.fd >= 0) ? sock._handle.fd : -1;
++                var sid = addSocket(sock);
++                var a = st.socks.get(sid);
++                a.ring = i32()[p + 3];
++                a.pump();
++                done(sid);
++            });
++            sock.once('error', function() {
++                if (settled) return;
++                settled = true;
++                sock.destroy();
++                done(-1);
++            });
++            return;
++        }
++        case 2:                                     // READ id buf size
++        {
++            var s = st.socks.get(id);
++            if (!s) { done(-1); return; }
++            s.reader = { buf: i32()[p + 3], size: i32()[p + 4], finish: done };
++            s.serve();
++            return;
++        }
++        case 3:                                     // WRITE id buf size [buf2 size2]
++        {
++            var s = st.socks.get(id);
++            if (!s || s.closed || s.sock.destroyed) { done(-1); return; }
++            var u8 = new Uint8Array(wasmMemory.buffer);
++            var b1 = i32()[p + 3], n1 = i32()[p + 4], b2 = i32()[p + 6], n2 = i32()[p + 7];
++            var data = Buffer.alloc(n1 + n2);
++            data.set(u8.subarray(b1, b1 + n1), 0);
++            if (n2 > 0) data.set(u8.subarray(b2, b2 + n2), n1);
++            s.sock.write(data, function(err) { done(err ? -1 : n1 + n2); });
++            return;
++        }
++        case 9:                                     // PUMP id: refill the ring
++        {
++            var s = st.socks.get(id);
++            if (!s || !s.ring) { done(-1); return; }
++            s.pump();
++            done(0);
++            return;
++        }
++        case 4:                                     // CLOSE id
++        {
++            var s = st.socks.get(id);
++            if (s) { st.socks.delete(id); s.ring = 0; s.sock.destroy(); }
++            done(0);
++            return;
++        }
++        case 5:                                     // LISTEN path
++        {
++            var path = UTF8ToString(i32()[p + 2]);
++            var lock = path + '.lock';
++            var listen = function() {
++                // single daemon per service: a lock file holding our pid
++                try
++                {
++                    var fd = fs.openSync(lock, 'wx', 0o600);
++                    fs.writeSync(fd, String(process.pid));
++                    fs.closeSync(fd);
++                }
++                catch (e)
++                {
++                    var other = 0;
++                    try { other = parseInt(fs.readFileSync(lock, 'utf8'), 10) || 0; } catch (e2) {}
++                    // nobody is listening (the probe failed): the lock only
++                    // counts if its owner is a live process (not a zombie,
++                    // which kill(pid, 0) still reports) that is still
++                    // starting up, i.e. the lock is recent
++                    var alive = false;
++                    if (other > 0 && other !== process.pid)
++                    {
++                        try { process.kill(other, 0); alive = true; } catch (e3) { alive = e3.code === 'EPERM'; }
++                        try
++                        {
++                            // "pid (comm) S ...": the state follows the last ')'
++                            // (no regex: EM_JS drops backslashes)
++                            var stat = fs.readFileSync('/proc/' + other + '/stat', 'utf8');
++                            if (stat.charAt(stat.lastIndexOf(')') + 2) === 'Z') alive = false;
++                        }
++                        catch (e5) {}
++                        try { if (Date.now() - fs.statSync(lock).mtimeMs > 10000) alive = false; }
++                        catch (e6) {}
++                    }
++                    if (alive) { done(0); return; }
++                    try { fs.writeFileSync(lock, String(process.pid), { mode: 0o600 }); }
++                    catch (e4) { done(-1); return; }
++                }
++                try { fs.unlinkSync(path); } catch (e) {}
++                var srv = { server: null, pending: [], waiter: null, path: path, lock: lock };
++                var server = net.createServer(function(sock) {
++                    var sid = addSocket(sock);
++                    if (srv.waiter) { var w = srv.waiter; srv.waiter = null; w(sid); }
++                    else srv.pending.push(sid);
++                });
++                srv.server = server;
++                server.once('error', function() {
++                    try { fs.unlinkSync(lock); } catch (e) {}
++                    done(-1);
++                });
++                server.listen(path, function() {
++                    try { fs.chmodSync(path, 0o600); } catch (e) {}
++                    var ino = 0;
++                    try { ino = fs.statSync(path).ino; } catch (e) {}
++                    // if our socket file disappears or is replaced, nobody can
++                    // reach us any more: go away instead of lingering
++                    var timer = setInterval(function() {
++                        var gone = true;
++                        try { gone = fs.statSync(path).ino !== ino; } catch (e) {}
++                        if (gone) process.exit(0);
++                    }, 30000);
++                    if (timer.unref) timer.unref();
++                    var sid = st.next++;
++                    st.servers.set(sid, srv);
++                    done(sid);
++                });
++            };
++            // is a daemon already answering on this path?
++            var probe = net.createConnection(path);
++            probe.once('connect', function() { probe.destroy(); done(0); });
++            probe.once('error', function() { probe.destroy(); listen(); });
++            return;
++        }
++        case 6:                                     // ACCEPT server-id
++        {
++            var srv = st.servers.get(id);
++            if (!srv) { done(-1); return; }
++            var withFd = function(sid) {
++                var a = st.socks.get(sid);
++                i32()[p + 7] = (a && a.sock._handle && a.sock._handle.fd >= 0) ? a.sock._handle.fd : -1;
++                if (a) { a.ring = i32()[p + 3]; a.pump(); }
++                done(sid);
++            };
++            if (srv.pending.length > 0) { withFd(srv.pending.shift()); return; }
++            srv.waiter = withFd;
++            return;
++        }
++        case 7:                                     // CLOSE_SERVER server-id
++        {
++            var srv = st.servers.get(id);
++            if (srv)
++            {
++                st.servers.delete(id);
++                try { srv.server.close(); } catch (e) {}
++                try { fs.unlinkSync(srv.path); } catch (e) {}
++                try { fs.unlinkSync(srv.lock); } catch (e) {}
++                if (srv.waiter) { var w = srv.waiter; srv.waiter = null; w(-1); }
++            }
++            done(0);
++            return;
++        }
++        case 8:                                     // START_DAEMON
++        {
++            try
++            {
++                var script = (typeof scriptDirectory === 'string' ? scriptDirectory : "") + 'rexx.js';
++                if (!fs.existsSync(script)) { done(0); return; }
++                // with ORX_WASM_RXAPI_DEBUG the daemon's trace goes to a log
++                var err = 'ignore';
++                if (process.env.ORX_WASM_RXAPI_DEBUG)
++                {
++                    try { err = fs.openSync(require('os').tmpdir() + '/orx-wasm-rxapi-debug.log', 'a'); }
++                    catch (e) { err = 'ignore'; }
++                }
++                var child = require('child_process').spawn(process.execPath,
++                    [script, '--orx-wasm-rxapi'],
++                    { detached: true, stdio: ['ignore', 'ignore', err], cwd: '/' });
++                if (typeof err === 'number') fs.closeSync(err);
++                child.on('error', function() {});
++                child.unref();
++                done(1);
++            }
++            catch (e)
++            {
++                done(0);
++            }
++            return;
++        }
++    }
++    done(-1);
++});
++
++
++namespace
++{
++void runOnMain(em_proxying_ctx *ctx, void *arg)
++{
++    orxNetStart(ctx, (NodeOp *)arg);
++}
++
++/**
++ * Run a socket operation on the main thread and wait for its completion.
++ */
++int32_t nodeOp(NodeOp &op)
++{
++    op.result = -1;
++    if (emscripten_is_main_runtime_thread())
++    {
++        // the main thread cannot wait for its own event loop; only the
++        // synchronous operations can be done here (e.g. closing connections
++        // from the exit-time destructor)
++        if (op.op == OP_CLOSE || op.op == OP_CLOSE_SERVER)
++        {
++            orxNetStart(NULL, &op);
++            return op.result;
++        }
++        return -1;
++    }
++    if (!emscripten_proxy_sync_with_ctx(emscripten_proxy_get_system_queue(),
++                                        emscripten_main_runtime_thread_id(), runOnMain, &op))
++    {
++        return -1;
++    }
++    return op.result;
++}
++}
++
++
++/**
++ * Write buf (+ buf2) to the host socket fd from the calling pthread, with
++ * synchronous fs.writeSync (the socket is non-blocking: on EAGAIN wait a
++ * little and retry).  Returns the bytes written or -1.
++ */
++EM_JS(int, orxNetWriteDirect, (int fd, void *buf, int n1, void *buf2, int n2), {
++    var fs = (process.getBuiltinModule || require)('fs');
++    var nap = globalThis.__orxNap || (globalThis.__orxNap = new Int32Array(new SharedArrayBuffer(4)));
++    var u8 = new Uint8Array(wasmMemory.buffer);
++    var parts = [[buf, n1], [buf2, n2]];
++    for (var k = 0; k < 2; k++)
++    {
++        var off = parts[k][0], left = parts[k][1];
++        while (left > 0)
++        {
++            try
++            {
++                var w = fs.writeSync(fd, u8, off, left);
++                off += w; left -= w;
++            }
++            catch (e)
++            {
++                if (e.code !== 'EAGAIN') return -1;
++                Atomics.wait(nap, 0, 0, 0.2);
++            }
++        }
++    }
++    return n1 + n2;
++});
++
++
++/**
++ * Node with the net module?  Checked once.
++ */
++EM_JS(int, orxNetAvailable, (), {
++    return (typeof process === 'object' && process.versions && process.versions.node &&
++            typeof require === 'function') ? 1 : 0;
++});
++
++bool SysNodeConnection::available()
++{
++    static int avail = -1;
++    if (avail < 0)
++    {
++        const char *mode = getenv("ORX_WASM_RXAPI");
++        avail = (mode != NULL && strcmp(mode, "inprocess") == 0) ? 0 : orxNetAvailable();
++    }
++    return avail == 1;
++}
++
++
++// the service path, computed from the host environment (the MEMFS build does
++// not see it): XDG_RUNTIME_DIR, else TMPDIR, else /tmp, as native rxapi does
++EM_JS(int, orxNetServiceName, (char *buf, int size, int ver, int rel, int mod), {
++    var fs = require('fs');
++    var os = require('os');
++    var dir = '/tmp';
++    var list = [process.env.XDG_RUNTIME_DIR, process.env.TMPDIR];
++    for (var i = 0; i < list.length; i++)
++    {
++        var d = list[i];
++        try { if (d && d.length < 80 && fs.statSync(d).isDirectory()) { dir = d; break; } }
++        catch (e) {}
++    }
++    var user;
++    try { user = os.userInfo().username; } catch (e) { user = String(process.getuid ? process.getuid() : 0); }
++    var name = dir + '/.ooRexx-' + ver + '.' + rel + '.' + mod + '-wasm-' + user + '.service';
++    if (lengthBytesUTF8(name) >= size) return 0;
++    stringToUTF8(name, buf, size);
++    return 1;
++});
++
++const char *SysNodeConnection::serviceName()
++{
++    static char *name = NULL;
++    if (name == NULL)
++    {
++        char buffer[512];
++        if (!orxNetServiceName(buffer, sizeof(buffer), ORX_VER, ORX_REL, ORX_MOD))
++        {
++            return NULL;
++        }
++        name = strdup(buffer);
++    }
++    return name;
++}
++
++
++void SysNodeConnection::trace(const char *what, const char *detail, long value)
++{
++    static int enabled = -1;
++    if (enabled < 0)
++    {
++        enabled = getenv("ORX_WASM_RXAPI_DEBUG") != NULL ? 1 : 0;
++    }
++    if (enabled)
++    {
++        fprintf(stderr, "[rxapi-wasm %d] %s %s %ld\n", (int)getpid(), what, detail, value);
++    }
++}
++
++
++bool SysNodeConnection::startDaemon()
++{
++    NodeOp op = { OP_START_DAEMON, 0, NULL, NULL, 0, 0, NULL, 0 };
++    int32_t result = nodeOp(op);
++    trace("start daemon", "", result);
++    return result == 1;
++}
++
++
++bool SysNodeSocketConnection::connect(const char *path)
++{
++    if (path == NULL)
++    {
++        errcode = CSERROR_CONNX_FAILED;
++        return false;
++    }
++    if (ring == NULL)
++    {
++        ring = (NodeRing *)calloc(1, sizeof(NodeRing));
++    }
++    NodeOp op = { OP_CONNECT, 0, path, ring, 0, 0, NULL, 0 };
++    int32_t result = nodeOp(op);
++    SysNodeConnection::trace("connect", path, result);
++    if (result <= 0)
++    {
++        errcode = CSERROR_CONNX_FAILED;
++        return false;
++    }
++    id = result;
++    fd = op.size2;
++    errcode = CSERROR_OK;
++    return true;
++}
++
++
++bool SysNodeSocketConnection::read(void *buf, size_t bufsize, size_t *bytesread)
++{
++    *bytesread = 0;
++    if (id == 0)
++    {
++        errcode = CSERROR_IO_FAILED;
++        return false;
++    }
++    if (bufsize == 0)
++    {
++        return true;
++    }
++    int32_t result;
++    if (ring != NULL && !emscripten_is_main_runtime_thread())
++    {
++        result = readRing(buf, bufsize);
++    }
++    else
++    {
++        NodeOp op = { OP_READ, id, NULL, buf, (int32_t)bufsize, 0, NULL, 0 };
++        result = nodeOp(op);
++    }
++    if (result < 0)
++    {
++        errcode = CSERROR_IO_FAILED;
++        return false;
++    }
++    // 0 is end of file, like recv(); the caller handles it
++    *bytesread = (size_t)result;
++    errcode = CSERROR_OK;
++    return true;
++}
++
++
++/**
++ * Read from the receive ring: what is there (up to bufsize), else sleep until
++ * the main thread adds data.  0 at end of file, -1 on failure.
++ */
++int SysNodeSocketConnection::readRing(void *buf, size_t bufsize)
++{
++    for (;;)
++    {
++        int32_t seq = __atomic_load_n(&ring->seq, __ATOMIC_SEQ_CST);
++        uint32_t head = __atomic_load_n(&ring->head, __ATOMIC_SEQ_CST);
++        uint32_t tail = ring->tail;
++        uint32_t avail = head - tail;
++        if (avail > 0)
++        {
++            uint32_t n = avail < bufsize ? avail : (uint32_t)bufsize;
++            uint32_t at = tail & (NODE_RING_SIZE - 1);
++            uint32_t first = n < NODE_RING_SIZE - at ? n : NODE_RING_SIZE - at;
++            memcpy(buf, ring->data + at, first);
++            if (n > first)
++            {
++                memcpy((char *)buf + first, ring->data, n - first);
++            }
++            __atomic_store_n(&ring->tail, tail + n, __ATOMIC_SEQ_CST);
++            return (int32_t)n;
++        }
++        int32_t state = __atomic_load_n(&ring->state, __ATOMIC_SEQ_CST);
++        if (state & NODE_RING_PENDING)
++        {
++            // the ring was full: have the main thread move the rest in
++            NodeOp op = { OP_PUMP, id, NULL, NULL, 0, 0, NULL, 0 };
++            if (nodeOp(op) < 0)
++            {
++                return -1;
++            }
++            continue;
++        }
++        if (state & NODE_RING_CLOSED)
++        {
++            return 0;
++        }
++        // sleep until the producer changes seq (the timeout is only a safety net)
++        emscripten_futex_wait(&ring->seq, (uint32_t)seq, 1000.0);
++    }
++}
++
++
++bool SysNodeSocketConnection::write(void *buf, size_t bufsize, size_t *byteswritten)
++{
++    return write(buf, bufsize, NULL, 0, byteswritten);
++}
++
++
++bool SysNodeSocketConnection::write(void *buf, size_t bufsize, void *buf2, size_t buf2size, size_t *byteswritten)
++{
++    *byteswritten = 0;
++    if (id == 0)
++    {
++        errcode = CSERROR_IO_FAILED;
++        return false;
++    }
++    int32_t result;
++    if (fd >= 0 && !emscripten_is_main_runtime_thread())
++    {
++        // write(2) straight from this thread: no round trip to the main
++        // thread (the main thread only ever reads this socket)
++        result = orxNetWriteDirect(fd, buf, (int32_t)bufsize, buf2, (int32_t)buf2size);
++    }
++    else
++    {
++        NodeOp op = { OP_WRITE, id, NULL, buf, (int32_t)bufsize, 0, buf2, (int32_t)buf2size };
++        result = nodeOp(op);
++    }
++    if (result < 0)
++    {
++        errcode = CSERROR_IO_FAILED;
++        return false;
++    }
++    *byteswritten = (size_t)result;
++    errcode = CSERROR_OK;
++    return true;
++}
++
++
++bool SysNodeSocketConnection::disconnect()
++{
++    if (id != 0)
++    {
++        NodeOp op = { OP_CLOSE, id, NULL, NULL, 0, 0, NULL, 0 };
++        nodeOp(op);
++        id = 0;
++    }
++    // the JS side no longer writes into the ring once closed
++    free(ring);
++    ring = NULL;
++    return true;
++}
++
++
++int SysNodeServerConnectionManager::bind(const char *path)
++{
++    if (path == NULL)
++    {
++        errcode = CSERROR_OPEN_FAILED;
++        return -1;
++    }
++    NodeOp op = { OP_LISTEN, 0, path, NULL, 0, 0, NULL, 0 };
++    int32_t result = nodeOp(op);
++    SysNodeConnection::trace("listen", path, result);
++    if (result > 0)
++    {
++        id = result;
++        errcode = CSERROR_OK;
++        return 1;
++    }
++    errcode = CSERROR_OPEN_FAILED;
++    return result == 0 ? 0 : -1;
++}
++
++
++ApiConnection *SysNodeServerConnectionManager::acceptConnection()
++{
++    if (id == 0)
++    {
++        return NULL;
++    }
++    NodeRing *ring = (NodeRing *)calloc(1, sizeof(NodeRing));
++    NodeOp op = { OP_ACCEPT, id, NULL, ring, 0, 0, NULL, 0 };
++    int32_t result = nodeOp(op);
++    if (result <= 0)
++    {
++        free(ring);
++        errcode = CSERROR_CONNX_FAILED;
++        return NULL;
++    }
++    return new SysNodeSocketConnection(result, op.size2, ring);
++}
++
++
++bool SysNodeServerConnectionManager::disconnect()
++{
++    if (id != 0)
++    {
++        NodeOp op = { OP_CLOSE_SERVER, id, NULL, NULL, 0, 0, NULL, 0 };
++        nodeOp(op);
++        id = 0;
++    }
++    return true;
++}
++
++
++/**
++ * The daemon: `rexx.js --orx-wasm-rxapi`.  Equivalent of the native rxapi
++ * main (server/platform/unix/APIService.cpp), with the Node transport.
++ * Exits quietly if another daemon already serves this user.
++ */
++int orxWasmRxapiMain()
++{
++    if (!SysNodeConnection::available())
++    {
++        return 1;
++    }
++    SysNodeServerConnectionManager *manager = new SysNodeServerConnectionManager();
++    int bound = manager->bind(SysNodeConnection::serviceName());
++    if (bound != 1)
++    {
++        delete manager;
++        return bound == 0 ? 0 : 1;
++    }
++    APIServer server;
++    server.initServer(manager);
++    try
++    {
++        server.listenForConnections();
++    }
++    catch (ServiceException *e)
++    {
++        delete e;
++    }
++    server.terminateServer();      // deletes the manager (socket and lock file removed)
++    return 0;
++}
++
++#endif
+diff --git a/rexxapi/common/platform/unix/SysNodeConnection.hpp b/rexxapi/common/platform/unix/SysNodeConnection.hpp
+new file mode 100644
+index 0000000..252a7ea
+--- /dev/null
++++ b/rexxapi/common/platform/unix/SysNodeConnection.hpp
+@@ -0,0 +1,89 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under      */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:          */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* WASM under Node: RexxAPI connections over a Unix domain socket, using      */
++/* Node's net module on the JS main thread.  The interpreter (and the rxapi   */
++/* daemon) run on pthreads; each operation is proxied to the main thread and  */
++/* the calling thread blocks until the asynchronous socket operation is done  */
++/* (emscripten_proxy_sync_with_ctx), so the protocol code and APIServer are   */
++/* used unchanged.  See SysNodeConnection.cpp.                                */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++
++#ifndef SysNodeConnection_Included
++#define SysNodeConnection_Included
++
++#if defined(__EMSCRIPTEN__)
++
++#include <stddef.h>
++#include <stdlib.h>
++#include "CSStream.hpp"
++
++class SysNodeConnection
++{
++public:
++    // true when running under Node with the net module (not in a browser)
++    static bool available();
++    // path of the WASM rxapi daemon socket for this user
++    static const char *serviceName();
++    // launch the daemon (detached); false if it cannot be launched
++    static bool startDaemon();
++    // ORX_WASM_RXAPI_DEBUG set: trace connection events to stderr
++    static void trace(const char *what, const char *detail = "", long value = 0);
++};
++
++
++struct NodeRing;           // receive ring, see SysNodeConnection.cpp
++
++class SysNodeSocketConnection : public ApiConnection
++{
++public:
++    SysNodeSocketConnection() : ApiConnection(), id(0), fd(-1), ring(NULL) { }
++    SysNodeSocketConnection(int i, int f, NodeRing *r) : ApiConnection(), id(i), fd(f), ring(r) { }
++    ~SysNodeSocketConnection() override { disconnect(); }
++
++    bool connect(const char *path);
++    bool read(void *buf, size_t bufsize, size_t *bytesread) override;
++    bool write(void *buf, size_t bufsize, size_t *byteswritten) override;
++    bool write(void *buf, size_t bufsize, void *buf2, size_t buf2size, size_t *byteswritten) override;
++    bool disconnect() override;
++
++protected:
++    int id;                // JS-side socket id, 0 when not connected
++    int fd;                // its host file descriptor (-1: unknown), written
++                           // directly from the calling thread
++    NodeRing *ring;        // receive ring filled by the main thread
++
++    int readRing(void *buf, size_t bufsize);
++};
++
++
++class SysNodeServerConnectionManager : public ServerConnectionManager
++{
++public:
++    SysNodeServerConnectionManager() : ServerConnectionManager(), id(0) { }
++    ~SysNodeServerConnectionManager() override { disconnect(); }
++
++    // 1 listening, 0 another live daemon owns the service, -1 error
++    int bind(const char *path);
++    ApiConnection *acceptConnection() override;
++    bool disconnect() override;
++
++protected:
++    int id;                // JS-side server id
++};
++
++
++// entry point of the daemon mode of the WASM rexx executable
++int orxWasmRxapiMain();
++
++#endif
++#endif
+diff --git a/utilities/rexx/platform/unix/rexx.cpp b/utilities/rexx/platform/unix/rexx.cpp
+index 6d0b5ff..e78f195 100644
+--- a/utilities/rexx/platform/unix/rexx.cpp
++++ b/utilities/rexx/platform/unix/rexx.cpp
+@@ -55,8 +55,14 @@
+ #include <oorexxapi.h>
+ 
+ #if defined(__EMSCRIPTEN__)
+-// rexxc is linked into the WASM rexx executable (see wasm/rexxc-main.cpp)
++// rexxc, rxqueue and rxsubcom are linked into the WASM rexx executable
++// (multi-call, see wasm/rexxc-main.cpp)
+ int orxWasmRexxcMain(int argc, char **argv);
++int orxWasmRxqueueMain(int argc, char **argv);
++int orxWasmRxsubcomMain(int argc, char **argv, char **envp);
++extern char **environ;
++// the WASM rxapi daemon (rexxapi/common/platform/unix/SysNodeConnection.cpp)
++int orxWasmRxapiMain();
+ #endif
+ 
+ int main (int argc, char **argv) {
+@@ -84,10 +90,27 @@ int main (int argc, char **argv) {
+     char          overrideString[512] = ""; // "::OPTIONS" directive string
+ 
+ #if defined(__EMSCRIPTEN__)
+-    if (argc > 1 && strcmp(argv[1], "--orx-wasm-rexxc") == 0)
++    if (argc > 1 && strncmp(argv[1], "--orx-wasm-", 11) == 0)
+     {
++        const char *tool = argv[1] + 11;
+         argv[1] = argv[0];
+-        return orxWasmRexxcMain(argc - 1, argv + 1);
++        if (strcmp(tool, "rexxc") == 0)
++        {
++            return orxWasmRexxcMain(argc - 1, argv + 1);
++        }
++        if (strcmp(tool, "rxqueue") == 0)
++        {
++            return orxWasmRxqueueMain(argc - 1, argv + 1);
++        }
++        if (strcmp(tool, "rxsubcom") == 0)
++        {
++            return orxWasmRxsubcomMain(argc - 1, argv + 1, environ);
++        }
++        if (strcmp(tool, "rxapi") == 0)
++        {
++            return orxWasmRxapiMain();
++        }
++        argv[1] = (char *)tool - 11;           // unknown: leave it to Rexx
+     }
+ #endif
+ 
+diff --git a/wasm/README.md b/wasm/README.md
+index 2f537c3..68af31d 100644
+--- a/wasm/README.md
++++ b/wasm/README.md
+@@ -13,9 +13,11 @@ transport for stream sockets.
+ * no curses / orxncurses;
+ * external commands: under Node run as host processes (`child_process`); in
+   the browser they fail closed (RC 127);
+-* no external rxapi daemon: the API server (external data queues, function
+-  and subcom registration, macrospace) is linked in and reached through an
+-  in-process transport (`rexxapi/common/platform/unix/SysLoopbackConnection`);
++* RexxAPI (external data queues, function and subcom registration,
++  macrospace): under Node a per-user daemon shared by all WASM processes
++  (`rexx.js --orx-wasm-rxapi`, `SysNodeConnection`); in the browser the server
++  is linked in and reached through an in-process transport
++  (`SysLoopbackConnection`);
+ * user identity: Emscripten has no passwd database, so `getpwnam()` and
+   `getpwuid()` are wrapped to return the user the process runs as (the host
+   user under Node, the synthetic user `wasm` in the browser), for `USERID()`,
+@@ -103,6 +105,14 @@ entry of the same `rexx.js` (`wasm/rexxc-main.cpp`).  Error numbers seen by
+ Rexx programs (RC of CD, stream `ERROR:n`, SysMkDir, ...) are the Linux ones,
+ not the WASI ones of the Emscripten libc (`HOST_ERRNO`).
+ 
++The RexxAPI is shared by all WASM processes of a user, as natively: the API
++server runs as a daemon (`rexx.js --orx-wasm-rxapi`, started on first use,
++Unix socket `$XDG_RUNTIME_DIR|$TMPDIR|/tmp/.ooRexx-5.3.0-wasm-USER.service`)
++that outlives the session like `rxapi`.  `ORX_WASM_RXAPI=inprocess` keeps the
++server in-process (not shared), which is also the fallback when the daemon
++cannot be reached; `ORX_WASM_RXAPI_DEBUG=1` traces the transport.
++`bin-node/rxqueue` and `bin-node/rxsubcom` are multi-call entries as well.
++
+     ./wasm/build-node.sh /tmp/oorexx-wasm-build
+     ./wasm/tests/qualify-node-cli.sh /tmp/oorexx-wasm-build/bin-node
+ 
+diff --git a/wasm/build-node.sh b/wasm/build-node.sh
+index c30f77e..e693ea1 100755
+--- a/wasm/build-node.sh
++++ b/wasm/build-node.sh
+@@ -37,13 +37,14 @@
+ #/*----------------------------------------------------------------------------*/
+ # Relink the WASM runtime (no recompilation of the interpreter) as a
+ # Node-only command-line ooRexx: the host file system (NODERAWFS), the host
+-# environment variables and external commands as host processes.
++# environment variables, external commands as host processes and the
++# RexxAPI daemon shared by all WASM processes.
+ #
+ # Usage: wasm/build-node.sh [BUILD_DIR=build-wasm] [OUTDIR=BUILD_DIR/bin-node]
+ #   (BUILD_DIR: a build made by wasm/build-wasm.sh; EM_CONFIG from it)
+ #   EXTRA_LDFLAGS="--profiling-funcs" wasm/build-node.sh ...  (wasm function names)
+ # Output: OUTDIR/{rexx.js,rexx.wasm,rexx.img,*.cls} and the launchers
+-#   rexx, rexxc (shell scripts running node rexx.js)
++#   rexx, rexxc, rxqueue, rxsubcom (shell scripts running node rexx.js)
+ set -euo pipefail
+ SRC=$(cd "$(dirname "$0")/.." && pwd)
+ BUILD=$(cd "${1:-$SRC/build-wasm}" && pwd)
+@@ -78,7 +79,7 @@ SH
+ }
+ launcher rexx
+ # multi-call tools of the same rexx.js/rexx.wasm (see wasm/rexxc-main.cpp)
+-for tool in rexxc; do
++for tool in rexxc rxqueue rxsubcom; do
+   launcher $tool --orx-wasm-$tool
+ done
+ ls -l "$OUT" | awk 'NR>1 && $9 !~ /\.cls$/ {print $5, $9}'
+diff --git a/wasm/rxqueue-main.cpp b/wasm/rxqueue-main.cpp
+new file mode 100644
+index 0000000..4395521
+--- /dev/null
++++ b/wasm/rxqueue-main.cpp
+@@ -0,0 +1,43 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*----------------------------------------------------------------------------*/
++/* WASM build: rxqueue linked into the rexx executable (multi-call), like rexxc  */
++/* (see rexxc-main.cpp).  rexx.cpp dispatches to it for --orx-wasm-rxqueue, which */
++/* is what the Node `rxqueue` launcher passes.                                   */
++/*----------------------------------------------------------------------------*/
++#define main orxWasmRxqueueMain
++#include "../utilities/rxqueue/platform/unix/rxqueue.cpp"
+diff --git a/wasm/rxsubcom-main.cpp b/wasm/rxsubcom-main.cpp
+new file mode 100644
+index 0000000..2b6bbf4
+--- /dev/null
++++ b/wasm/rxsubcom-main.cpp
+@@ -0,0 +1,43 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*----------------------------------------------------------------------------*/
++/* WASM build: rxsubcom linked into the rexx executable (multi-call), like rexxc  */
++/* (see rexxc-main.cpp).  rexx.cpp dispatches to it for --orx-wasm-rxsubcom, which */
++/* is what the Node `rxsubcom` launcher passes.                                   */
++/*----------------------------------------------------------------------------*/
++#define main orxWasmRxsubcomMain
++#include "../utilities/rxsubcom/platform/unix/rxsubcom.cpp"
+diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
+index f5e9a9f..82124b9 100755
+--- a/wasm/tests/qualify-node-cli.sh
++++ b/wasm/tests/qualify-node-cli.sh
+@@ -95,6 +95,19 @@ check ".RexxInfo~executable" "^$NB/rexx\$" -- "$X -e 'say .RexxInfo~executable'"
+ check "rexxc compile + run" '^compiled ok$' -- \
+   "echo 'say \"compiled ok\"' > c.rex && \"$NB/rexxc\" c.rex c.rxc >/dev/null && $X c.rxc"
+ 
++# --- RexxAPI daemon shared between processes
++cat > "$T/parent.rex" <<'EOF'
++queue 'parent'
++address system '"'value('NB',,'ENVIRONMENT')'/rexx" child.rex'
++EOF
++cat > "$T/child.rex" <<'EOF'
++parse pull x; say 'child got=' || x
++EOF
++check "rxapi daemon: named queue across processes + rxqueue" '^queued=2 first=X$' -- \
++  "$X -e 'call rxqueue \"create\",\"QUALIFYQ\"' >/dev/null; printf 'x\\ny\\n' | \"$NB/rxqueue\" QUALIFYQ && $X -e 'call rxqueue \"set\",\"QUALIFYQ\"; n=queued(); pull a; say \"queued=\"n \"first=\"a; call rxqueue \"set\",\"SESSION\"; call rxqueue \"delete\",\"QUALIFYQ\"'"
++check "rxapi daemon: session queue parent -> child" '^child got=parent$' -- "$X parent.rex"
++check "in-process RexxAPI (ORX_WASM_RXAPI=inprocess)" '^2$' -- \
++  "ORX_WASM_RXAPI=inprocess $X -e 'push 1; queue 2; say queued()'"
+ 
+ 
+ echo

@@ -1,0 +1,56 @@
+#!/usr/bin/env rexx
+-- Adapted for ooRexx/WASM: JDOR without BSF4ooRexx or Java (see NOTICE)
+/*
+   Name:    "1-180_JDOR_sandGlass_replay_log.rxj"
+   Invoke:  "rexx 1-180_JDOR_sandGlass_replay_log.rxj"
+            "rexxj 1-180_JDOR_sandGlass_replay_log.rxj" (Windows)
+            "rexxj.sh 1-180_JDOR_sandGlass_replay_log.rxj" (Unix)
+
+            ? ... optional argument, if supplied displays processed JDOR commands
+
+   Purpose:  Demonstrates the use of input redirection from a file
+             named "1-180_JDOR_sandGlass_commands.log" (a text file)
+             which contains the JDOR commands to be executed (replayed).
+
+   Needs:    The logfile that gets created by running "1-180_JDOR_sandGlass_log.rxj"
+             as it contains the commands to execute (replay).
+
+   Date:    2022-10-03
+
+   Author:  Rony G. Flatscher, WU Vienna
+
+   Changes: 2022-11-27 - change current directory to source directory to allow access to png files
+            2023-05-30 - creates and defines JDOR handler explicitly
+
+   last change: Revision: $Revision: 951 $ $Author: orexx $ $Date: 2022-08-10 18:06:25 +0200 (Mi., 10 Aug 2022) $
+                (svn hint: use 'propset svn:keywords "Author Date Revision" filename')
+
+   license:
+
+    ------------------------ Apache Version 2.0 license -------------------------
+       Copyright (C) 2022-2023 Rony G. Flatscher
+
+       Licensed under the Apache License, Version 2.0 (the "License");
+       you may not use this file except in compliance with the License.
+       You may obtain a copy of the License at
+
+           http://www.apache.org/licenses/LICENSE-2.0
+
+       Unless required by applicable law or agreed to in writing, software
+       distributed under the License is distributed on an "AS IS" BASIS,
+       WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+       See the License for the specific language governing permissions and
+       limitations under the License.
+    -----------------------------------------------------------------------------
+*/
+   -- make sure we change current directory to program's directory
+parse source . . s      -- get full path to this program
+oldDir=directory(filespec('location',s))  -- change current dir to this program's source dir
+
+   -- define stream (file) to read JDOR commands from
+s=.stream~new("1-180_JDOR_sandGlass_commands.log")~~open("read")
+address jdor with input using (s)   -- redirect input to file
+"-- a JDOR comment"     -- activate JDOR processing
+
+::requires "jdor.cls"   -- set up the JDOR environment
+

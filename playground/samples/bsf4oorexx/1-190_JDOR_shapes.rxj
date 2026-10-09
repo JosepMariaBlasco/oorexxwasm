@@ -1,0 +1,246 @@
+#!/usr/bin/env rexx
+-- Adapted for ooRexx/WASM: JDOR without BSF4ooRexx or Java (see NOTICE)
+/*
+   Name:    "1-190_JDOR_shapes.rxj"
+
+   Invoke:  "rexx 1-190_JDOR_shapes.rxj [?]"
+            "rexxj 1-190_JDOR_shapes.rxj [?]" (Windows)
+            "rexxj.sh 1-190_JDOR_shapes.rxj [?]" (Unix)
+
+            ? ... optional argument, if supplied displays processed JDOR commands
+
+   Purpose: demonstrate Java2D shapes, cf. <https://docs.oracle.com/javase/tutorial/2d/>
+
+   Date:    2023-06-08
+
+   Author:  Rony G. Flatscher, WU Vienna
+
+   Changes: ---
+
+   last change: Revision: $Revision: 951 $ $Author: orexx $ $Date: 2022-08-10 18:06:25 +0200 (Mi., 10 Aug 2022) $
+                (svn hint: use 'propset svn:keywords "Author Date Revision" filename')
+
+   license:
+
+    ------------------------ Apache Version 2.0 license -------------------------
+       Copyright (C) 2023 Rony G. Flatscher
+
+       Licensed under the Apache License, Version 2.0 (the "License");
+       you may not use this file except in compliance with the License.
+       You may obtain a copy of the License at
+
+           http://www.apache.org/licenses/LICENSE-2.0
+
+       Unless required by applicable law or agreed to in writing, software
+       distributed under the License is distributed on an "AS IS" BASIS,
+       WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+       See the License for the specific language governing permissions and
+       limitations under the License.
+    -----------------------------------------------------------------------------
+*/
+
+say "-- JDOR version:" jdorVersion()        -- show JDOR version in effect
+
+bShowCommands=(arg(1)="?") -- ? supplied as argument, then show "jdor" JDOR commands in canonical form
+errorArray=.array~new
+   -- set default environment to JDOR
+if bShowCommands then   -- set default environment to JDOR
+do
+      -- redirect output, show extended error messages if any
+   address jdor with error append using (errorArray) output using (.output)
+   say "--> JDOR commands directed at the 'jdor' handler will get displayed ..."
+end
+else
+   address jdor with error append using (errorArray)
+
+time2sleep=1         -- time to sleep between each type of Shape
+
+newImage 210 450     -- create image
+winShow              -- show wiundow
+winTitle "Shapes"
+winAlwaysOnTop .true -- allows us to click into the command line window without losing sight
+
+stroke s1 1
+stroke s2 2
+stroke strDashed1 1 0 0 1 "(1,1,0,1)" 0  -- dashed stroke
+stroke strDashed2 2 0 0 1 "(1,1,0,1)" 0  -- dashed stroke
+
+   -- x,y arrays for the position of the shapes
+xa=10,60,110,160
+ya=10,60,110,160,210,260,310,360,410
+
+   -- draw arc2d
+say "-- shape sh1 arc[2d] ..."
+ln=1  -- line number
+shape a2do  arc2d  xa[1] ya[ln]  30 30   0 270 open
+shape a2dc  arc    xa[2] ya[ln]  30 30   0 270 chord
+shape a2dp  arc    xa[3] ya[ln]  30 30   0 270 pie
+shape r2d   rect   xa[4] ya[ln]  50 30            -- a Rectangle2D for next arc
+shape a2dp2 arc   r2d            60 240 pie
+
+color b20 0 0 255 50
+fillShape a2do; fillShape a2dc; fillShape a2dp; fillShape a2dp2
+color black; stroke s2
+drawShape a2do; drawShape a2dc; drawShape a2dp; drawShape a2dp2
+
+sleep time2sleep  -- sleep for three seconds
+
+
+say "-- shape sh1 cubic[Curve[2d]] ..."
+ln=2  -- line number
+--                       x1  y1     cx1 cy1 cx2 cy2  x2 y2
+shape sh1 cubic        xa[1] ya[ln]   0  40  50  60  40 90
+shape sh2 cubicCurve   xa[2] ya[ln]  60  50  60  60  90 90
+shape sh3 cubicCurve2d xa[3] ya[ln] 120  60  70  60 140 90
+shape sh4 cubic        xa[4] ya[ln] 180  70  80  60 190 90
+
+color r20 255 0 0 50
+fillShape sh1; fillShape sh2; fillShape sh3; fillShape sh4
+color black; stroke s1
+drawShape sh1; drawShape sh2; drawShape sh3; drawShape sh4
+
+sleep time2sleep  -- sleep for three seconds
+
+say "-- shape sh1 elli[pse[2D]] ..."
+ln=3  -- line number
+--                    x1    y1     w   h
+shape sh1 elli      xa[1] ya[ln]  30  30
+shape sh2 elli      xa[2] ya[ln]  30  15
+shape sh3 ellipse   xa[3] ya[ln]  15  30
+shape sh4 ellipse2d xa[4] ya[ln]  30   5
+
+color g20 0 255 0 50
+fillShape sh1; fillShape sh2; fillShape sh3; fillShape sh4
+color black; stroke strDashed1
+drawShape sh1; drawShape sh2; drawShape sh3; drawShape sh4
+
+sleep time2sleep  -- sleep for three seconds
+
+say "-- shape sh1 line[2D] ..."
+ln=4  -- line number
+--                    x1    y1    x2          y2
+shape sh1 line      xa[1] ya[ln]  (xa[1]+30) (ya[ln]+30)
+shape sh2 line2d    xa[2] ya[ln]  (xa[2]+5)  (ya[ln]+30)
+shape sh3 line      xa[3] ya[ln]  (xa[3]+5)  (ya[ln]+15)
+shape sh4 line      xa[4] ya[ln]  (xa[4]+20) (ya[ln]+ 5)
+
+color g20 0 255 0 50
+fillShape sh1; fillShape sh2; fillShape sh3; fillShape sh4
+color black; stroke s2
+drawShape sh1; drawShape sh2; drawShape sh3; drawShape sh4
+
+sleep time2sleep  -- sleep for three seconds
+
+
+say "-- shape sh1 path[2D] ..."
+   -- create transform for rotations: 15, 30 and 45 grades
+rotate 15         -- rotate (affine transform)
+transform         -- get affine transform
+transform tf15 rc -- create new transform from returned affine transform settings
+rotate 15         -- rotate (affine transform)
+transform         -- get affine transform
+transform tf30 rc -- create new transform from returned affine transform settings
+rotate 15         -- rotate (affine transform)
+transform         -- get affine transform
+transform tf45 rc -- create new transform from returned affine transform settings
+transform reset   -- reset transform
+
+ln=5  -- line number
+
+shape sh1 path
+pathMoveTo sh1 0 30/2
+pathLineto sh1 30 0
+pathLineto sh1 30 30
+pathClose  sh1
+pathClone sh1 sh2; pathTransform sh2 tf15
+pathClone sh1 sh3; pathTransform sh3 tf30
+pathClone sh1 sh4; pathTransform sh4 tf45
+
+
+transform t1 xa[1] ya[ln] . . . .; pathTransform sh1 t1
+transform t1 xa[2] ya[ln] . . . .; pathTransform sh2 t1
+transform t1 xa[3] ya[ln] . . . .; pathTransform sh3 t1
+transform t1 xa[4] ya[ln] . . . .; pathTransform sh4 t1
+
+color gelb20 255 255 0 50
+fillShape sh1; fillShape sh2; fillShape sh3; fillShape sh4
+color black; stroke strDashed2
+drawShape sh1; drawShape sh2; drawShape sh3; drawShape sh4
+
+sleep time2sleep  -- sleep for three seconds
+
+
+say "-- shape sh1 polygon ..."
+ln=6  -- line number
+do i=1 to 4
+             x1a='(' || xa[i]"," || xa[i]+random(0,5)"," || xa[i]+random(0,15)"," || xa[i]+random(0,10)"," || xa[i]+random(0,30)"," || xa[i]+random(0,20)")"
+   y=ya[ln]; y1a='(' || y","     || y+random(0,10)","    || y+random(0,30)","     || y+random(0,30)","     || y+random(0,10)","     || y")"
+   shape sh||i polygon x1a y1a 6
+end
+
+color grr20 255 0 255 50
+fillShape sh1; fillShape sh2; fillShape sh3; fillShape sh4
+color black; stroke s1
+drawShape sh1; drawShape sh2; drawShape sh3; drawShape sh4
+
+sleep time2sleep  -- sleep for three seconds
+
+
+say "-- shape sh1 quad[Curve[2d]] ..."
+ln=7  -- line number
+y=ya[ln]
+--                       x1  y  cx1                cy1             x2 y2
+shape sh1 quad         xa[1] y  xa[1]+random(0,30) y+random(0,30)  40 y+random(0,30)
+shape sh2 quadCurve    xa[2] y  xa[2]+random(0,30) y+random(0,30)  90 y+random(0,30)
+shape sh3 quadCurve2d  xa[3] y  xa[3]+random(0,30) y+random(0,30) 140 y+random(0,30)
+shape sh4 quad         xa[4] y  xa[4]+random(0,30) y+random(0,30) 190 y+random(0,30)
+
+color r128 255 0 0 128
+fillShape sh1; fillShape sh2; fillShape sh3; fillShape sh4
+color black; stroke s1
+drawShape sh1; drawShape sh2; drawShape sh3; drawShape sh4
+
+sleep time2sleep  -- sleep for three seconds
+
+
+say "-- shape sh1 rect[angle[2d]] ..."
+ln=8  -- line number    x     y     width        height
+
+shape sh1 rect             xa[1] ya[ln]  random(0,30) random(0,30)
+shape sh2 rectangle        xa[2] ya[ln]  random(0,30) random(0,30)
+shape sh3 rectangle2d      xa[3] ya[ln]  random(0,30) random(0,30)
+shape sh4 rect             xa[4] ya[ln]  random(0,30) random(0,30)
+
+color b128 0 0 255 128
+fillShape sh1; fillShape sh2; fillShape sh3; fillShape sh4
+color black; stroke strDashed1
+drawShape sh1; drawShape sh2; drawShape sh3; drawShape sh4
+
+sleep time2sleep  -- sleep for three seconds
+
+
+say "-- shape sh1 roundrect[angle[2d]] ..."
+ln=9  -- line number         x     y       width        height        arcWidth  arcHeight
+shape sh1 roundRect         xa[1] ya[ln]  random(15,30) random(10,30)     7        7
+shape sh2 roundRectangle    xa[2] ya[ln]  random(15,30) random(10,30)     7        7
+shape sh3 roundRectangle2d  xa[3] ya[ln]  random(15,30) random(10,30)     7        7
+shape sh4 roundRect         xa[4] ya[ln]  random(15,30) random(10,30)     7        7
+
+color g128 0 255 0 128
+fillShape sh1; fillShape sh2; fillShape sh3; fillShape sh4
+color black; stroke strDashed2
+drawShape sh1; drawShape sh2; drawShape sh3; drawShape sh4
+
+if errorArray~items>0 then  -- errors in JDOR commands?
+do
+   say
+   say "errors occurred:" pp(errorArray~items)
+   say errorArray
+end
+say
+say "press enter to end.";parse pull
+
+::requires "jdor.cls"   -- set up the JDOR environment
+
+::routine pp       -- as in BSF4ooRexx: the value in brackets
+  return "[" || arg(1)~string || "]"

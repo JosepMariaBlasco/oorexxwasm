@@ -1,0 +1,40 @@
+group,native,node,chromium,firefox,webkit,category,why
+ooRexx/API/classic/CLASSIC.testGroup,ok,fail 0/1,fail 0/1,fail 0/1,fail 0/1,api-libs,native test library
+ooRexx/API/oo/CONVERSION.testGroup,ok,fail 0/1,fail 0/1,fail 0/1,fail 0/1,api-libs,native test library
+ooRexx/API/oo/FUNCTION.testGroup,ok,fail 0/1,fail 0/1,fail 0/1,fail 0/1,api-libs,native test library
+ooRexx/API/oo/INVOCATION.testGroup,ok,fail 0/1,fail 0/1,fail 0/1,fail 0/1,api-libs,native test library
+ooRexx/API/oo/METHOD.testGroup,ok,fail 0/1,fail 0/1,fail 0/1,fail 0/1,api-libs,native test library
+ooRexx/API/oo/ProcessInvocation.testGroup,ok,fail 0/1,fail 0/1,fail 0/1,fail 0/1,api-libs,native test library
+ooRexx/API/oo/ProcessRexxStart.testGroup,ok,fail 0/1,fail 0/1,fail 0/1,fail 0/1,api-libs,native test library
+ooRexx/API/oo/RexxStart.testGroup,ok,fail 0/1,fail 0/1,fail 0/1,fail 0/1,api-libs,native test library
+ooRexx/base/bif/ARG.testGroup,ok,ok,fail 1/0,fail 1/0,fail 1/0,processes,TEST_EXTERNAL_CALLS: RC 127 for an external command
+ooRexx/base/bif/CHAROUT.testGroup,fail 1/0,fail 1/0,fail 0/1,fail 0/1,fail 0/1,processes,"""rexx delMe...rex"" failed with RC 127"
+ooRexx/base/bif/CONDITION.testGroup,ok,ok,fail 2/1,fail 2/1,fail 2/1,processes,"external command raises FAILURE (RC 127), test expects ERROR"
+ooRexx/base/bif/LINEIN.testGroup,ok,ok,fail 1/0,fail 1/0,fail 1/0,processes,'echo hello hello>' file: no command
+ooRexx/base/bif/LINEOUT.testGroup,fail 1/0,fail 1/0,ok,ok,ok,,
+ooRexx/base/bif/STREAM.testGroup,ok,ok,fail 0/4,fail 0/4,fail 0/4,processes,"""id -u"" failed with RC 127"
+ooRexx/base/class/File.testGroup,fail 2/0,fail 4/0,fail 4/0,fail 4/0,fail 4/0,"processes, memfs","searchPath(""sh""): no shell on PATH; *_FRACTIONS: MEMFS file times read back in whole ms"
+ooRexx/base/class/Method.testGroup,ok,ok,fail 0/2,fail 0/2,fail 0/2,processes,rexxc: RC 127
+ooRexx/base/class/RexxInfo.testGroup,ok,ok,fail 1/0,fail 1/0,fail 1/0,install,TEST_REXXINFO_EXECUTABLE: executable expected to be a File (it is .nil)
+ooRexx/base/class/RexxQueue.testGroup,ok,ok,fail 0/1,fail 0/1,fail 0/1,processes,"""rexx -e ..."" RC 127"
+ooRexx/base/class/Routine.testGroup,ok,ok,fail 0/2,fail 0/2,fail 0/2,processes,rexxc: RC 127
+ooRexx/base/class/Stream.testGroup,fail 1/0,fail 1/0,fail 0/8,fail 0/8,fail 0/8,processes,"""id -u"" / ""rexx ..."" RC 127"
+ooRexx/base/directives/OPTIONS.testGroup,ok,ok,fail 2/6,fail 2/6,fail 2/6,processes,command results RC 127
+ooRexx/base/keyword/ADDRESS.testGroup,ok,ok,fail 23/0,fail 23/0,fail 23/0,processes,"shell commands (cd, exit, cat, sort...) RC 127"
+ooRexx/base/keyword/CALL.testGroup,ok,ok,fail 1/0,fail 1/0,ok,stack,"TEST_STACKSIZE: Error 11 at ~900 (Chromium), ~1300 (Firefox) levels; WebKit passes (~5000)"
+ooRexx/base/keyword/PARSE.testGroup,ok,ok,fail 1/0,fail 1/0,fail 1/0,processes,external command RC 127
+ooRexx/base/keyword/SIGNAL.testGroup,ok,ok,fail 0/1,fail 0/1,fail 0/1,processes,command FAILURE
+ooRexx/base/keyword/TRACE.testGroup,ok,fail 1/0,fail 1/0,ok,ok,flaky,TEST_TRACE_LABEL_WITH_FORWARD: trace line count depends on thread timing (also seen under Node)
+ooRexx/base/rexxutil/Macrospace.testGroup,ok,ok,fail 0/1,fail 0/1,fail 0/1,processes,"""rexx -e ..."" RC 127"
+ooRexx/base/rexxutil/SysFileXXX.testGroup,fail 4/0,fail 1/0,ok,ok,ok,,
+ooRexx/base/rexxutil/SysSearchPath.testGroup,ok,ok,fail 1/0,fail 1/0,fail 1/0,processes,"SysSearchPath(""PATH"", ""sh""): no shell"
+ooRexx/base/runtime.objects/environmentEntries.testGroup,ok,ok,fail 1/0,fail 1/0,fail 1/0,processes,"address """" ""exit"": .rs -1"
+ooRexx/base/source.file/incorrectCharacters.testGroup,ok,ok,fail 0/1,fail 0/1,fail 0/1,processes,"""rexx ..."" RC 127"
+ooRexx/base/special.variables/RESULT_RC_SIGL.testGroup,ok,ok,fail 1/0,fail 1/0,fail 1/0,processes,external rexx RC 127
+ooRexx/extensions/rxsock/socketClass.testGroup,ok,ok,fail 9/0,fail 9/0,fail 9/0,sockets,server/client tests (no listen) and socket options (.nil)
+ooRexx/regressions/bug2003_guard_when.testGroup,ok,ok,fail 0/1,fail 0/1,fail 0/1,processes,"""rexx guard_when.rex"" RC 127"
+ooRexx/samples/samples.testGroup,ok,ok,fail 29/0,fail 29/0,fail 29/0,processes,the samples are run as a rexx process (and are not in the browser's file system)
+ooRexx/utilities/rexx/rexx_command.testGroup,ok,ok,fail 0/28,fail 0/28,fail 0/28,processes,runs rexx as a command
+ooRexx/utilities/rexxc/rexxc.testGroup,ok,ok,fail 0/8,fail 0/8,fail 0/8,processes,runs rexxc as a command
+ooRexx/utilities/rxqueue/rxQueue.testGroup,ok,ok,fail 0/8,fail 0/8,fail 0/8,processes,runs rxqueue as a command
+ooRexx/utilities/rxsubcom/rxsubcom.testGroup,ok,ok,fail 7/0,fail 7/0,fail 7/0,processes,runs rxsubcom as a command

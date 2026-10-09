@@ -1,0 +1,1088 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
+Date: Wed, 7 Oct 2026 15:51:21 +0200
+Subject: [PATCH] cmdhandler: command environments (ADDRESS) written in Rexx
+
+New extension package extensions/cmdhandler (cmdhandler.cpp + cmdhandler.cls),
+only public native API: .CommandHandler~register(name, object) makes an
+object whose class inherits .CommandHandler (a mixin class, COMMAND
+abstract; required) an ADDRESS environment; each command is sent as
+object~command(command, .CommandContext), the result becomes RC.  The context
+gives WITH INPUT / OUTPUT / ERROR and the variables of the code that issued
+the command; ~raiseError / ~raiseFailure; SYNTAX errors reach the caller.
+Registrations are per interpreter instance, as the environments themselves:
+.local~CommandHandlers (name -> object) and .local~CommandContext.
+Native: libcmdhandler; WASM: embedded package (PackageManager table), .cls in
+bin / bin-node / bin-web.  Tests: wasm/tests/cmdhandler.rex (33 checks, also
+in qualify-node-cli.sh and web-api.py); extensions/cmdhandler/tests/
+instances.cpp (two instances in one process, native).  Portable, not part
+of the posted RFE.
+---
+ CMakeLists.txt                            |  24 +-
+ extensions/cmdhandler/cmdhandler.cls      | 175 ++++++++++
+ extensions/cmdhandler/cmdhandler.cpp      | 382 ++++++++++++++++++++++
+ extensions/cmdhandler/tests/ask.rex       |   2 +
+ extensions/cmdhandler/tests/instances.cpp |  42 +++
+ extensions/cmdhandler/tests/reg.rex       |  13 +
+ interpreter/package/PackageManager.cpp    |   2 +
+ wasm/build-node.sh                        |   2 +-
+ wasm/build-web.sh                         |   2 +-
+ wasm/tests/cmdhandler.rex                 | 246 ++++++++++++++
+ wasm/tests/qualify-node-cli.sh            |   4 +
+ wasm/tests/web-api.py                     |   3 +
+ 12 files changed, 894 insertions(+), 3 deletions(-)
+ create mode 100644 extensions/cmdhandler/cmdhandler.cls
+ create mode 100644 extensions/cmdhandler/cmdhandler.cpp
+ create mode 100644 extensions/cmdhandler/tests/ask.rex
+ create mode 100644 extensions/cmdhandler/tests/instances.cpp
+ create mode 100644 extensions/cmdhandler/tests/reg.rex
+ create mode 100644 wasm/tests/cmdhandler.rex
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 3942aae..f8a5d0d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -559,6 +559,7 @@ set (build_extensions_dateparser_dir ${build_extensions_dir}/dateparser)
+ set (build_extensions_rxmath_dir ${build_extensions_dir}/rxmath)
+ set (build_extensions_rxregexp_dir ${build_extensions_dir}/rxregexp)
+ set (build_extensions_rxsock_dir ${build_extensions_dir}/rxsock)
++set (build_extensions_cmdhandler_dir ${build_extensions_dir}/cmdhandler)
+ set (build_extensions_orxncurses_dir ${build_extensions_dir}/orxncurses)
+ set (build_extensions_hostemu_dir ${build_extensions_dir}/hostemu)
+ set (build_extensions_hostemu_platform_dir ${build_extensions_hostemu_dir}/${ORX_PLATFORM_DIR})
+@@ -988,6 +989,7 @@ if (EMSCRIPTEN)
+               ${build_extensions_rxregexp_dir}/dblqueue.cpp
+               ${build_extensions_rxregexp_dir}/rxregexp.cpp
+               ${build_extensions_rxmath_dir}/rxmath.cpp
++              ${build_extensions_cmdhandler_dir}/cmdhandler.cpp
+               ${build_extensions_hostemu_platform_dir}/hostemu.cpp
+               ${build_extensions_hostemu_dir}/cmdparse.cpp
+               ${build_extensions_platform_dir}/rxunixsys/rxunixsys.cpp)
+@@ -1243,7 +1245,8 @@ if (EMSCRIPTEN)
+       "SHELL:--preload-file ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img@/rexx.img"
+       "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/${build_extensions_rxsock_dir}/socket.cls@/socket.cls"
+       "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/${build_extensions_rxsock_dir}/streamsocket.cls@/streamsocket.cls"
+-      "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/${build_extensions_rxregexp_dir}/rxregexp.cls@/rxregexp.cls")
++      "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/${build_extensions_rxregexp_dir}/rxregexp.cls@/rxregexp.cls"
++      "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/${build_extensions_cmdhandler_dir}/cmdhandler.cls@/cmdhandler.cls")
+ endif ()
+ install(PROGRAMS ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img COMPONENT Core DESTINATION ${INSTALL_LIB_DIR} PERMISSIONS OWNER_EXECUTE GROUP_EXECUTE WORLD_EXECUTE OWNER_WRITE OWNER_READ GROUP_READ WORLD_READ)
+ 
+@@ -1464,6 +1467,22 @@ create_install_symlink(rxsock)
+ endif ()
+ 
+ 
++#################### libcmdhandler.so ################
++# command environments written in Rexx (cmdhandler.cls); WASM embeds it
++if (NOT EMSCRIPTEN)
++if (WIN32)
++   set (platform_cmdhandler_sources ${build_platform_dir}/verinfo.rc)
++endif ()
++add_library(cmdhandler SHARED ${build_extensions_cmdhandler_dir}/cmdhandler.cpp
++             ${platform_cmdhandler_sources})
++target_link_libraries(cmdhandler rexx rexxapi ${CMAKE_REQUIRED_LIBRARIES})
++install(TARGETS cmdhandler RUNTIME COMPONENT Core DESTINATION ${INSTALL_LIB_DIR}
++                       LIBRARY DESTINATION ${INSTALL_LIB_DIR} COMPONENT Core)
++set_target_properties(cmdhandler PROPERTIES SOVERSION ${ORX_API_LEVEL})
++create_install_symlink(cmdhandler)
++endif ()
++
++
+ #################### librxregexp.so ################
+ # additional source files required by specific platforms
+ if (WIN32)
+@@ -1860,6 +1879,7 @@ copy_build_file(socket.cls       ${build_extensions_rxsock_dir})
+ copy_build_file(streamsocket.cls ${build_extensions_rxsock_dir})
+ copy_build_file(mime.cls         ${build_extensions_rxsock_dir})
+ copy_build_file(smtp.cls         ${build_extensions_rxsock_dir})
++copy_build_file(cmdhandler.cls   ${build_extensions_cmdhandler_dir})
+ copy_samples_file(complex.cls       ${build_samples_dir})
+ copy_samples_file(pipe.cls          ${build_samples_dir})
+ copy_samples_file(semcls.cls        ${build_samples_dir})
+@@ -1921,6 +1941,7 @@ add_custom_target(class_files ALL DEPENDS
+     ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/mime.cls
+     ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/smtp.cls
+     ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/dateparser.cls
++    ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/cmdhandler.cls
+     ${CMAKE_SAMPLES_OUTPUT_DIRECTORY}/complex.cls
+     ${CMAKE_SAMPLES_OUTPUT_DIRECTORY}/pipe.cls
+     ${CMAKE_SAMPLES_OUTPUT_DIRECTORY}/semcls.cls
+@@ -1932,6 +1953,7 @@ add_custom_target(class_files ALL DEPENDS
+ install(FILES ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rxregexp.cls COMPONENT Core DESTINATION ${INSTALL_CLS_DIR})
+ 
+ install(FILES ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rxftp.cls COMPONENT Core DESTINATION ${INSTALL_CLS_DIR})
++install(FILES ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/cmdhandler.cls COMPONENT Core DESTINATION ${INSTALL_CLS_DIR})
+ 
+ install(FILES ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/csvStream.cls COMPONENT Core DESTINATION ${INSTALL_CLS_DIR})
+ install(FILES ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/json.cls COMPONENT Core DESTINATION ${INSTALL_CLS_DIR})
+diff --git a/extensions/cmdhandler/cmdhandler.cls b/extensions/cmdhandler/cmdhandler.cls
+new file mode 100644
+index 0000000..816515c
+--- /dev/null
++++ b/extensions/cmdhandler/cmdhandler.cls
+@@ -0,0 +1,175 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:          */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*
++ * cmdhandler.cls: command environments (ADDRESS) written in Rexx.
++ *
++ *    ::requires "cmdhandler.cls"
++ *    .CommandHandler~register("DEMO", .Demo~new)
++ *    address demo "UPPER" with input stem in. output stem out.
++ *
++ *    ::class Demo subclass CommandHandler      -- or: subclass X inherit CommandHandler
++ *    ::method command
++ *      use arg command, context                -- a .CommandContext
++ *      ...
++ *      return 0                                -- becomes RC
++ *
++ * The handler is an object of a class that inherits .CommandHandler, a mixin
++ * class whose COMMAND method is abstract.  For every command the handler
++ * object gets ~command(command, context).
++ * Its result is RC (0 when it returns nothing).  The .CommandContext, valid
++ * only while that command runs, gives:
++ *
++ *    ~lineIn                next line of WITH INPUT, .nil at the end
++ *    ~lines                 all the remaining input lines (an Array)
++ *    ~output(lines)         a string or a collection of lines to WITH OUTPUT
++ *    ~error(lines)          the same to WITH ERROR
++ *                           (not redirected: to .output / .error, as a
++ *                           command's own output would go to the console)
++ *    ~isRedirected(which)   "Input", "Output", "Error" or "Same"
++ *    ~getVar(name)          a variable of the code that issued the command
++ *                           (.nil when it has no value), ~hasVar(name)
++ *    ~setVar(name, value)   assigns it (simple, stem or compound; the tail of
++ *                           a compound name is resolved there, as in Rexx)
++ *    ~dropVar(name)         drops it
++ *    ~variables             a Directory with all of them
++ *    ~raiseError(rc)        the command raises ERROR with this RC (returns
++ *    ~raiseFailure(rc)      rc: "return context~raiseFailure(-1)")
++ *    ~environment           the ADDRESS name the command was sent to
++ *    ~isValid               whether the command is still running
++ *
++ * A SYNTAX error in ~command reaches the code that issued the command.
++ * .CommandHandler~register(name, .nil) removes the handler: the name then
++ * behaves as an unknown environment (FAILURE, RC 30).
++ *
++ * The registrations are in .local (one set per interpreter instance, as the
++ * command environments): .local~CommandHandlers, a Directory name -> handler,
++ * and .local~CommandContext, the context class.
++ */
++
++::requires "cmdhandler" LIBRARY
++::routine CmdHandler_Register external "LIBRARY cmdhandler CmdHandler_Register"
++
++
++::class CommandHandler public mixinclass Object
++
++-- the handler of ADDRESS name: an object whose class inherits .CommandHandler (.nil removes it)
++::method register class
++  use strict arg name, handler
++  name = name~request("String")
++  if name == .nil | name == "" then
++    raise syntax 93.900 array("register: the environment name must be a non-empty string")
++  if handler \== .nil then do
++    if \handler~isA(.CommandHandler) then
++      raise syntax 93.900 array("register: the handler's class must inherit .CommandHandler")
++  end
++  if .local~commandHandlers == .nil then do
++    .local~commandHandlers = .directory~new
++    .local~commandContext = .CommandContext
++  end
++  if handler == .nil then .local~commandHandlers~remove(name~upper)
++  else do
++    .local~commandHandlers[name~upper] = handler
++    call CmdHandler_Register name
++  end
++  return
++
++-- classes that inherit it implement it: use arg command, context; return RC
++::method command abstract
++
++
++::class CommandContext public
++
++::attribute environment get
++::attribute condition get
++
++::method init
++  expose cself environment condition
++  use strict arg cself, environment
++  condition = .nil
++
++::method lineIn  external "LIBRARY cmdhandler CmdContext_LineIn"
++::method isRedirected external "LIBRARY cmdhandler CmdContext_IsRedirected"
++::method isValid external "LIBRARY cmdhandler CmdContext_IsValid"
++::method write private external "LIBRARY cmdhandler CmdContext_Write"
++::method nativeGetVar private external "LIBRARY cmdhandler CmdContext_GetVar"
++::method nativeHasVar private external "LIBRARY cmdhandler CmdContext_HasVar"
++::method nativeSetVar private external "LIBRARY cmdhandler CmdContext_SetVar"
++::method nativeDropVar private external "LIBRARY cmdhandler CmdContext_DropVar"
++::method variables external "LIBRARY cmdhandler CmdContext_Variables"
++
++::method lines
++  lines = .array~new
++  do forever
++    line = self~lineIn
++    if line == .nil then leave
++    lines~append(line)
++  end
++  return lines
++
++::method output
++  use strict arg lines
++  self~send("O", lines)
++
++::method error
++  use strict arg lines
++  self~send("E", lines)
++
++-- write a string or each item of a collection to the output or the error
++::method send private
++  use strict arg stream, lines
++  if lines~isA(.String) then lines = .array~of(lines)
++  else lines = lines~makeArray
++  if stream == "O" then redirected = self~isRedirected("Output")
++  else redirected = self~isRedirected("Error")
++  do line over lines
++    if redirected then self~write(stream, line~string)
++    else if stream == "O" then .output~lineout(line~string)
++    else .error~lineout(line~string)
++  end
++
++::method getVar
++  use strict arg name
++  return self~nativeGetVar(self~varName(name))
++
++::method hasVar
++  use strict arg name
++  return self~nativeHasVar(self~varName(name))
++
++::method setVar
++  use strict arg name, value
++  self~nativeSetVar(self~varName(name), value)
++
++::method dropVar
++  use strict arg name
++  self~nativeDropVar(self~varName(name))
++
++-- a variable name (simple, stem or compound), or a SYNTAX error: the native
++-- API silently ignores names that are not variables
++::method varName private
++  use strict arg name
++  name = name~request("String")
++  if name \== .nil then do
++    first = name~left(1)
++    if name~dataType("V") & first \== "." & \first~dataType("W") then return name
++  end
++  raise syntax 93.900 array("not a Rexx variable name:" name)
++
++::method raiseError
++  expose condition
++  use strict arg rc
++  condition = "ERROR"
++  return rc
++
++::method raiseFailure
++  expose condition
++  use strict arg rc
++  condition = "FAILURE"
++  return rc
+diff --git a/extensions/cmdhandler/cmdhandler.cpp b/extensions/cmdhandler/cmdhandler.cpp
+new file mode 100644
+index 0000000..8f70ed5
+--- /dev/null
++++ b/extensions/cmdhandler/cmdhandler.cpp
+@@ -0,0 +1,382 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:          */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/******************************************************************************/
++/* cmdhandler.cpp: command environments (ADDRESS) written in Rexx             */
++/*                                                                            */
++/* One native redirecting command handler serves every environment that      */
++/* .CommandHandler~register adds.  For each command it creates a             */
++/* .CommandContext (valid for that command only) and sends                    */
++/*                                                                            */
++/*     handlerObject~command(commandString, commandContext)                   */
++/*                                                                            */
++/* The context gives the Rexx code the command's redirected input, output    */
++/* and error (ADDRESS ... WITH) and the variables of the code that issued     */
++/* the command (the caller's variable pool, as classic subcommand handlers    */
++/* have).  The method's result is RC; the context can ask for an ERROR or     */
++/* FAILURE condition; a SYNTAX error in the method reaches the caller.        */
++/*                                                                            */
++/* The registrations live in .local (per interpreter instance, as the        */
++/* command environments themselves): .local~CommandHandlers, a Directory     */
++/* name -> handler object, and .local~CommandContext, the context class.     */
++/* Only the public native API is used (AddCommandEnvironment, the exit and    */
++/* I/O redirector contexts): nothing in the interpreter is changed.           */
++/******************************************************************************/
++
++#include "oorexxapi.h"
++#include <string.h>
++#include <string>
++
++// what a .CommandContext's CSELF buffer holds
++struct CommandState
++{
++    RexxExitContext         *exit;      // context of the code that issued the command
++    RexxIORedirectorContext *io;        // its ADDRESS ... WITH redirection
++    bool                     valid;     // only while the command runs
++};
++
++
++static std::string upper(const char *s, size_t len)
++{
++    std::string r(s, len);
++    for (size_t i = 0; i < r.size(); i++)
++    {
++        if (r[i] >= 'a' && r[i] <= 'z')
++        {
++            r[i] = (char)(r[i] - 'a' + 'A');
++        }
++    }
++    return r;
++}
++
++
++/**
++ * The command handler shared by every registered environment.
++ */
++static RexxObjectPtr RexxEntry commandHandler(RexxExitContext *c, RexxStringObject address,
++    RexxStringObject command, RexxIORedirectorContext *io)
++{
++    std::string name = upper(c->StringData(address), c->StringLength(address));
++    // .local~CommandHandlers[name] and .local~CommandContext (cmdhandler.cls)
++    RexxDirectoryObject local = c->GetLocalEnvironment();
++    RexxObjectPtr handlers = local != NULLOBJECT ? c->DirectoryAt(local, "COMMANDHANDLERS") : NULLOBJECT;
++    RexxObjectPtr handler = NULLOBJECT;
++    if (handlers != NULLOBJECT && c->IsDirectory(handlers))
++    {
++        handler = c->DirectoryAt((RexxDirectoryObject)handlers, name.c_str());
++    }
++    RexxObjectPtr contextClass = local != NULLOBJECT ? c->DirectoryAt(local, "COMMANDCONTEXT") : NULLOBJECT;
++    if (handler == NULLOBJECT || handler == c->Nil() || contextClass == NULLOBJECT)
++    {
++        // unregistered (a handler of .nil): like an unknown environment
++        RexxObjectPtr rc = c->WholeNumber(RXSUBCOM_NOTREG);
++        c->RaiseCondition("FAILURE", command, NULLOBJECT, rc);
++        return rc;
++    }
++    RexxBufferObject buffer = c->NewBuffer(sizeof(CommandState));
++    CommandState *state = (CommandState *)c->BufferData(buffer);
++    state->exit = c;
++    state->io = io;
++    state->valid = true;
++
++    RexxObjectPtr context = c->SendMessage2(contextClass, "NEW", buffer, address);
++    if (c->CheckCondition())
++    {
++        return NULLOBJECT;
++    }
++    RexxObjectPtr result = c->SendMessage2(handler, "COMMAND", command, context);
++    state->valid = false;               // the context is dead from now on
++    if (c->CheckCondition())
++    {
++        // a SYNTAX error in the handler: the interpreter raises it in the caller
++        return NULLOBJECT;
++    }
++
++    // did the handler ask for ERROR or FAILURE?
++    RexxObjectPtr condition = c->SendMessage0(context, "CONDITION");
++    if (condition != NULLOBJECT && condition != c->Nil())
++    {
++        RexxObjectPtr rc = result != NULLOBJECT ? result : c->WholeNumber(0);
++        c->RaiseCondition(c->ObjectToStringValue(condition), command, NULLOBJECT, rc);
++        return rc;
++    }
++    return result != NULLOBJECT ? result : c->WholeNumber(0);
++}
++
++
++/**
++ * .CommandHandler~register's native part: makes the name a command
++ * environment of this interpreter instance served by commandHandler (the
++ * handler object itself is in .local~CommandHandlers).  Registering a name
++ * again changes nothing.
++ */
++RexxRoutine1(int, CmdHandler_Register, CSTRING, name)
++{
++    std::string key = upper(name, strlen(name));
++    context->threadContext->AddCommandEnvironment(key.c_str(), (REXXPFN)commandHandler,
++        REDIRECTING_COMMAND_ENVIRONMENT);
++    return 0;
++}
++
++
++/**
++ * The exit and I/O contexts belong to commandHandler's native activation,
++ * which is still running (inside SendMessage2) while the handler's methods
++ * use them from activations of their own.  Every blocking call through
++ * those contexts ends by turning off that outer activation's condition
++ * traps (ApiContext's destructor), so a SYNTAX error raised later in the
++ * handler would no longer be caught by commandHandler's SendMessage2 and
++ * would unwind through its C++ frames (a crash).  The non-blocking
++ * IsInputRedirected turns the traps on again without turning them off:
++ * call it after every blocking call through state->exit or state->io.
++ */
++static inline void retrap(CommandState *state)
++{
++    state->io->IsInputRedirected();
++}
++
++
++// the state of a .CommandContext, or a SYNTAX error once its command ended
++static CommandState *liveState(RexxMethodContext *context, void *self)
++{
++    CommandState *state = (CommandState *)self;
++    if (state == NULL || !state->valid)
++    {
++        context->RaiseException1(Rexx_Error_Execution_user_defined,
++            context->String("this CommandContext belongs to a command that has ended"));
++        return NULL;
++    }
++    return state;
++}
++
++
++/**
++ * ~lineIn: the next line of the redirected input, .nil at its end (or when
++ * the command has no WITH INPUT).
++ */
++RexxMethod1(RexxObjectPtr, CmdContext_LineIn, CSELF, self)
++{
++    CommandState *state = liveState(context, self);
++    if (state == NULL)
++    {
++        return NULLOBJECT;
++    }
++    CSTRING data = NULL;
++    size_t length = 0;
++    state->io->ReadInput(&data, &length);
++    retrap(state);
++    if (data == NULL)
++    {
++        return context->Nil();
++    }
++    return context->NewString(data, length);
++}
++
++
++/**
++ * ~write(stream, line): one line to the redirected output ("O") or error
++ * ("E").  The .cls writes to .output / .error when not redirected.
++ */
++RexxMethod3(RexxObjectPtr, CmdContext_Write, CSTRING, stream, RexxStringObject, line, CSELF, self)
++{
++    CommandState *state = liveState(context, self);
++    if (state == NULL)
++    {
++        return NULLOBJECT;
++    }
++    if (stream[0] == 'E' || stream[0] == 'e')
++    {
++        state->io->WriteError(context->StringData(line), context->StringLength(line));
++        retrap(state);
++    }
++    else
++    {
++        state->io->WriteOutput(context->StringData(line), context->StringLength(line));
++        retrap(state);
++    }
++    return NULLOBJECT;
++}
++
++
++/**
++ * ~isRedirected(which): "Input", "Output", "Error" (first letter), or
++ * "Same" (output and error go to the same target).
++ */
++RexxMethod2(logical_t, CmdContext_IsRedirected, CSTRING, which, CSELF, self)
++{
++    CommandState *state = liveState(context, self);
++    if (state == NULL)
++    {
++        return 0;
++    }
++    switch (which[0])
++    {
++        case 'I': case 'i': return state->io->IsInputRedirected();
++        case 'O': case 'o': return state->io->IsOutputRedirected();
++        case 'E': case 'e': return state->io->IsErrorRedirected();
++        case 'S': case 's': return state->io->AreOutputAndErrorSameTarget();
++    }
++    context->RaiseException1(Rexx_Error_Incorrect_method_user_defined,
++        context->String("isRedirected: the argument must be Input, Output, Error or Same"));
++    return 0;
++}
++
++
++/**
++ * ~getVar(name): the caller's variable, or .nil when it has no value.
++ */
++RexxMethod2(RexxObjectPtr, CmdContext_GetVar, CSTRING, name, CSELF, self)
++{
++    CommandState *state = liveState(context, self);
++    if (state == NULL)
++    {
++        return NULLOBJECT;
++    }
++    RexxObjectPtr value = state->exit->GetContextVariable(name);
++    retrap(state);
++    return value == NULLOBJECT ? context->Nil() : value;
++}
++
++
++/**
++ * ~hasVar(name): whether the caller's variable has a value.
++ */
++RexxMethod2(logical_t, CmdContext_HasVar, CSTRING, name, CSELF, self)
++{
++    CommandState *state = liveState(context, self);
++    if (state == NULL)
++    {
++        return 0;
++    }
++    RexxObjectPtr value = state->exit->GetContextVariable(name);
++    retrap(state);
++    return value != NULLOBJECT;
++}
++
++
++/**
++ * ~setVar(name, value): assigns the caller's variable (simple, stem or
++ * compound; a compound's tail is resolved in the caller, as Rexx does).
++ */
++RexxMethod3(RexxObjectPtr, CmdContext_SetVar, CSTRING, name, RexxObjectPtr, value, CSELF, self)
++{
++    CommandState *state = liveState(context, self);
++    if (state == NULL)
++    {
++        return NULLOBJECT;
++    }
++    state->exit->SetContextVariable(name, value);
++    retrap(state);
++    return NULLOBJECT;
++}
++
++
++/**
++ * ~dropVar(name): drops the caller's variable.
++ */
++RexxMethod2(RexxObjectPtr, CmdContext_DropVar, CSTRING, name, CSELF, self)
++{
++    CommandState *state = liveState(context, self);
++    if (state == NULL)
++    {
++        return NULLOBJECT;
++    }
++    state->exit->DropContextVariable(name);
++    retrap(state);
++    return NULLOBJECT;
++}
++
++
++/**
++ * ~variables: a Directory with all the caller's variables.
++ */
++RexxMethod1(RexxObjectPtr, CmdContext_Variables, CSELF, self)
++{
++    CommandState *state = liveState(context, self);
++    if (state == NULL)
++    {
++        return NULLOBJECT;
++    }
++    RexxDirectoryObject all = state->exit->GetAllContextVariables();
++    retrap(state);
++    return all;
++}
++
++
++/**
++ * ~isValid: whether the command is still running.
++ */
++RexxMethod1(logical_t, CmdContext_IsValid, CSELF, self)
++{
++    CommandState *state = (CommandState *)self;
++    return state != NULL && state->valid;
++}
++
++
++RexxRoutineEntry cmdhandler_routines[] =
++{
++    REXX_TYPED_ROUTINE(CmdHandler_Register, CmdHandler_Register),
++    REXX_LAST_ROUTINE()
++};
++
++RexxMethodEntry cmdhandler_methods[] =
++{
++    REXX_METHOD(CmdContext_LineIn,       CmdContext_LineIn),
++    REXX_METHOD(CmdContext_Write,        CmdContext_Write),
++    REXX_METHOD(CmdContext_IsRedirected, CmdContext_IsRedirected),
++    REXX_METHOD(CmdContext_GetVar,       CmdContext_GetVar),
++    REXX_METHOD(CmdContext_HasVar,       CmdContext_HasVar),
++    REXX_METHOD(CmdContext_SetVar,       CmdContext_SetVar),
++    REXX_METHOD(CmdContext_DropVar,      CmdContext_DropVar),
++    REXX_METHOD(CmdContext_Variables,    CmdContext_Variables),
++    REXX_METHOD(CmdContext_IsValid,      CmdContext_IsValid),
++    REXX_LAST_METHOD()
++};
++
++RexxPackageEntry cmdhandler_package_entry =
++{
++    STANDARD_PACKAGE_HEADER
++    REXX_INTERPRETER_5_0_0,              // redirecting command handlers: 5.0
++    "cmdhandler",                        // name of the package
++    "1.0",                               // package information
++    NULL,                                // no load/unload functions
++    NULL,
++    cmdhandler_routines,                 // the exported routines
++    cmdhandler_methods                   // the exported methods
++};
++
++// package loading stub.
++OOREXX_GET_PACKAGE(cmdhandler);
+diff --git a/extensions/cmdhandler/tests/ask.rex b/extensions/cmdhandler/tests/ask.rex
+new file mode 100644
+index 0000000..3489759
+--- /dev/null
++++ b/extensions/cmdhandler/tests/ask.rex
+@@ -0,0 +1,2 @@
++address t "WHO"
++return rc
+diff --git a/extensions/cmdhandler/tests/instances.cpp b/extensions/cmdhandler/tests/instances.cpp
+new file mode 100644
+index 0000000..6596dc4
+--- /dev/null
++++ b/extensions/cmdhandler/tests/instances.cpp
+@@ -0,0 +1,42 @@
++// instances.cpp: two interpreter instances in one process, each with its own
++// "T" command environment (cmdhandler's registrations are per instance, in
++// .local, as the environments themselves).  Native builds; from this directory:
++//   g++ -I../../../api -I../../../api/platform/unix instances.cpp \
++//       -L$BUILD/lib -lrexx -lrexxapi -o instances
++//   PATH=$BUILD/bin:$PATH LD_LIBRARY_PATH=$BUILD/lib ./instances
++// Uses reg.rex and ask.rex (next to it); prints "all ok" and exits 0.
++#include "oorexxapi.h"
++#include <stdio.h>
++#include <string.h>
++static RexxThreadContext *make(RexxInstance **inst)
++{
++    RexxThreadContext *t;
++    if (!RexxCreateInterpreter(inst, &t, NULL)) { printf("no instance\n"); return NULL; }
++    return t;
++}
++static const char *run(RexxThreadContext *t, const char *prog, const char *arg)
++{
++    RexxArrayObject args = arg ? t->ArrayOfOne(t->String(arg)) : t->NewArray(0);
++    RexxObjectPtr r = t->CallProgram(prog, args);
++    if (t->CheckCondition()) { t->ClearCondition(); return "(condition)"; }
++    return r ? t->ObjectToStringValue(r) : "(none)";
++}
++int main()
++{
++    RexxInstance *ia, *ib;
++    RexxThreadContext *a = make(&ia), *b = make(&ib);
++    int bad = 0;
++    #define CHECK(what, got, want) do { const char *g = (got); int ok = strcmp(g, want) == 0; bad += !ok; \
++        printf("%s %s: %s\n", ok ? "ok  " : "FAIL", what, g); } while (0)
++    CHECK("A registers T", run(a, "reg.rex", "A"), "A");
++    CHECK("B registers T", run(b, "reg.rex", "B"), "B");
++    CHECK("A still its own", run(a, "ask.rex", NULL), "A");
++    CHECK("B its own", run(b, "ask.rex", NULL), "B");
++    ia->Terminate();
++    CHECK("B after A terminated", run(b, "ask.rex", NULL), "B");
++    RexxInstance *ic; RexxThreadContext *c = make(&ic);
++    CHECK("a new instance has no T (RC 30)", run(c, "ask.rex", NULL), "30");
++    ib->Terminate(); ic->Terminate();
++    printf("%s\n", bad ? "FAILED" : "all ok");
++    return bad != 0;
++}
+diff --git a/extensions/cmdhandler/tests/reg.rex b/extensions/cmdhandler/tests/reg.rex
+new file mode 100644
+index 0000000..68f1845
+--- /dev/null
++++ b/extensions/cmdhandler/tests/reg.rex
+@@ -0,0 +1,13 @@
++-- register "T" with a handler that answers this instance's label
++parse arg label
++.CommandHandler~register("T", .Answer~new(label))
++address t "WHO"
++return rc
++::requires "cmdhandler.cls"
++::class Answer inherit CommandHandler
++::method init
++  expose label
++  use arg label
++::method command
++  expose label
++  return label
+diff --git a/interpreter/package/PackageManager.cpp b/interpreter/package/PackageManager.cpp
+index 9c17231..8905b5c 100644
+--- a/interpreter/package/PackageManager.cpp
++++ b/interpreter/package/PackageManager.cpp
+@@ -79,6 +79,7 @@ extern RexxPackageEntry rxregexp_package_entry;
+ extern RexxPackageEntry rxmath_package_entry;
+ extern RexxPackageEntry hostemu_package_entry;
+ extern RexxPackageEntry orxnixclib_package_entry;
++extern RexxPackageEntry cmdhandler_package_entry;
+ 
+ // Extension packages linked into the WASM interpreter (there is no dlopen).
+ // They are registered as internal packages when the image is built, so
+@@ -91,6 +92,7 @@ const PackageManager::EmbeddedPackage PackageManager::embeddedPackages[] =
+     { "rxmath",   &rxmath_package_entry,   true },
+     { "hostemu",  &hostemu_package_entry,  false },
+     { "rxunixsys", &orxnixclib_package_entry, false },
++    { "cmdhandler", &cmdhandler_package_entry, false },
+     { NULL, NULL, false }
+ };
+ 
+diff --git a/wasm/build-node.sh b/wasm/build-node.sh
+index 98768a8..0e8b5a9 100755
+--- a/wasm/build-node.sh
++++ b/wasm/build-node.sh
+@@ -76,7 +76,7 @@ cp "$SRC/samples/rexxtry.rex" "$OUT/"
+ # not ncurses (no native library here)
+ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp.cls \
+            rxftp/rxftp.cls rxregexp/rxregexp.cls json/json.cls yaml/yaml.cls \
+-           csvStream/csvStream.cls dateparser/dateparser.cls; do
++           csvStream/csvStream.cls dateparser/dateparser.cls cmdhandler/cmdhandler.cls; do
+   cp "$SRC/extensions/$cls" "$OUT/"
+ done
+ cp "$SRC/wasm/web/js.cls" "$OUT/"
+diff --git a/wasm/build-web.sh b/wasm/build-web.sh
+index 326d386..86995f9 100755
+--- a/wasm/build-web.sh
++++ b/wasm/build-web.sh
+@@ -69,7 +69,7 @@ done
+ PRELOAD=()
+ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp.cls \
+            rxftp/rxftp.cls rxregexp/rxregexp.cls json/json.cls yaml/yaml.cls \
+-           csvStream/csvStream.cls dateparser/dateparser.cls; do
++           csvStream/csvStream.cls dateparser/dateparser.cls cmdhandler/cmdhandler.cls; do
+   PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
+ done
+ # JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
+diff --git a/wasm/tests/cmdhandler.rex b/wasm/tests/cmdhandler.rex
+new file mode 100644
+index 0000000..5f3bf34
+--- /dev/null
++++ b/wasm/tests/cmdhandler.rex
+@@ -0,0 +1,246 @@
++/* cmdhandler.rex: tests of cmdhandler.cls (command environments written in */
++/* Rexx).  Portable: native and WASM builds.  Prints one line per check and */
++/* exits 1 if any fails.                                                    */
++/*   rexx cmdhandler.rex                                                    */
++signal on syntax name unexpected
++.local~ok = 0; .local~bad = 0
++
++.CommandHandler~register("t", .T~new)          -- lower case on purpose
++
++-- results and RC
++address t "RETURN 7";        call check "RC from the method", rc == 7
++address t "RETURN hello";    call check "RC any string", rc == "hello"
++address t "NOTHING";         call check "no result: RC 0", rc == 0
++address t "ENV";             call check "environment name", rc == "T"
++
++-- the caller's variables
++address t "SET greeting hola mundo"
++call check "setVar simple", greeting == "hola mundo"
++i = 3
++address t "SET a.i tres"
++call check "setVar compound, tail resolved in the caller", a.3 == "tres"
++address t "SET s. 0"
++call check "setVar stem (default value)", s.xyz == 0
++drop nope
++address t "HAS nope";        call check "hasVar unset", rc == 0
++address t "GET nope";        call check "getVar unset is .nil", rc == "The NIL object"
++address t "HAS greeting";    call check "hasVar set", rc == 1
++address t "GET greeting";    call check "getVar", rc == "hola mundo"
++address t "DROP greeting";   call check "dropVar", symbol("greeting") == "LIT"
++mine = "x"
++address t "VARS";            call check "variables: the caller's, not the handler's", rc == "1 0"
++address t "BADNAME";         call check "bad variable name: SYNTAX 93.900 caught inside", rc == "93.900"
++call check "variables inside a procedure", inproc() == "local"
++
++-- redirection
++in.1 = "uno"; in.2 = "dos"; in.0 = 2
++address t "UPPER" with input stem in. output stem out.
++call check "WITH INPUT / OUTPUT stems", out.0 == 2 & out.1 == "UNO" & out.2 == "DOS"
++arr = .array~of("a", "b", "c")
++address t "LINES" with input using (arr) output stem out.
++call check "~lines and ~output(array)", out.0 == 2 & out.1 == 3 & out.2 == "a b c"
++address t "ERR oops" with error stem err.
++call check "WITH ERROR", err.0 == 1 & err.1 == "oops"
++address t "REDIR" with input stem in. output stem out.
++call check "isRedirected", rc == "1 1 0 0"
++address t "REDIR" with output stem both. error stem both.
++call check "isRedirected Same", rc == "0 1 1 1"
++address t "LINEIN"
++call check "no WITH INPUT: ~lineIn is .nil", rc == 1
++
++-- conditions
++signal on error name gotError
++address t "RAISE ERROR 5"
++call check "ERROR raised", .false
++afterError:
++signal off error
++call on failure name gotFailure
++address t "RAISE FAILURE -2"
++call check "FAILURE trapped, RC", failed == -2 & rc == -2
++call off failure
++address t "RAISE ERROR 9"                      -- untrapped: just RC
++call check "untrapped ERROR sets RC", rc == 9
++
++signal on syntax name gotSyntax
++address t "DIVIDE"
++call check "SYNTAX in the handler reaches the caller", .false
++afterSyntax:
++signal on syntax name unexpected
++-- the same after the handler used the context (each such call used to
++-- turn off the trapping of the command's native activation: a crash)
++do verb over .array~of("SETDIVIDE", "GETDIVIDE", "VARSDIVIDE", "INDIVIDE", "OUTDIVIDE")
++  call check "SYNTAX after" verb~left(verb~length - 6)~lower "reaches the caller", syntaxAfter(verb) == "42.3"
++end
++-- and untrapped, which is what crashed: in a process of its own (skipped
++-- where there are no processes, as in a browser)
++exe = .rexxInfo~executable
++if exe \== .nil then do
++  child = .File~temporaryPath || "/cmdhandler-untrapped-" || time("S") || ".rex"
++  s = .stream~new(child); s~open("write replace")
++  s~lineout('.CommandHandler~register("T", .T~new)')
++  s~lineout('address t "X"')
++  s~lineout('::requires "cmdhandler.cls"')
++  s~lineout('::class T subclass CommandHandler')
++  s~lineout('::method command')
++  s~lineout('  use arg command, context')
++  s~lineout('  context~setVar("x", 1)')
++  s~lineout('  return 1 / 0')
++  s~close
++  address system '"'exe'" "'child'"' with output stem co. error stem ce.
++  all = ""; do k = 1 to ce.0; all ||= ce.k" "; end; do k = 1 to co.0; all ||= co.k" "; end
++  if all = "" then say "skip  untrapped SYNTAX after setVar (no processes here)"
++  else call check "untrapped SYNTAX after setVar: the error, not a crash", all~pos("Error 42") > 0
++  call SysFileDelete child
++end
++
++-- stale context
++address t "KEEP"
++ctx = .local~kept
++call check "context invalid after its command", ctx~isValid == 0
++signal on syntax name gotStale
++x = ctx~lineIn
++call check "stale context raises SYNTAX", .false
++afterStale:
++signal on syntax name unexpected
++
++-- nesting, threads, registration
++.CommandHandler~register("u", .U~new)
++address t "NESTED"
++call check "a handler issuing a command to another handler", rc == "U:inner T:after"
++msg = .Threaded~new~start("run")
++call check "command from another thread", msg~result == "thread ok"
++.CommandHandler~register("t", .T2~new)
++address t "ANYTHING";        call check "register again replaces; inherit CommandHandler", rc == "T2"
++.CommandHandler~register("t", .nil)
++call on failure name gotFailure
++address t "ANYTHING"
++call check "unregistered: FAILURE RC 30", failed == 30
++call off failure
++signal on syntax name gotNoCommand
++.CommandHandler~register("v", .object~new)
++call check "a handler not inheriting .CommandHandler refused", .false
++afterNoCommand:
++signal on syntax name gotDuck
++.CommandHandler~register("v", .Duck~new)
++call check "COMMAND alone is not enough: .CommandHandler required", .false
++afterDuck:
++
++say
++say .ok "passed," .bad "failed"
++exit .bad > 0
++
++gotError:      call check "ERROR raised", condition("C") == "ERROR" & rc == 5; signal afterError
++gotFailure:    failed = rc; return
++gotSyntax:     call check "SYNTAX in the handler reaches the caller", condition("O")~code == "42.3"; signal afterSyntax
++gotStale:      call check "stale context raises SYNTAX", condition("O")~code == "98.900"; signal afterStale
++gotNoCommand:  call check "a handler not inheriting .CommandHandler refused", condition("O")~code == "93.900"; signal afterNoCommand
++gotDuck:       call check "COMMAND alone is not enough: .CommandHandler required", condition("O")~code == "93.900"; signal afterDuck
++
++unexpected:
++  say "UNEXPECTED" condition("O")~code condition("O")~message "line" sigl
++  exit 1
++
++syntaxAfter: procedure
++  signal on syntax name syntaxAfterGot
++  i.0 = 1; i.1 = "a"
++  address t arg(1) with input stem i. output stem o.
++  return "none"
++syntaxAfterGot:
++  return condition("O")~code
++
++inproc: procedure
++  local = "x"
++  address t "SET local local"
++  return local
++
++check: procedure
++  use arg name, ok
++  if ok then do; .local~ok += 1; say "ok   " name; end
++  else do; .local~bad += 1; say "FAIL " name; end
++  return
++
++::requires "cmdhandler.cls"
++
++::class T subclass CommandHandler
++::method command
++  use arg cmd, ctx
++  parse var cmd verb rest
++  select
++    when verb = "RETURN"  then return rest
++    when verb = "NOTHING" then return
++    when verb = "ENV"     then return ctx~environment
++    when verb = "SET"     then do
++      parse var rest name value
++      ctx~setVar(name, value)
++    end
++    when verb = "HAS"     then return ctx~hasVar(rest)
++    when verb = "GET"     then return ctx~getVar(rest)~string
++    when verb = "DROP"    then ctx~dropVar(rest)
++    when verb = "VARS"    then do
++      handlerLocal = 1
++      v = ctx~variables
++      return v~hasIndex("MINE") v~hasIndex("HANDLERLOCAL")
++    end
++    when verb = "BADNAME" then return self~badName(ctx)
++    when verb = "UPPER"   then do
++      do forever
++        line = ctx~lineIn
++        if line == .nil then leave
++        ctx~output(line~upper)
++      end
++    end
++    when verb = "LINES"   then do
++      lines = ctx~lines
++      ctx~output(.array~of(lines~items, lines~makeString("L", " ")))
++    end
++    when verb = "ERR"     then ctx~error(rest)
++    when verb = "REDIR"   then
++      return ctx~isRedirected("Input") ctx~isRedirected("Output"),
++             ctx~isRedirected("Error") ctx~isRedirected("Same")
++    when verb = "LINEIN"  then return ctx~lineIn == .nil
++    when verb = "RAISE"   then do
++      parse var rest kind code
++      if kind = "ERROR" then return ctx~raiseError(code)
++      return ctx~raiseFailure(code)
++    end
++    when verb = "DIVIDE"  then return 1 / 0
++    when verb = "SETDIVIDE"  then do; ctx~setVar("x", 1); return 1 / 0; end
++    when verb = "GETDIVIDE"  then do; x = ctx~getVar("x"); return 1 / 0; end
++    when verb = "VARSDIVIDE" then do; x = ctx~variables; return 1 / 0; end
++    when verb = "INDIVIDE"   then do; x = ctx~lineIn; return 1 / 0; end
++    when verb = "OUTDIVIDE"  then do; ctx~output("o"); return 1 / 0; end
++    when verb = "KEEP"    then .local~kept = ctx
++    when verb = "NESTED"  then do
++      address u "INNER"
++      return rc "T:after"
++    end
++    otherwise return ctx~raiseFailure(-1)
++  end
++  return 0
++
++::method badName
++  use arg ctx
++  signal on syntax name bad
++  ctx~setVar("1abc", 1)
++  return "no error"
++bad:
++  return condition("O")~code
++
++::class U subclass CommandHandler
++::method command
++  use arg cmd, ctx
++  return "U:inner"
++
++::class Base                             -- T2 has another superclass:
++::class T2 subclass Base inherit CommandHandler   -- the mixin is inherited
++::method command
++  return "T2"
++
++::class Duck                             -- has COMMAND, but no .CommandHandler
++::method command
++  return "quack"
++
++::class Threaded
++::method run
++  address t "RETURN thread ok"
++  return rc
+diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
+index e8af171..58bdb5a 100755
+--- a/wasm/tests/qualify-node-cli.sh
++++ b/wasm/tests/qualify-node-cli.sh
+@@ -274,6 +274,10 @@ check "JavaScript iteration (DO OVER, DO WITH), event options latest and max, re
+ check "JavaScript events: HTTP server in Rexx, threads, release, exit" '^rexx answered GET /q\?i=1$' \
+   '^rexx answered GET /q\?i=3$' '^taken=15 after release: The NIL object$' -- "$X jsev.rex"
+ 
++# --- command environments written in Rexx (extensions/cmdhandler, portable test)
++check "command handlers in Rexx (cmdhandler.cls)" '^[0-9]+ passed, 0 failed$' '!^FAIL ' -- \
++  "$X '$(cd "$(dirname "$0")" && pwd)/cmdhandler.rex'"
++
+ echo
+ if (( ${#FAILED[@]} )); then
+   echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
+diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
+index f43b363..90643a8 100755
+--- a/wasm/tests/web-api.py
++++ b/wasm/tests/web-api.py
+@@ -93,6 +93,9 @@ CASES = [
+      lambda r: "[1,2]" in r["out"].replace(" ", "")),
+   ("requires rxregexp", 'm = .RegularExpression~new("a+b"); say m~match("aaab")\n::requires "rxregexp.cls"',
+      {}, lambda r: r["out"] == "1\n"),
++  # command environments written in Rexx (extensions/cmdhandler): the portable test
++  ("cmdhandler", open(f"{SRC}/wasm/tests/cmdhandler.rex").read(), {},
++     lambda r: " passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
+   ("rexxtry", 'call "/home/rexx/rexxtry.rex"',
+      {"files": {"/home/rexx/rexxtry.rex": open(f"{SRC}/samples/rexxtry.rex").read()},
+       "inputs": ["say 6*7", "x = 'abc'; say reverse(x)", "exit"]},

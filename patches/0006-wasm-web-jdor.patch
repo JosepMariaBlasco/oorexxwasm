@@ -1,0 +1,3215 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
+Date: Mon, 5 Oct 2026 14:17:57 +0200
+Subject: [PATCH] WebAssembly port, browser: ADDRESS JDOR, drawing on the
+ canvas
+
+JDOR ("Java Drawing for ooRexx", Rony G. Flatscher), the drawing command
+handler of BSF4ooRexx850, ported to the browser build: Java2D commands on
+the HTML canvas, no Java involved.
+
+    address jdor                   -- select the JDOR environment
+    newImage 300 200; color red; moveTo 10 10; fillRect 100 50; winShow
+    ::requires "jdor.cls"          -- set up the JDOR environment
+
+- wasm/web-jdor.js (--pre-js): a port of JavaDrawingHandler.java
+  (100.20230718) to Canvas 2D, on the main runtime thread (the worker that
+  hosts the run, which never blocks): commands, aliases, results,
+  canonical output (ADDRESS ... WITH OUTPUT), command input (WITH INPUT),
+  ERROR/FAILURE conditions and return codes as in Java.  The objects
+  commands return say what they are, JDOR objects of the browser build
+  ("JDOR Image #99: 500x500, ..."), and where Java throws an exception the
+  condition's description reads "JDOR (web): ...".  Images are
+  OffscreenCanvases; at most once per animation frame a visible window's
+  image goes to the page as an ImageBitmap.  Areas use polygon-clipping
+  (MIT, wasm/web/polygon-clipping.umd.min.js), loaded on first use.
+- wasm/web-jdor.cpp: the package "jdor" (JdorNewHandler,
+  JdorAddEnvironment, JdorSetup) and a redirecting command handler added
+  with AddCommandEnvironment; each command is passed synchronously to the
+  main runtime thread (emscripten_proxy_sync_with_ctx), which may finish
+  it later; Rexx variables the command needs are resolved on the
+  interpreter thread; sleeping happens there too.
+- interpreter/package/PackageManager.cpp: packages a WASM build links in
+  through a weak hook, orx_wasm_extra_packages(), defined only by the
+  browser build (NULL elsewhere); loaded on first request.
+- wasm/web/jdor.cls: requiring it sets up the JDOR environment;
+  addJdorHandler (as BSF4ooRexx's jdor.cls) sets up more; JdorObject, the
+  Rexx side of the objects commands return ("a JDOR Image (#99)",
+  toString, kind, getters such as rc~width, passed back by name).
+- wasm/web/BSF.CLS (also preloaded as bsf.cls): not the Java bridge; just
+  what BSF4ooRexx JDOR programs use (.bsf~new of the handler,
+  bsf.importClass, BsfCommandHandler "add", bsf.createJavaArrayOf, pp, a
+  few .java.lang.System properties), so they also run unchanged.
+- wasm/web/ooRexx.js: run({onJdor, screen}) and run.jdorEvent(); the page
+  decides how to show the windows (ooRexx-worker.js relays the messages).
+- wasm/tests/web-api.py: 8 JDOR cases (30 in all).
+---
+ interpreter/package/PackageManager.cpp |   16 +
+ wasm/README.md                         |   56 +-
+ wasm/build-web.sh                      |   17 +-
+ wasm/tests/web-api.html                |   21 +-
+ wasm/tests/web-api.py                  |   41 +-
+ wasm/web-jdor.cpp                      |  431 +++++
+ wasm/web-jdor.js                       | 2060 ++++++++++++++++++++++++
+ wasm/web/BSF.CLS                       |  110 ++
+ wasm/web/jdor.cls                      |  116 ++
+ wasm/web/ooRexx-worker.js              |   12 +-
+ wasm/web/ooRexx.js                     |   17 +
+ wasm/web/polygon-clipping.umd.min.js   |   39 +
+ 12 files changed, 2924 insertions(+), 12 deletions(-)
+ create mode 100644 wasm/web-jdor.cpp
+ create mode 100644 wasm/web-jdor.js
+ create mode 100644 wasm/web/BSF.CLS
+ create mode 100644 wasm/web/jdor.cls
+ create mode 100644 wasm/web/polygon-clipping.umd.min.js
+
+diff --git a/interpreter/package/PackageManager.cpp b/interpreter/package/PackageManager.cpp
+index 5efe0eb..8b8e190 100644
+--- a/interpreter/package/PackageManager.cpp
++++ b/interpreter/package/PackageManager.cpp
+@@ -94,6 +94,11 @@ const PackageManager::EmbeddedPackage PackageManager::embeddedPackages[] =
+     { NULL, NULL, false }
+ };
+ 
++// More packages a particular WASM build links in (the browser build's JDOR
++// command handler, wasm/web-jdor.cpp), loaded on first request.  A weak
++// symbol: NULL in the builds that do not define it.
++extern "C" const RexxLibraryPackage *orx_wasm_extra_packages(void) __attribute__((weak));
++
+ 
+ /**
+  * Find the embedded package entry matching a restored internal package.
+@@ -299,6 +304,17 @@ LibraryPackage *PackageManager::loadLibrary(RexxString *name)
+                 return (LibraryPackage *)packages->get(name);
+             }
+         }
++        if (orx_wasm_extra_packages != NULL)
++        {
++            for (const RexxLibraryPackage *p = orx_wasm_extra_packages(); p->registeredName != NULL; p++)
++            {
++                if (name->strCaselessCompare(p->registeredName))
++                {
++                    loadInternalPackage(name, p->table);
++                    return (LibraryPackage *)packages->get(name);
++                }
++            }
++        }
+     }
+ #endif
+     if (package == NULL)
+diff --git a/wasm/README.md b/wasm/README.md
+index 728f384..f9c2f43 100644
+--- a/wasm/README.md
++++ b/wasm/README.md
+@@ -194,7 +194,58 @@ const { rc, files, stopped, ms } = await run.done;
+ isolated (see above).  `wasm/tests/web-api.py BIN_WEB` runs assertions over the
+ API in headless Chromium (Python Playwright): output, interactive and fixed
+ stdin, EOF, stop, threads, files in and out, extension classes, rexxtry,
+-trace and error marks, debug input.
++trace and error marks, debug input, JDOR.
++
++### Drawing: `ADDRESS JDOR`
++
++The browser build has no processes, but it has a drawing command environment:
++JDOR ("Java Drawing for ooRexx", Rony G. Flatscher), the command handler of
++BSF4ooRexx850 that turns Java2D into commands, ported to the HTML canvas.
++
++```rexx
++address jdor
++newImage 300 200; color red; moveTo 10 10; fillRect 100 50; winShow
++::requires "jdor.cls"               -- set up the JDOR environment
++```
++
++* Requiring `jdor.cls` sets up the JDOR environment (an image and its
++  window) for the whole interpreter instance; `address jdor` selects it, in
++  each routine, as for any environment.  `call addJdorHandler "NAME"` sets
++  up another one (its own image and window), or gives JDOR a fresh one.
++* The commands, aliases, results (RC), canonical output (`ADDRESS ... WITH
++  OUTPUT`), command input (`WITH INPUT`), error/failure conditions and return
++  codes follow the Java handler (`JavaDrawingHandler.java`, 100.20230718);
++  JDOR's documentation (`jdor_doc.html` in BSF4ooRexx) applies.  Objects
++  that commands return (colors, fonts, images, shapes...) are `JdorObject`s
++  that say what they are, not Java objects: `a JDOR Image (#99)`, `toString`
++  `JDOR Image #99: 500x500, type 2 (ARGB), an OffscreenCanvas`, `kind`
++  `Image`; getters like `rc~width` work, and they can be passed back by
++  variable name, also to another handler.  Where the Java handler throws a
++  Java exception, the ERROR condition's description reads `JDOR (web): ...`.
++* Programs written for BSF4ooRexx also run unchanged: `web/BSF.CLS` (also
++  `bsf.cls`; not the Java bridge, there is no Java here) provides
++  `.bsf~new("org.oorexx.handlers.jdor.JavaDrawingHandler")`,
++  `bsf.importClass` of it, `BsfCommandHandler "add"`, `bsf.createJavaArrayOf`,
++  a few `.java.lang.System~getProperty` values and `pp()`.
++* Implementation: `web-jdor.cpp` is the package `jdor` (routines
++  `JdorNewHandler`, `JdorAddEnvironment`, `JdorSetup`; a redirecting command
++  handler added at run time with `AddCommandEnvironment`), found by
++  `PackageManager` through a weak hook, `orx_wasm_extra_packages()`, that
++  only this build defines.  Each command is passed synchronously
++  (`emscripten_proxy_sync_with_ctx`) to the main runtime thread, the worker
++  that hosts the run and never blocks: `web-jdor.js` (a `--pre-js`) draws on
++  `OffscreenCanvas`es there, possibly finishing later (decoding and encoding
++  images are asynchronous), and asks the C++ side for Rexx variables it needs
++  (nicknames resolved through variables, `assignRC`, `getState`).  Sleeping
++  happens on the interpreter thread.  At most once per animation frame each
++  visible window's image goes to the page as an `ImageBitmap`
++  (`onJdor` in `ooRexx.js`; the page decides how to show windows).  Areas
++  (constructive area geometry) use polygon-clipping (MIT), loaded on first
++  use.
++* Not available: printing and the clipboard depend on the page
++  (`onJdor` 'print' / 'clipboard'); `clipboardGet`; real system fonts (Java's
++  logical fonts map to CSS families, as on Windows); XOR mode is
++  approximated; text antialiasing cannot be turned off.
+ 
+ ## Known limitations / deliberate non-claims
+ 
+@@ -203,7 +254,8 @@ trace and error marks, debug input.
+   with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
+   endpoint/proxy; a real WebSocket server can be addressed directly.
+ * UDP/datagram semantics are qualified only in the Node command-line build.
+-* Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).
++* Browser: ADDRESS commands requiring an OS child process fail closed (RC 127);
++  ADDRESS JDOR draws (see above).
+ * Maximum recursion depth is set by the JS engine's native stack (internal
+   CALL / internal function calls / method calls): Node about 7,100 / 5,400 /
+   4,000; browser workers about 900 / 700 / 500 in Chromium, 1,300 / 900 / 700
+diff --git a/wasm/build-web.sh b/wasm/build-web.sh
+index 62f7ae3..581badc 100755
+--- a/wasm/build-web.sh
++++ b/wasm/build-web.sh
+@@ -43,7 +43,8 @@
+ #
+ # Usage: wasm/build-web.sh [BUILD_DIR=build-wasm] [OUTDIR=BUILD_DIR/bin-web]
+ #   (BUILD_DIR: a build made by wasm/build-wasm.sh; EM_CONFIG from it)
+-# Output: OUTDIR/{rexx.js,rexx.wasm,rexx.data,ooRexx.js,ooRexx-worker.js}
++# Output: OUTDIR/{rexx.js,rexx.wasm,rexx.data,ooRexx.js,ooRexx-worker.js,
++#         polygon-clipping.umd.min.js (JDOR's areas, loaded on first use)}
+ set -euo pipefail
+ SRC=$(cd "$(dirname "$0")/.." && pwd)
+ BUILD=$(cd "${1:-$SRC/build-wasm}" && pwd)
+@@ -53,6 +54,10 @@ EMXX=$(sed -E 's/ .*//' "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
+ 
+ # the interactive stdin (read() of fd 0 served from a ring in shared memory)
+ "$EMXX" -O3 -pthread -c "$SRC/wasm/web-stdin.cpp" -o "$BUILD/web-stdin.o"
++# JDOR, the drawing command handler, on the canvas (package "jdor"); exceptions as
++# in CMakeLists.txt (exnref: a module that mixes encodings does not compile)
++"$EMXX" -O3 -std=gnu++11 -pthread -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0 -DHAVE_CONFIG_H -DOPSYS_EMSCRIPTEN \
++  -I"$SRC/api" -I"$SRC/api/platform/unix" -I"$BUILD" -c "$SRC/wasm/web-jdor.cpp" -o "$BUILD/web-jdor.o"
+ 
+ # the portable extension classes (not ncurses: no native library here)
+ PRELOAD=()
+@@ -61,6 +66,10 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+            csvStream/csvStream.cls dateparser/dateparser.cls; do
+   PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
+ done
++# JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
++PRELOAD+=("--preload-file" "$SRC/wasm/web/jdor.cls@/usr/lib/ooRexx/jdor.cls"
++          "--preload-file" "$SRC/wasm/web/BSF.CLS@/usr/lib/ooRexx/BSF.CLS"
++          "--preload-file" "$SRC/wasm/web/BSF.CLS@/usr/lib/ooRexx/bsf.cls")
+ 
+ # Emscripten's default list plus mainScriptUrlOrBlob: the pthreads must load
+ # rexx.js, not the worker script that hosts the runtime
+@@ -72,12 +81,12 @@ wasm,websocket,mainScriptUrlOrBlob]"
+ cmd=$(cat "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
+ cmd=$(sed -E 's/--preload-file [^ ]+//g; s/-sENVIRONMENT=[^ ]+//' <<<"$cmd")
+ cmd=${cmd//-o bin\/rexx.js/-o $OUT\/rexx.js}
+-(cd "$BUILD" && eval "$cmd" "$BUILD/web-stdin.o" \
++(cd "$BUILD" && eval "$cmd" "$BUILD/web-stdin.o" "$BUILD/web-jdor.o" \
+    -Wl,--wrap=read,--wrap=write \
+    -sENVIRONMENT=web,worker -sMODULARIZE=1 -sEXPORT_NAME=createOoRexx \
+    "-sINCOMING_MODULE_JS_API=$INCOMING" \
+-   --pre-js "$SRC/wasm/web-pre.js" \
++   --pre-js "$SRC/wasm/web-pre.js" --pre-js "$SRC/wasm/web-jdor.js" \
+    --preload-file "$BUILD/bin/rexx.img@/rexx.img" \
+    "${PRELOAD[@]}" ${EXTRA_LDFLAGS:-})
+-cp "$SRC/wasm/web/ooRexx.js" "$SRC/wasm/web/ooRexx-worker.js" "$OUT/"
++cp "$SRC/wasm/web/ooRexx.js" "$SRC/wasm/web/ooRexx-worker.js" "$SRC/wasm/web/polygon-clipping.umd.min.js" "$OUT/"
+ ls -l "$OUT" | awk 'NR>1{print $5, $9}'
+diff --git a/wasm/tests/web-api.html b/wasm/tests/web-api.html
+index e3fc7a7..19d0aeb 100644
+--- a/wasm/tests/web-api.html
++++ b/wasm/tests/web-api.html
+@@ -44,6 +44,7 @@
+ // (trace: the output marked as trace, errmsg: marked as an error message,
+ // debug: one flag per input request, true when .debugInput asked)
+ // inputs: lines typed one per input request (interactive stdin); then EOF
++// jdor: JDOR windows {win: {title, visible, frames, probe: [r,g,b,a] at o.probe}}
+ let rexx = null;
+ window.rexxReady = OoRexx.load().then((r) => { rexx = r; return true; }, (e) => String(e));
+ window.rexxRun = async (source, o = {}) => {
+@@ -52,16 +53,30 @@ window.rexxRun = async (source, o = {}) => {
+   const mark = (t, kind) => { if (kind === 'trace') trace += t; else if (kind === 'error') errmsg += t; };
+   const inputs = (o.inputs || []).slice();
+   const files = Object.assign({ '/home/rexx/prog.rex': source }, o.files || {});
++  const jdor = {};
++  const onJdor = (m) => {
++    const w = jdor[m.win] = jdor[m.win] || { frames: 0 };
++    if (m.op === 'window') Object.assign(w, { title: m.title, visible: m.visible, frame: m.frame, width: m.width, height: m.height });
++    else if (m.op === 'frame') {
++      w.frames++;
++      if (o.probe) {
++        const c = new OffscreenCanvas(m.bitmap.width, m.bitmap.height), x = c.getContext('2d');
++        x.drawImage(m.bitmap, 0, 0);
++        w.probe = Array.from(x.getImageData(o.probe[0], o.probe[1], 1, 1).data);
++      }
++      m.bitmap.close();
++    }
++  };
+   const run = rexx.run({
+     args: ['prog.rex'].concat(o.args || []), files, stdin: o.stdin,
+-    onOut: (t, kind) => { out += t; mark(t, kind); }, onErr: (t, kind) => { err += t; mark(t, kind); },
++    onOut: (t, kind) => { out += t; mark(t, kind); }, onErr: (t, kind) => { err += t; mark(t, kind); }, onJdor,
+     onInput: (info) => { asks++; debug.push(!!(info && info.debug));
+       if (inputs.length) run.write(inputs.shift() + '\n'); else run.close(); },
+   });
+   if (o.stopAfterMs) setTimeout(() => run.stop(), o.stopAfterMs);
+   const r = await run.done;
+   const files2 = {};
+-  for (const [p, b] of Object.entries(r.files)) files2[p] = new TextDecoder().decode(b);
+-  return { out, err, asks, trace, errmsg, debug, rc: r.rc, stopped: r.stopped, error: r.error, ms: Math.round(r.ms), files: files2 };
++  for (const [p, b] of Object.entries(r.files)) files2[p] = /\.png$/i.test(p) ? 'PNG ' + b.length : new TextDecoder().decode(b);
++  return { out, err, asks, trace, errmsg, debug, jdor, rc: r.rc, stopped: r.stopped, error: r.error, ms: Math.round(r.ms), files: files2 };
+ };
+ </script>
+diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
+index 6467a39..f368988 100755
+--- a/wasm/tests/web-api.py
++++ b/wasm/tests/web-api.py
+@@ -42,7 +42,7 @@ Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP
+ on 127.0.0.1:8001 and runs the cases in headless Chromium.  Needs Python
+ Playwright with Chromium.  Exit status 1 on any failure.
+ """
+-import json, os, shutil, subprocess, sys, time
++import json, os, re, shutil, subprocess, sys, time
+ from playwright.sync_api import sync_playwright
+ 
+ if len(sys.argv) != 2:
+@@ -123,6 +123,45 @@ CASES = [
+                        '::options trace r', {},
+      lambda r: r["out"].count("  worker") == 12 and "total 4\n" in r["out"] and "*-*" in r["err"]
+                and r["err"] == r["trace"] and r["errmsg"] == ""),
++  # JDOR: the drawing command handler (wasm/web-jdor.*, wasm/web/jdor.cls)
++  ("jdor draw", 'address jdor\nnewImage 100 80; color red; moveTo 10 10; fillRect 30 30\n'
++                'winTitle "T1"; winShow; sleep 0.2\n::requires "jdor.cls"',
++     {"probe": [20, 20]}, lambda r: r["rc"] == 0 and r["jdor"] and list(r["jdor"].values())[0]["title"] == "T1"
++                                   and list(r["jdor"].values())[0]["frames"] >= 1
++                                   and list(r["jdor"].values())[0]["probe"] == [255, 0, 0, 255]),
++  ("jdor results", 'address jdor\nmoveTo 3 4; moveTo 5 6; say rc\ncolor c1 1 2 3; color; '
++                   'say rc~toString rc~red rc~getBlue\nstringBounds "Rexx"; say words(rc)\ntranslate; say rc\n'
++                   '::requires "jdor.cls"', {},
++     lambda r: re.fullmatch(r"3 4\nJDOR Color #\d+: r=1,g=2,b=3,a=255 1 3\n4\n0\.0 0\.0\n", r["out"]) is not None),
++  # the objects say what they are (no Java): STRING, TOSTRING, KIND; errors "JDOR (web): ..."
++  ("jdor identity", 'address jdor\nnewImage 50 40; image; say rc; say rc~toString; say rc~kind rc~width\n'
++                    'font f "Serif bold 20"; font; say rc~kind; say rc~string~left(15)\n'
++                    'signal on error; fillRect x 1\nerror: say rc condition("A")[1]\n::requires "jdor.cls"', {},
++     lambda r: re.fullmatch(r"a JDOR Image \(#\d+\)\nJDOR Image #\d+: 50x40, type 2 \(ARGB\), an OffscreenCanvas\n"
++                            r"Image 50\nFont\na JDOR Font \(#\d*\n-102 ERROR +-102 command # +\d+ \[FILLRECT X 1\].* cause: \[JDOR \(web\): not a number: \"X\"\]\n", r["out"]) is not None
++               and "java" not in r["out"].lower()),
++  ("jdor conditions", 'address jdor\nnoSuchCommand; say .rs rc\nfillRect x y; say .rs rc\n'
++                      'signal on error; color unknownColor; say "not here"\nerror: say "ERROR" rc condition("D")\n'
++                      '::requires "jdor.cls"', {},
++     lambda r: "-1 -1\n" in r["out"] and "1 -102\n" in r["out"] and "ERROR -3 COLOR UNKNOWNCOLOR" in r["out"]
++               and "not here" not in r["out"]),
++  ("jdor redirection", 'o = .array~new\naddress jdor with output append using (o)\n'
++                       'moveTo 10.4 20; "-- note"; color blue\naddress jdor with input using ("newImage 10 10", "moveTo 1 2")\n'
++                       '"-- go"; address jdor; moveTo; say rc; say o~makeString("L", "|")\n::requires "jdor.cls"', {},
++     lambda r: r["out"] == "1 2\nmoveTo 10 20|-- note|color BLUE\n"),
++  ("jdor bsf compat", 'h = .bsf~new("org.oorexx.handlers.jdor.JavaDrawingHandler"); call BsfCommandHandler "add", "X", h\n'
++                      'xs = bsf.createJavaArrayOf("int.class", 0, 50, 0); ys = bsf.createJavaArrayOf("int.class", 0, 0, 50)\n'
++                      'address x\nnewImage 60 60; shape tri polygon "xs" "ys" 3; shapeBounds tri; say pp(rc)\n'
++                      'say .java.lang.System~getProperty("user.home")\n::requires "BSF.CLS"', {},
++     lambda r: r["out"] == "[0.0 0.0 50.0 50.0]\n/home/rexx\n"),
++  ("jdor images", 'address jdor\nnewImage 40 30; fillRect 40 30; saveImage pic.png\n'
++                  'call addJdorHandler "B"; address b\nloadImage p pic.png; say rc; image; img = rc\n'
++                  'address jdor\nnewImage 50 50; moveTo 5 5; drawImage "img"; imageSize; say rc\n::requires "jdor.cls"', {},
++     lambda r: r["out"] == "40 30\n50 50\n" and r["files"].get("/home/rexx/PIC.PNG", "").startswith("PNG")),
++  ("jdor areas", 'address jdor\nshape a rect 0 0 10 10; shape b rect 5 0 10 10\n'
++                 'shape u area a; areaAdd u b; shapeBounds u; say rc\nshape i area a; areaIntersect i b; shapeBounds i; say rc\n'
++                 '::requires "jdor.cls"', {},
++     lambda r: r["out"] == "0.0 0.0 15.0 10.0\n5.0 0.0 5.0 10.0\n"),
+ ]
+ 
+ fails = 0; ran = 0
+diff --git a/wasm/web-jdor.cpp b/wasm/web-jdor.cpp
+new file mode 100644
+index 0000000..37f6f14
+--- /dev/null
++++ b/wasm/web-jdor.cpp
+@@ -0,0 +1,431 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*
++ * ooRexx/WASM browser build: the native side of JDOR, the drawing command
++ * handler of BSF4ooRexx (Rony G. Flatscher), on the HTML canvas.
++ *
++ * The drawing itself is JavaScript (wasm/web-jdor.js), on the main runtime
++ * thread: the Web Worker that hosts the run, which never blocks, owns the
++ * images (OffscreenCanvas) and sends what a window shows to the page.  This
++ * file is the Rexx side: the package "jdor" (::REQUIRES "jdor" LIBRARY, see
++ * wasm/web/jdor.cls) and a redirecting command handler.  Each command is
++ * passed, synchronously, to the main runtime thread (the interpreter runs
++ * on a pthread); the JavaScript side may finish the call later (decoding or
++ * encoding an image is asynchronous in the browser).
++ *
++ * The reply is a sequence of records "<tag><length>:<bytes>":
++ *   O line   write to the redirected output     E line  ... to redirected error
++ *   W name   resolve this Rexx variable and call again (no side effect yet)
++ *   V name   set this Rexx variable to the value record that follows
++ *   Z secs   sleep        C "ERROR|FAILURE rc nr message"   raise the condition
++ *   R        the command result: the value record that follows
++ * Values: S string, N .nil, J "kind<tab>ref<tab>display" (a JdorObject),
++ *   A count + values (an Array), T count + (K key, value) pairs (a StringTable),
++ *   U an unset variable.  The resolved variables go to JavaScript in the same
++ *   format, as K name + value records.
++ */
++
++#include <emscripten.h>
++#include <emscripten/proxying.h>
++#include <emscripten/threading.h>
++#include <oorexxapi.h>
++#include <pthread.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <string>
++#include <time.h>
++#include <unistd.h>
++
++extern "C"
++{
++
++// Shared with wasm/web-jdor.js (byte offsets in comments).
++typedef struct
++{
++    const char *address;    //  0: the environment name
++    const char *command;    //  4: the command (UTF-8, NUL-terminated)
++    int32_t     op;         //  8: 1 command, 2 new handler, 3 bind address to handler
++    int32_t     handler;    // 12: handler id (op 3)
++    int32_t     outRedir;   // 16: output is redirected (op 1)
++    const char *vars;       // 20: resolved variables (records), or NULL
++    char       *reply;      // 24: set by JavaScript: malloc'ed reply
++    int32_t     replyLen;   // 28: its length in bytes
++} JdorRequest;
++
++EM_JS(void, jdor_js_call, (em_proxying_ctx *ctx, JdorRequest *req), {
++    Module['jdorCall'](ctx, req);
++});
++
++EMSCRIPTEN_KEEPALIVE void *jdor_alloc(int n)        { return malloc(n); }
++EMSCRIPTEN_KEEPALIVE void  jdor_finish(em_proxying_ctx *ctx) { emscripten_proxy_finish(ctx); }
++
++static void jdorOnMain(em_proxying_ctx *ctx, void *arg)
++{
++    jdor_js_call(ctx, (JdorRequest *)arg);
++}
++
++} // extern "C"
++
++// pass a request to the main runtime thread and wait for the reply
++static std::string jdorCall(JdorRequest &req)
++{
++    req.reply = NULL;
++    req.replyLen = 0;
++    if (!emscripten_proxy_sync_with_ctx(emscripten_proxy_get_system_queue(),
++                                        emscripten_main_runtime_thread_id(), jdorOnMain, &req))
++    {
++        return std::string("C30:FAILURE -99 0 JDOR is not available");
++    }
++    std::string r(req.reply ? req.reply : "", req.replyLen);
++    free(req.reply);
++    return r;
++}
++
++
++// ---- reply records ---------------------------------------------------------
++
++struct Rec { char tag; std::string data; };
++
++static bool nextRec(const std::string &s, size_t &pos, Rec &rec)
++{
++    if (pos >= s.size()) return false;
++    rec.tag = s[pos++];
++    size_t colon = s.find(':', pos);
++    if (colon == std::string::npos) { pos = s.size(); return false; }
++    size_t len = strtoul(s.substr(pos, colon - pos).c_str(), NULL, 10);
++    rec.data = s.substr(colon + 1, len);
++    pos = colon + 1 + len;
++    return true;
++}
++
++static void putRec(std::string &s, char tag, const std::string &data)
++{
++    s += tag;
++    s += std::to_string(data.size());
++    s += ':';
++    s += data;
++}
++
++static RexxObjectPtr jdorClass = NULLOBJECT;      // .JdorObject, see JdorSetup()
++
++// build the Rexx object for the value record at pos
++static RexxObjectPtr toRexx(RexxThreadContext *c, const std::string &s, size_t &pos)
++{
++    Rec r;
++    if (!nextRec(s, pos, r)) return c->Nil();
++    switch (r.tag)
++    {
++        case 'S': return c->String(r.data.c_str(), r.data.size());
++        case 'J':
++        {
++            size_t t1 = r.data.find('\t'), t2 = r.data.find('\t', t1 + 1);
++            if (jdorClass == NULLOBJECT || t1 == std::string::npos || t2 == std::string::npos)
++            {
++                return c->String(r.data.c_str());
++            }
++            RexxArrayObject args = c->ArrayOfThree(c->String(r.data.substr(0, t1).c_str()),
++                                                   c->String(r.data.substr(t1 + 1, t2 - t1 - 1).c_str()),
++                                                   c->String(r.data.substr(t2 + 1).c_str()));
++            return c->SendMessage(jdorClass, "NEW", args);
++        }
++        case 'A':
++        {
++            size_t n = strtoul(r.data.c_str(), NULL, 10);
++            RexxArrayObject a = c->NewArray(n);
++            for (size_t i = 1; i <= n; i++) c->ArrayPut(a, toRexx(c, s, pos), i);
++            return a;
++        }
++        case 'T':
++        {
++            size_t n = strtoul(r.data.c_str(), NULL, 10);
++            RexxObjectPtr st = c->SendMessage0(c->FindClass("STRINGTABLE"), "NEW");
++            for (size_t i = 0; i < n; i++)
++            {
++                Rec k;
++                if (!nextRec(s, pos, k)) break;
++                RexxObjectPtr v = toRexx(c, s, pos);
++                c->SendMessage2(st, "PUT", v, c->String(k.data.c_str()));
++            }
++            return st;
++        }
++        default: return c->Nil();
++    }
++}
++
++// encode the value of a Rexx variable for JavaScript
++static void fromRexx(RexxThreadContext *c, std::string &out, RexxObjectPtr v)
++{
++    if (v == NULLOBJECT) { putRec(out, 'U', ""); return; }
++    if (v == c->Nil()) { putRec(out, 'N', ""); return; }
++    if (jdorClass != NULLOBJECT && c->IsInstanceOf(v, (RexxClassObject)jdorClass))
++    {
++        putRec(out, 'J', c->ObjectToStringValue(c->SendMessage0(v, "JDORREF")));
++        return;
++    }
++    if (c->IsArray(v))
++    {
++        size_t n = c->ArrayItems((RexxArrayObject)v), size = c->ArraySize((RexxArrayObject)v);
++        std::string items;
++        size_t count = 0;
++        for (size_t i = 1; i <= size && count < n; i++)
++        {
++            RexxObjectPtr item = c->ArrayAt((RexxArrayObject)v, i);
++            if (item == NULLOBJECT) continue;
++            fromRexx(c, items, item);
++            count++;
++        }
++        putRec(out, 'A', std::to_string(count));
++        out += items;
++        return;
++    }
++    putRec(out, 'S', c->ObjectToStringValue(v));
++}
++
++
++// ---- the command handler ---------------------------------------------------
++
++// where in the program the command was issued, for error messages
++static std::string where(RexxExitContext *c)
++{
++    RexxObjectPtr ctx = c->GetCallerContext();
++    if (ctx == NULLOBJECT) return "";
++    std::string line = c->ObjectToStringValue(c->SendMessage0(ctx, "LINE"));
++    RexxObjectPtr exe = c->SendMessage0(ctx, "EXECUTABLE");
++    std::string kind = exe == NULLOBJECT ? "" :
++        c->ObjectToStringValue(c->SendMessage0(c->SendMessage0(exe, "CLASS"), "ID"));
++    for (auto &ch : kind) ch = tolower(ch);
++    std::string name = c->ObjectToStringValue(c->SendMessage0(ctx, "NAME"));
++    size_t slash = name.find_last_of('/');
++    if (slash != std::string::npos) name = name.substr(slash + 1);
++    return "line # " + line + " in " + kind + " [" + name + "]";
++}
++
++static void sleepSeconds(double secs)
++{
++    if (secs <= 0) return;
++    struct timespec ts;
++    ts.tv_sec = (time_t)secs;
++    ts.tv_nsec = (long)((secs - (double)ts.tv_sec) * 1e9);
++    nanosleep(&ts, NULL);
++}
++
++// run one command; returns the result and tells whether a condition was raised
++static RexxObjectPtr runCommand(RexxExitContext *c, RexxIORedirectorContext *io, const char *address,
++                                const std::string &command, bool &raised)
++{
++    std::string vars;
++    std::string reply;
++    raised = false;
++    for (int round = 0; round < 64; round++)
++    {
++        JdorRequest req = {};
++        req.address = address;
++        req.command = command.c_str();
++        req.op = 1;
++        req.outRedir = io->IsOutputRedirected() ? 1 : 0;
++        req.vars = vars.empty() ? NULL : vars.c_str();
++        reply = jdorCall(req);
++        // a variable to resolve?  then ask again with its value
++        size_t pos = 0;
++        Rec r;
++        bool again = false;
++        while (nextRec(reply, pos, r))
++        {
++            if (r.tag == 'W')
++            {
++                putRec(vars, 'K', r.data);
++                fromRexx(c->threadContext, vars, c->GetContextVariable(r.data.c_str()));
++                again = true;
++            }
++        }
++        if (!again) break;
++    }
++
++    RexxObjectPtr result = NULLOBJECT;
++    size_t pos = 0;
++    Rec r;
++    while (nextRec(reply, pos, r))
++    {
++        switch (r.tag)
++        {
++            case 'O': io->WriteOutput(r.data.c_str(), r.data.size()); break;
++            case 'E': io->WriteError(r.data.c_str(), r.data.size()); break;
++            case 'Z': sleepSeconds(strtod(r.data.c_str(), NULL)); break;
++            case 'V':
++            {
++                RexxObjectPtr v = toRexx(c->threadContext, reply, pos);
++                c->SetContextVariable(r.data.c_str(), v);
++                break;
++            }
++            case 'R': result = toRexx(c->threadContext, reply, pos); break;
++            case 'C':
++            {
++                // "ERROR|FAILURE rc nr message", formatted as the Java handler does
++                char type[16] = "", rc[32] = "";
++                int nr = 0, n = 0;
++                sscanf(r.data.c_str(), "%15s %31s %d %n", type, rc, &nr, &n);
++                std::string msg = r.data.substr(n);
++                char head[96];
++                snprintf(head, sizeof head, "%-7s %3s command # %3d [", type, rc, nr);
++                std::string full = head + command + "] " + where(c) + " cause: [" + msg + "]";
++                if (io->IsErrorRedirected()) io->WriteError(full.c_str(), full.size());
++                RexxThreadContext *t = c->threadContext;
++                RexxArrayObject add = t->ArrayOfFour(t->String(full.c_str()), t->String(command.c_str()),
++                                                     t->String(rc), c->GetCallerContext());
++                t->RaiseCondition(type, t->String(command.c_str()), add, t->String(rc));
++                result = t->String(rc);
++                raised = true;
++                break;
++            }
++            default: break;
++        }
++    }
++    return result;
++}
++
++static RexxObjectPtr RexxEntry jdorHandler(RexxExitContext *c, RexxStringObject address,
++                                           RexxStringObject command, RexxIORedirectorContext *io)
++{
++    const char *addr = c->CString(address);
++    bool raised = false;
++    RexxObjectPtr result = runCommand(c, io, addr, c->CString(command), raised);
++    if (!raised && io->IsInputRedirected())
++    {
++        // the commands come from the redirected input (the triggering one is
++        // processed first, like the Java handler does)
++        for (;;)
++        {
++            CSTRING data = NULL;
++            size_t len = 0;
++            io->ReadInput(&data, &len);
++            if (data == NULL) break;
++            result = runCommand(c, io, addr, std::string(data, len), raised);
++            if (raised || c->CheckCondition()) break;
++        }
++    }
++    return result;
++}
++
++
++// ---- the package "jdor" ----------------------------------------------------
++
++// JdorSetup(class): the class of the objects commands return (.JdorObject)
++RexxRoutine1(int, JdorSetup, RexxObjectPtr, cls)
++{
++    if (jdorClass == NULLOBJECT) jdorClass = context->RequestGlobalReference(cls);
++    return 0;
++}
++
++// JdorNewHandler(): a new drawing handler (an image and its window); returns
++// its reference (a JdorObject of kind HANDLER)
++RexxRoutine0(RexxObjectPtr, JdorNewHandler)
++{
++    JdorRequest req = {};
++    req.address = "";
++    req.command = "";
++    req.op = 2;
++    std::string reply = jdorCall(req);
++    size_t pos = 0;
++    Rec r;
++    while (nextRec(reply, pos, r))
++    {
++        if (r.tag == 'R') return toRexx(context->threadContext, reply, pos);
++    }
++    return context->Nil();
++}
++
++// JdorAddEnvironment(name, handler): commands to ADDRESS name go to handler
++RexxRoutine2(int, JdorAddEnvironment, CSTRING, name, RexxObjectPtr, handler)
++{
++    std::string ref;
++    if (jdorClass != NULLOBJECT && context->IsInstanceOf(handler, (RexxClassObject)jdorClass))
++    {
++        ref = context->ObjectToStringValue(context->SendMessage0(handler, "JDORREF"));
++    }
++    else
++    {
++        ref = context->ObjectToStringValue(handler);
++    }
++    std::string upper(name);
++    for (auto &ch : upper) ch = toupper(ch);
++    JdorRequest req = {};
++    req.address = upper.c_str();
++    req.command = ref.c_str();
++    req.op = 3;
++    std::string reply = jdorCall(req);
++    if (reply.find("C") == 0)
++    {
++        context->ThrowException1(Rexx_Error_Incorrect_call_user_defined, context->String("not a JDOR handler"));
++        return 1;
++    }
++    context->threadContext->AddCommandEnvironment(upper.c_str(), (REXXPFN)jdorHandler,
++                                                  REDIRECTING_COMMAND_ENVIRONMENT);
++    return 0;
++}
++
++static RexxRoutineEntry jdorRoutines[] =
++{
++    REXX_TYPED_ROUTINE(JdorSetup, JdorSetup),
++    REXX_TYPED_ROUTINE(JdorNewHandler, JdorNewHandler),
++    REXX_TYPED_ROUTINE(JdorAddEnvironment, JdorAddEnvironment),
++    REXX_LAST_ROUTINE()
++};
++
++static RexxPackageEntry jdorPackage =
++{
++    STANDARD_PACKAGE_HEADER
++    REXX_INTERPRETER_5_0_0,
++    "jdor",
++    "1.0.0",
++    NULL,
++    NULL,
++    jdorRoutines,
++    NULL
++};
++
++static const RexxLibraryPackage extraPackages[] =
++{
++    { "jdor", &jdorPackage },
++    { NULL, NULL }
++};
++
++// the hook in interpreter/package/PackageManager.cpp
++extern "C" const RexxLibraryPackage *orx_wasm_extra_packages(void)
++{
++    return extraPackages;
++}
+diff --git a/wasm/web-jdor.js b/wasm/web-jdor.js
+new file mode 100644
+index 0000000..293c974
+--- /dev/null
++++ b/wasm/web-jdor.js
+@@ -0,0 +1,2060 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*
++ * ooRexx/WASM browser build: JDOR on the HTML canvas.
++ *
++ * JDOR ("Java Drawing for ooRexx", Rony G. Flatscher, BSF4ooRexx850) is a Rexx
++ * command handler that makes Java2D available as commands:
++ *
++ *     address jdor
++ *     newImage 300 200; color red; moveTo 10 10; fillRect 100 50; winShow
++ *
++ * This is a port of its Java implementation (JavaDrawingHandler.java,
++ * version 100.20230718) to the browser's Canvas 2D, which descends from the
++ * same PostScript model: the commands, their arguments, aliases, return
++ * values (RC), canonical output (ADDRESS ... WITH OUTPUT), error and failure
++ * conditions and their return codes follow the Java handler.  Where the Java
++ * handler draws other than its documentation says (the size of an Arc2D,
++ * drawImage with a source rectangle), this port draws as Java does, so
++ * programs look the same; those places are marked "as Java".  Where it fails
++ * instead (draw3DRect fills, reset after pushGC, paint with a registered
++ * colour, printPos and winResizable as queries) or writes canonical output
++ * that cannot be replayed (gradientPaint, copyArea), this port does what the
++ * documentation says.
++ *
++ * Runs on the main runtime thread: the Web Worker hosting the run, which
++ * never blocks.  wasm/web-jdor.cpp passes each command here (see its comment
++ * for the reply format).  Every handler owns an image (an OffscreenCanvas)
++ * and a window; at most once per animation frame a visible window's image is
++ * sent to the page as an ImageBitmap (Module.orxJdor, set by the worker).
++ * The objects that commands return (colors, fonts, images, shapes, ...)
++ * become JdorObject instances on the Rexx side (wasm/web/jdor.cls), which
++ * carry a reference back to the object here.  They say what they are, JDOR
++ * objects of the browser build ("JDOR Image #99: 500x500, ..."), and the
++ * handler's errors read "JDOR (web): ...": nothing pretends to be Java.
++ */
++(function () {
++  'use strict';
++  if (typeof ENVIRONMENT_IS_PTHREAD !== 'undefined' && ENVIRONMENT_IS_PTHREAD) return;
++
++  // =========================================================================
++  // Java number formatting and parsing
++  // =========================================================================
++
++  // digits and exponent of a number's shortest representation, Java style
++  function javaFormat(mant, exp) {   // mant: digits without dot, exp: decimal exponent of first digit
++    if (exp >= -3 && exp < 7) {
++      if (exp >= 0) {
++        const intPart = mant.length > exp + 1 ? mant.slice(0, exp + 1) : mant + '0'.repeat(exp + 1 - mant.length);
++        const frac = mant.length > exp + 1 ? mant.slice(exp + 1) : '';
++        return intPart + '.' + (frac || '0');
++      }
++      return '0.' + '0'.repeat(-exp - 1) + mant;
++    }
++    return mant[0] + '.' + (mant.slice(1) || '0') + 'E' + exp;
++  }
++  function splitExp(s) {             // "d.dddde±n" -> [digits, exp]
++    const m = /^(\d)(?:\.(\d+))?e([+-]\d+)$/.exec(s);
++    let digits = m[1] + (m[2] || '');
++    digits = digits.replace(/0+$/, '') || '0';
++    return [digits, parseInt(m[3], 10)];
++  }
++  function jd(x) {                   // Double.toString
++    x = +x;
++    if (Number.isNaN(x)) return 'NaN';
++    if (x === Infinity) return 'Infinity';
++    if (x === -Infinity) return '-Infinity';
++    if (x === 0) return (Object.is(x, -0) ? '-' : '') + '0.0';
++    const neg = x < 0;
++    const [d, e] = splitExp(Math.abs(x).toExponential());
++    return (neg ? '-' : '') + javaFormat(d, e);
++  }
++  function jf(x) {                   // Float.toString
++    x = Math.fround(+x);
++    if (!Number.isFinite(x) || x === 0) return jd(x);
++    let s = null;
++    for (let p = 1; p <= 9; p++) {
++      s = Math.abs(x).toExponential(p - 1);
++      if (Math.fround(parseFloat(s)) === Math.abs(x)) break;
++    }
++    const [d, e] = splitExp(s);
++    return (x < 0 ? '-' : '') + javaFormat(d, e);
++  }
++
++  // An argument or command the handler rejects (where JDOR in Java throws a
++  // Java exception): the ERROR condition's description, "JDOR (web): msg".
++  class JdorError {
++    constructor(msg) { this.msg = msg; }
++    toString() { return 'JDOR (web): ' + this.msg; }
++  }
++  const nfe = (s) => new JdorError('not a number: "' + s + '"');
++  function iae(msg) { throw new JdorError(msg); }
++
++  function parseIntJ(s) {            // Integer.parseInt
++    if (!/^[+-]?\d+$/.test(s)) throw nfe(s);
++    const v = parseInt(s, 10);
++    if (v > 2147483647 || v < -2147483648) throw nfe(s);
++    return v;
++  }
++  function parseDoubleJ(s) {         // Double.parseDouble (also Float.parseFloat)
++    const t = String(s).trim();
++    if (!/^[+-]?(NaN|Infinity|(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?[fFdD]?)$/.test(t)) {
++      throw new JdorError('not a number: "' + s + '"');
++    }
++    return parseFloat(t.replace(/[fFdD]$/, ''));
++  }
++  const parseFloatJ = (s) => Math.fround(parseDoubleJ(s));
++  function string2int(s) {           // JDOR: ints, decimals get rounded
++    if (s.indexOf('.') < 0) return parseIntJ(s);
++    const d = parseDoubleJ(s);
++    return Math.round(d) | 0;        // Math.round(double) -> (int)
++  }
++  const BOOLS = { '0': false, '1': true, '.FALSE': false, '.TRUE': true, 'FALSE': false, 'TRUE': true };
++  const isBool = (s) => Object.prototype.hasOwnProperty.call(BOOLS, s.toUpperCase());
++  const boolOf = (s) => BOOLS[s.toUpperCase()] === true;
++  const VARCHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_!?';
++  const isVarName = (s) => s.length > 0 && VARCHARS.indexOf(s[0]) >= 0;
++
++  // "(1,2,3)" -> numbers (JDOR's Rexx array expressions)
++  function arrayExpr(s, parse) {
++    const a = s.indexOf('(');
++    if (a < 0) return null;
++    const b = s.indexOf(')', a);
++    if (b < 0) return null;
++    return s.slice(a + 1, b).split(',').map((p) => parse(p.trim().split(' ')[0]));
++  }
++  const intArrayExpr = (a) => '(' + a.join(',') + ')';
++  const floatArrayExpr = (a) => '(' + a.map(jf).join(',') + ')';
++
++  // =========================================================================
++  // Constants (as Java)
++  // =========================================================================
++
++  const PREDEFINED_COLORS = {ALICEBLUE:[240,248,255,255],ANTIQUEWHITE:[250,235,215,255],AQUA:[0,255,255,255],AQUAMARINE:[127,255,212,255],AZURE:[240,255,255,255],BEIGE:[245,245,220,255],BISQUE:[255,228,196,255],BLACK:[0,0,0,255],BLANCHEDALMOND:[255,235,205,255],BLUE:[0,0,255,255],BLUEVIOLET:[138,43,226,255],BROWN:[165,42,42,255],BURLYWOOD:[222,184,135,255],CADETBLUE:[95,158,160,255],CHARTREUSE:[127,255,0,255],CHOCOLATE:[210,105,30,255],CORAL:[255,127,80,255],CORNFLOWERBLUE:[100,149,237,255],CORNSILK:[255,248,220,255],CRIMSON:[220,20,60,255],CYAN:[0,255,255,255],DARKBLUE:[0,0,139,255],DARKCYAN:[0,139,139,255],DARKGOLDENROD:[184,134,11,255],DARKGRAY:[169,169,169,255],DARKGREEN:[0,100,0,255],DARKGREY:[169,169,169,255],DARKKHAKI:[189,183,107,255],DARKMAGENTA:[139,0,139,255],DARKOLIVEGREEN:[85,107,47,255],DARKORANGE:[255,140,0,255],DARKORCHID:[153,50,204,255],DARKRED:[139,0,0,255],DARKSALMON:[233,150,122,255],DARKSEAGREEN:[143,188,143,255],DARKSLATEBLUE:[72,61,139,255],DARKSLATEGRAY:[47,79,79,255],DARKSLATEGREY:[47,79,79,255],DARKTURQUOISE:[0,206,209,255],DARKVIOLET:[148,0,211,255],DARK_GRAY:[64,64,64,255],DEEPPINK:[255,20,147,255],DEEPSKYBLUE:[0,191,255,255],DIMGRAY:[105,105,105,255],DIMGREY:[105,105,105,255],DODGERBLUE:[30,144,255,255],FIREBRICK:[178,34,34,255],FLORALWHITE:[255,250,240,255],FORESTGREEN:[34,139,34,255],FUCHSIA:[255,0,255,255],GAINSBORO:[220,220,220,255],GHOSTWHITE:[248,248,255,255],GOLD:[255,215,0,255],GOLDENROD:[218,165,32,255],GRAY:[128,128,128,255],GREEN:[0,255,0,255],GREENYELLOW:[173,255,47,255],GREY:[128,128,128,255],HONEYDEW:[240,255,240,255],HOTPINK:[255,105,180,255],INDIANRED:[205,92,92,255],INDIGO:[75,0,130,255],IVORY:[255,255,240,255],KHAKI:[240,230,140,255],LAVENDER:[230,230,250,255],LAVENDERBLUSH:[255,240,245,255],LAWNGREEN:[124,252,0,255],LEMONCHIFFON:[255,250,205,255],LIGHTBLUE:[173,216,230,255],LIGHTCORAL:[240,128,128,255],LIGHTCYAN:[224,255,255,255],LIGHTGOLDENRODYELLOW:[250,250,210,255],LIGHTGRAY:[211,211,211,255],LIGHTGREEN:[144,238,144,255],LIGHTGREY:[211,211,211,255],LIGHTPINK:[255,182,193,255],LIGHTSALMON:[255,160,122,255],LIGHTSEAGREEN:[32,178,170,255],LIGHTSKYBLUE:[135,206,250,255],LIGHTSLATEGRAY:[119,136,153,255],LIGHTSLATEGREY:[119,136,153,255],LIGHTSTEELBLUE:[176,196,222,255],LIGHTYELLOW:[255,255,224,255],LIGHT_GRAY:[192,192,192,255],LIME:[0,255,0,255],LIMEGREEN:[50,205,50,255],LINEN:[250,240,230,255],MAGENTA:[255,0,255,255],MAROON:[128,0,0,255],MEDIUMAQUAMARINE:[102,205,170,255],MEDIUMBLUE:[0,0,205,255],MEDIUMORCHID:[186,85,211,255],MEDIUMPURPLE:[147,112,219,255],MEDIUMSEAGREEN:[60,179,113,255],MEDIUMSLATEBLUE:[123,104,238,255],MEDIUMSPRINGGREEN:[0,250,154,255],MEDIUMTURQUOISE:[72,209,204,255],MEDIUMVIOLETRED:[199,21,133,255],MIDNIGHTBLUE:[25,25,112,255],MINTCREAM:[245,255,250,255],MISTYROSE:[255,228,225,255],MOCCASIN:[255,228,181,255],NAVAJOWHITE:[255,222,173,255],NAVY:[0,0,128,255],OLDLACE:[253,245,230,255],OLIVE:[128,128,0,255],OLIVEDRAB:[107,142,35,255],ORANGE:[255,200,0,255],ORANGERED:[255,69,0,255],ORCHID:[218,112,214,255],PALEGOLDENROD:[238,232,170,255],PALEGREEN:[152,251,152,255],PALETURQUOISE:[175,238,238,255],PALEVIOLETRED:[219,112,147,255],PAPAYAWHIP:[255,239,213,255],PEACHPUFF:[255,218,185,255],PERU:[205,133,63,255],PINK:[255,175,175,255],PLUM:[221,160,221,255],POWDERBLUE:[176,224,230,255],PURPLE:[128,0,128,255],REBECCAPURPLE:[102,51,153,255],RED:[255,0,0,255],ROSYBROWN:[188,143,143,255],ROYALBLUE:[65,105,225,255],SADDLEBROWN:[139,69,19,255],SALMON:[250,128,114,255],SANDYBROWN:[244,164,96,255],SEAGREEN:[46,139,87,255],SEASHELL:[255,245,238,255],SIENNA:[160,82,45,255],SILVER:[192,192,192,255],SKYBLUE:[135,206,235,255],SLATEBLUE:[106,90,205,255],SLATEGRAY:[112,128,144,255],SLATEGREY:[112,128,144,255],SNOW:[255,250,250,255],SPRINGGREEN:[0,255,127,255],STEELBLUE:[70,130,180,255],TAN:[210,180,140,255],TEAL:[0,128,128,255],THISTLE:[216,191,216,255],TOMATO:[255,99,71,255],TRANSPARENT:[0,0,0,0],TURQUOISE:[64,224,208,255],VIOLET:[238,130,238,255],WHEAT:[245,222,179,255],WHITE:[255,255,255,255],WHITESMOKE:[245,245,245,255],YELLOW:[255,255,0,255],YELLOWGREEN:[154,205,50,255]};
++
++  const IMAGE_TYPES = { TYPE_CUSTOM: 0, TYPE_INT_RGB: 1, TYPE_INT_ARGB: 2, TYPE_INT_ARGB_PRE: 3, TYPE_INT_BGR: 4,
++    TYPE_3BYTE_BGR: 5, TYPE_4BYTE_ABGR: 6, TYPE_4BYTE_ABGR_PRE: 7, TYPE_USHORT_565_RGB: 8, TYPE_USHORT_555_RGB: 9,
++    TYPE_BYTE_GRAY: 10, TYPE_USHORT_GRAY: 11, TYPE_BYTE_BINARY: 12, TYPE_BYTE_INDEXED: 13 };
++  const ALPHA_TYPES = [2, 3, 6, 7];
++  const CAPS = { CAP_BUTT: 0, CAP_ROUND: 1, CAP_SQUARE: 2 };
++  const JOINS = { JOIN_MITER: 0, JOIN_ROUND: 1, JOIN_BEVEL: 2 };
++  const COMPOSITES = { CLEAR: 1, DST: 9, DST_ATOP: 11, DST_IN: 6, DST_OUT: 8, DST_OVER: 4, SRC: 2,
++    SRC_ATOP: 10, SRC_IN: 5, SRC_OUT: 7, SRC_OVER: 3, XOR: 12 };
++  const FONT_STYLES = { PLAIN: 0, BOLD: 1, ITALIC: 2, BOLDITALIC: 3 };
++  const HINTS = { ALIASON: 'aliasOn', ALIASOFF: 'aliasOff', ALIASDEFAULT: 'aliasDefault',
++    TEXTALIASON: 'textAliasOn', TEXTALIASOFF: 'textAliasOff', TEXTALIASDEFAULT: 'textAliasDefault' };
++  const ARC_TYPES = { OPEN: 0, CHORD: 1, PIE: 2 };
++  const WINDING = { WIND_EVEN_ODD: 0, WIND_NON_ZERO: 1 };
++  const nameOf = (table, v) => Object.keys(table).find((k) => table[k] === v);
++  // a symbolic name or an int out of a table
++  function constant(table, arg, what) {
++    const u = arg.toUpperCase();
++    if (isVarName(u)) {
++      if (!(u in table)) iae('unknown value for "' + what + '" argument: "' + arg + '"');
++      return table[u];
++    }
++    const v = parseIntJ(u);
++    if (!Object.values(table).includes(v)) iae('unknown value for "' + what + '" argument: "' + arg + '"');
++    return v;
++  }
++
++  // =========================================================================
++  // Objects handed to Rexx (JdorObject on that side)
++  // =========================================================================
++
++  let nextId = 1;
++  const objs = new Map();
++  function obj(kind, data) {
++    const o = Object.assign({ kind, id: nextId++ }, data);
++    objs.set(o.id, o);
++    return o;
++  }
++  const color = (r, g, b, a) => obj('Color', { r, g, b, a: a === undefined ? 255 : a });
++  const cssColor = (c) => 'rgba(' + c.r + ',' + c.g + ',' + c.b + ',' + (c.a / 255) + ')';
++  const PREDEF = {};
++  for (const [k, v] of Object.entries(PREDEFINED_COLORS)) PREDEF[k] = color(v[0], v[1], v[2], v[3]);
++
++  // What the objects say they are: JDOR objects of this (web) build, not Java
++  // ones.  STRING "a JDOR Image (#99)", TOSTRING "JDOR Image #99: ..." (see
++  // wasm/web/jdor.cls); the command language keeps JDOR's names.
++  const KIND_NAMES = { BasicStroke: 'Stroke', GradientPaint: 'Gradient', AlphaComposite: 'Composite',
++    AffineTransform: 'Transform', BufferedImage: 'Image', Graphics2D: 'Graphics', JavaArray: 'Array' };
++  const kindName = (o) => KIND_NAMES[o.kind] || o.kind;
++  const imageTypeName = (t) => {
++    const n = Object.keys(IMAGE_TYPES).find((k) => IMAGE_TYPES[k] === t);
++    return n ? n.replace(/^TYPE_/, '').replace(/^INT_/, '') : String(t);
++  };
++  function describe(o) {
++    switch (o.kind) {
++      case 'Color': return 'r=' + o.r + ',g=' + o.g + ',b=' + o.b + ',a=' + o.a;
++      case 'Font': return 'family=' + o.family + ',name=' + o.name + ',style=' +
++        ['plain', 'bold', 'italic', 'bolditalic'][o.style] + ',size=' + o.size;
++      case 'BasicStroke': return 'width=' + jf(o.width) + ',cap=' + o.cap + ',join=' + o.join +
++        (o.dash && o.dash.length ? ',dash=(' + o.dash.map(jf).join(',') + ')' : '');
++      case 'GradientPaint': return 'from ' + jf(o.x1) + ',' + jf(o.y1) + ' (' + describe(o.c1) + ') to ' +
++        jf(o.x2) + ',' + jf(o.y2) + ' (' + describe(o.c2) + ')' + (o.cyclic ? ', cyclic' : '');
++      case 'PathIterator': return o.path.length + ' segments';
++      case 'AlphaComposite': return 'rule=' + o.rule + ',alpha=' + jf(o.alpha);
++      case 'AffineTransform': { const m = o.m;
++        return '[[' + jd(m[0]) + ', ' + jd(m[2]) + ', ' + jd(m[4]) + '], [' +
++          jd(m[1]) + ', ' + jd(m[3]) + ', ' + jd(m[5]) + ']]'; }
++      case 'BufferedImage': return o.canvas.width + 'x' + o.canvas.height + ', type ' + o.type +
++        ' (' + imageTypeName(o.type) + '), an OffscreenCanvas';
++      case 'Graphics2D': return 'drawing on the current image, font ' + display(o.h.gc.font) + ', color ' + display(o.h.gc.color);
++      case 'Shape': return shapeDisplay(o);
++      case 'Handler': return 'the drawing handler of the browser build, JDOR ' + VERSION;
++      default: return '';
++    }
++  }
++  function display(o) {
++    const d = describe(o);
++    return 'JDOR ' + kindName(o) + ' #' + o.id + (d ? ': ' + d : '');
++  }
++  // getters a Rexx program may send to the JdorObject (rc~width, rc~getWidth)
++  function attrs(o) {
++    switch (o.kind) {
++      case 'Color': return { red: o.r, green: o.g, blue: o.b, alpha: o.a,
++        rgb: ((o.a << 24) | (o.r << 16) | (o.g << 8) | o.b) | 0, transparency: o.a === 255 ? 1 : 3 };
++      case 'Font': return { name: o.name, fontName: o.name, family: o.family, size: o.size, size2D: jf(o.size),
++        style: o.style, isPlain: o.style === 0 ? 1 : 0, isBold: o.style & 1 ? 1 : 0, isItalic: o.style & 2 ? 1 : 0 };
++      case 'BasicStroke': return { lineWidth: jf(o.width), endCap: o.cap, lineJoin: o.join, miterLimit: jf(o.miter),
++        dashPhase: jf(o.phase || 0) };
++      case 'AlphaComposite': return { rule: o.rule, alpha: jf(o.alpha) };
++      case 'AffineTransform': return { scaleX: jd(o.m[0]), shearY: jd(o.m[1]), shearX: jd(o.m[2]),
++        scaleY: jd(o.m[3]), translateX: jd(o.m[4]), translateY: jd(o.m[5]) };
++      case 'BufferedImage': return { width: o.canvas.width, height: o.canvas.height, type: o.type };
++      case 'Shape': { const b = shapeBounds(o);
++        return { x: jd(b[0]), y: jd(b[1]), width: jd(b[2]), height: jd(b[3]), windingRule: o.wind }; }
++      case 'Handler': return { version: VERSION };
++      default: return {};
++    }
++  }
++
++  // =========================================================================
++  // Geometry: paths as Java's path iterators produce them
++  // =========================================================================
++  // A path is an array of segments [op, ...coords]: 'M' x y, 'L' x y,
++  // 'Q' x1 y1 x y, 'C' x1 y1 x2 y2 x y, 'Z'.
++
++  const KAPPA = 0.5522847498307933;     // Java's CtrlVal
++
++  function rectPath(x, y, w, h) {
++    return [['M', x, y], ['L', x + w, y], ['L', x + w, y + h], ['L', x, y + h], ['L', x, y], ['Z']];
++  }
++  function ellipsePath(x, y, w, h) {
++    const pcv = 0.5 + KAPPA * 0.5, ncv = 0.5 - KAPPA * 0.5;
++    const c = [[1, pcv, pcv, 1, 0.5, 1], [ncv, 1, 0, pcv, 0, 0.5], [0, ncv, ncv, 0, 0.5, 0], [pcv, 0, 1, ncv, 1, 0.5]];
++    const p = [['M', x + w, y + h * 0.5]];
++    for (const r of c) p.push(['C', x + r[0] * w, y + r[1] * h, x + r[2] * w, y + r[3] * h, x + r[4] * w, y + r[5] * h]);
++    p.push(['Z']);
++    return p;
++  }
++  function roundRectPath(x, y, w, h, aw, ah) {
++    aw = Math.min(w, Math.abs(aw)); ah = Math.min(h, Math.abs(ah));
++    const angle = Math.PI / 4, a = 1 - Math.cos(angle), b = Math.tan(angle);
++    const c = Math.sqrt(1 + b * b) - 1 + a, cv = 4 / 3 * a * b / c, acv = (1 - cv) / 2;
++    const ctrl = [
++      ['M', 0, 0, 0, 0.5], ['L', 0, 0, 1, -0.5],
++      ['C', 0, 0, 1, -acv, 0, acv, 1, 0, 0, 0.5, 1, 0], ['L', 1, -0.5, 1, 0],
++      ['C', 1, -acv, 1, 0, 1, 0, 1, -acv, 1, 0, 1, -0.5], ['L', 1, 0, 0, 0.5],
++      ['C', 1, 0, 0, acv, 1, -acv, 0, 0, 1, -0.5, 0, 0], ['L', 0, 0.5, 0, 0],
++      ['C', 0, acv, 0, 0, 0, 0, 0, acv, 0, 0, 0, 0.5]];
++    const p = [];
++    for (const s of ctrl) {
++      const seg = [s[0]];
++      for (let i = 1; i < s.length; i += 4) seg.push(x + s[i] * w + s[i + 1] * aw, y + s[i + 2] * h + s[i + 3] * ah);
++      p.push(seg);
++    }
++    p.push(['Z']);
++    return p;
++  }
++  function arcPath(x, y, w, h, start, extent, type) {
++    if (w < 0 || h < 0) return [];
++    const cx = x + w / 2, cy = y + h / 2, rw = w / 2, rh = h / 2;
++    let angStRad = -start * Math.PI / 180, ext = -extent, arcSegs, increment, cv;
++    if (ext >= 360 || ext <= -360) {
++      arcSegs = 4; increment = Math.PI / 2; cv = KAPPA;
++      if (ext < 0) { increment = -increment; cv = -cv; }
++    } else {
++      arcSegs = Math.ceil(Math.abs(ext) / 90);
++      increment = (ext / arcSegs) * Math.PI / 180;
++      const half = increment / 2;
++      cv = 4 / 3 * Math.sin(half) / (1 + Math.cos(half));
++      if (cv === 0) arcSegs = 0;
++    }
++    const p = [['M', cx + Math.cos(angStRad) * rw, cy + Math.sin(angStRad) * rh]];
++    let angle = angStRad;
++    for (let i = 0; i < arcSegs; i++) {
++      let relx = Math.cos(angle), rely = Math.sin(angle);
++      const c1x = cx + (relx - cv * rely) * rw, c1y = cy + (rely + cv * relx) * rh;
++      angle += increment;
++      relx = Math.cos(angle); rely = Math.sin(angle);
++      p.push(['C', c1x, c1y, cx + (relx + cv * rely) * rw, cy + (rely - cv * relx) * rh, cx + relx * rw, cy + rely * rh]);
++    }
++    if (type === 2) p.push(['L', cx, cy]);
++    if (type >= 1) p.push(['Z']);
++    return p;
++  }
++  function polyPath(xs, ys, n, close) {
++    const p = [];
++    for (let i = 0; i < n; i++) p.push([i === 0 ? 'M' : 'L', xs[i], ys[i]]);
++    if (close && n > 0) p.push(['Z']);
++    return p;
++  }
++
++  function transformPath(path, m) {
++    return path.map((s) => {
++      const r = [s[0]];
++      for (let i = 1; i < s.length; i += 2) {
++        r.push(m[0] * s[i] + m[2] * s[i + 1] + m[4], m[1] * s[i] + m[3] * s[i + 1] + m[5]);
++      }
++      return r;
++    });
++  }
++  function toPath2D(path) {
++    const p = new Path2D();
++    for (const s of path) {
++      switch (s[0]) {
++        case 'M': p.moveTo(s[1], s[2]); break;
++        case 'L': p.lineTo(s[1], s[2]); break;
++        case 'Q': p.quadraticCurveTo(s[1], s[2], s[3], s[4]); break;
++        case 'C': p.bezierCurveTo(s[1], s[2], s[3], s[4], s[5], s[6]); break;
++        case 'Z': p.closePath(); break;
++      }
++    }
++    return p;
++  }
++  function pathBounds(path) {
++    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
++    for (const s of path) {
++      for (let i = 1; i < s.length; i += 2) {
++        x0 = Math.min(x0, s[i]); x1 = Math.max(x1, s[i]);
++        y0 = Math.min(y0, s[i + 1]); y1 = Math.max(y1, s[i + 1]);
++      }
++    }
++    return x0 === Infinity ? [0, 0, 0, 0] : [x0, y0, x1 - x0, y1 - y0];
++  }
++  // curves to polylines: rings of [x, y] points
++  function flatten(path) {
++    const rings = [];
++    let ring = null, cx = 0, cy = 0, sx = 0, sy = 0;
++    const N = 16;
++    for (const s of path) {
++      switch (s[0]) {
++        case 'M':
++          if (ring && ring.length > 2) rings.push(ring);
++          ring = [[s[1], s[2]]]; cx = sx = s[1]; cy = sy = s[2]; break;
++        case 'L': if (!ring) ring = [[cx, cy]]; ring.push([s[1], s[2]]); cx = s[1]; cy = s[2]; break;
++        case 'Q':
++          if (!ring) ring = [[cx, cy]];
++          for (let i = 1; i <= N; i++) {
++            const t = i / N, u = 1 - t;
++            ring.push([u * u * cx + 2 * u * t * s[1] + t * t * s[3], u * u * cy + 2 * u * t * s[2] + t * t * s[4]]);
++          }
++          cx = s[3]; cy = s[4]; break;
++        case 'C':
++          if (!ring) ring = [[cx, cy]];
++          for (let i = 1; i <= N; i++) {
++            const t = i / N, u = 1 - t;
++            ring.push([u * u * u * cx + 3 * u * u * t * s[1] + 3 * u * t * t * s[3] + t * t * t * s[5],
++                       u * u * u * cy + 3 * u * u * t * s[2] + 3 * u * t * t * s[4] + t * t * t * s[6]]);
++          }
++          cx = s[5]; cy = s[6]; break;
++        case 'Z':
++          if (ring && ring.length > 2) rings.push(ring);
++          ring = null; cx = sx; cy = sy; break;
++      }
++    }
++    if (ring && ring.length > 2) rings.push(ring);
++    return rings;
++  }
++
++  // constructive area geometry (lazily loads polygon-clipping, MIT licence)
++  let clipLib = null;
++  function polyClip() {
++    if (!clipLib) {
++      const url = (Module['locateFile'] ? Module['locateFile']('polygon-clipping.umd.min.js', '') : 'polygon-clipping.umd.min.js');
++      importScripts(url);
++      clipLib = self.polygonClipping;
++    }
++    return clipLib;
++  }
++  const closeRing = (r) => {
++    const a = r[0], b = r[r.length - 1];
++    return a[0] === b[0] && a[1] === b[1] ? r : r.concat([[a[0], a[1]]]);
++  };
++  function areaOf(shape) {          // multipolygon of a shape, honouring its winding rule
++    if (shape.type === 'Area') return shape.mp;
++    const rings = flatten(shape.path).map(closeRing);
++    if (rings.length === 0) return [];
++    const pc = polyClip();
++    const polys = rings.map((r) => [r]);
++    return shape.wind === 0 ? pc.xor(polys[0], ...polys.slice(1)) : pc.union(polys[0], ...polys.slice(1));
++  }
++  function areaPath(mp) {
++    const p = [];
++    for (const poly of mp) for (const ring of poly) {
++      ring.forEach((pt, i) => { if (i < ring.length - 1 || ring.length < 2) p.push([i === 0 ? 'M' : 'L', pt[0], pt[1]]); });
++      p.push(['Z']);
++    }
++    return p;
++  }
++
++  function shape(type, data) { return obj('Shape', Object.assign({ type, wind: 1 }, data)); }
++  function shapePath(s) { return s.type === 'Area' ? areaPath(s.mp) : s.path; }
++  function shapeBounds(s) {
++    if (s.bounds) return s.bounds;
++    return pathBounds(shapePath(s));
++  }
++  function shapeDisplay(s) {
++    const b = shapeBounds(s);
++    return s.type.replace(/2D$/, '') + ' x=' + jd(b[0]) + ',y=' + jd(b[1]) + ',w=' + jd(b[2]) + ',h=' + jd(b[3]);
++  }
++  function clonePath(p) { return p.map((s) => s.slice()); }
++
++  // =========================================================================
++  // Handlers
++  // =========================================================================
++
++  const VERSION = '100.20230718';
++  const PREF_W = 500, PREF_H = 500;
++  let prefImageType = 2;            // static in Java: shared by all handlers
++  let screen = { width: 1280, height: 800 };
++  const handlers = new Map();       // id -> Handler
++  const environments = new Map();   // ADDRESS name -> Handler
++
++  function newImageObj(w, h, type) {
++    const alpha = ALPHA_TYPES.includes(type);
++    const canvas = new OffscreenCanvas(Math.max(1, w), Math.max(1, h));
++    const ctx = canvas.getContext('2d', { alpha });
++    if (!alpha) { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, canvas.width, canvas.height); }
++    return obj('BufferedImage', { canvas, ctx, type, w, h });
++  }
++  function copyImageObj(img) {
++    const c = newImageObj(img.canvas.width, img.canvas.height, img.type);
++    c.ctx.drawImage(img.canvas, 0, 0);
++    return c;
++  }
++  const defaultFont = () => font('Dialog', 'Dialog', 0, 12);
++  function font(name, family, style, size) { return obj('Font', { name, family, style, size }); }
++  const LOGICAL = { DIALOG: 'Dialog', DIALOGINPUT: 'DialogInput', SANSSERIF: 'SansSerif', SERIF: 'Serif', MONOSPACED: 'Monospaced' };
++  function cssFont(f) {
++    // Java's logical fonts, as they map on Windows
++    const sans = 'Arial, "Liberation Sans", Helvetica, sans-serif', mono = '"Courier New", "Liberation Mono", Courier, monospace';
++    const fam = { Dialog: sans, SansSerif: sans, Serif: '"Times New Roman", "Liberation Serif", Times, serif',
++      Monospaced: mono, DialogInput: mono }[f.family];
++    return (f.style & 2 ? 'italic ' : '') + (f.style & 1 ? 'bold ' : '') + f.size + 'px ' +
++      (fam || '"' + f.family.replace(/"/g, '') + '", sans-serif');
++  }
++  // new Font(name, style, size) or, when the name carries style/size, Font.decode(name)
++  function makeFont(spec, style, size) {
++    const m = /^(.*?)(?:[- ](plain|bold|italic|bolditalic))?(?:[- ](\d+))?$/i.exec(spec.trim());
++    let name = spec.trim();
++    if (m && (m[2] || m[3])) {         // decoded: defaults PLAIN 12
++      name = m[1];
++      style = m[2] ? FONT_STYLES[m[2].toUpperCase()] : 0;
++      size = m[3] ? parseInt(m[3], 10) : 12;
++    }
++    const family = LOGICAL[name.toUpperCase().replace(/\s/g, '')] || name;
++    return font(name, family, style, size);
++  }
++
++  function newGC() {
++    return {
++      m: [1, 0, 0, 1, 0, 0],
++      color: PREDEF.BLACK, paint: PREDEF.BLACK,
++      background: color(0, 0, 0, 255),
++      stroke: obj('BasicStroke', { width: 1, cap: 2, join: 0, miter: 10, dash: null, phase: 0 }),
++      font: defaultFont(),
++      composite: obj('AlphaComposite', { rule: 3, alpha: 1 }),
++      clips: [],                    // [{m, path}] intersected
++      xor: null,
++      aa: 'ALIASON', textAA: 'TEXTALIASON',
++    };
++  }
++  const cloneGC = (g) => Object.assign({}, g, { m: g.m.slice(), clips: g.clips.slice() });
++
++  class Handler {
++    constructor() {
++      this.obj = obj('Handler', { h: this });
++      this.id = this.obj.id;
++      handlers.set(this.id, this);
++      this.nrCommand = 0;
++      this.image = null; this.gc = null;
++      this.gcStack = []; this.imageStack = [];
++      this.images = new Map(); this.colors = new Map(Object.entries(PREDEF));
++      this.gradients = new Map(); this.fonts = new Map(); this.strokes = new Map();
++      this.shapes = new Map(); this.transforms = new Map();
++      this.currX = 0; this.currY = 0; this.currFontStyle = 0; this.currFontSize = 12;
++      this.currVisible = false; this.currWinUpdate = true;
++      this.printScaleToPage = false; this.printPosX = 0; this.printPosY = 0; this.printScaleX = 1; this.printScaleY = 1;
++      this.win = null;              // the window (Java: "JavaDrawingFrame"), created on demand
++      this.dirty = false;
++    }
++    get ctx() { return this.image.ctx; }
++    ensureImage() {
++      if (this.image) return;
++      this.image = newImageObj(PREF_W, PREF_H, prefImageType);
++      this.gc = newGC();
++      this.currFontStyle = this.gc.font.style; this.currFontSize = this.gc.font.size;
++    }
++    reset() {                       // as Java's reset()
++      this.currX = 0; this.currY = 0; this.currFontStyle = 0; this.currFontSize = 12;
++      if (this.gc) this.gc.m = [1, 0, 0, 1, 0, 0];
++      this.printScaleToPage = false; this.printPosX = 0; this.printPosY = 0; this.printScaleX = 1; this.printScaleY = 1;
++      this.gcStack = []; this.imageStack = [];
++      this.images.clear(); this.colors = new Map(Object.entries(PREDEF));
++      this.gradients = new Map(); this.fonts.clear(); this.strokes.clear();
++      this.shapes.clear(); this.transforms.clear();
++      if (this.win && this.image) { this.win.w = this.image.canvas.width; this.win.h = this.image.canvas.height; this.winUpdate(); }
++    }
++
++    // ---- the window --------------------------------------------------------
++    makeWin(visible) {
++      if (!this.win) {
++        const w = this.image.canvas.width, h = this.image.canvas.height;
++        this.win = { title: 'JDOR', w, h, frame: true, resizable: false, onTop: false,
++          x: Math.max(0, Math.round((screen.width - w) / 2)), y: Math.max(0, Math.round((screen.height - h) / 2)) };
++        this.currVisible = false;
++      }
++      if (visible) this.currVisible = true;
++      this.winUpdate();
++    }
++    winUpdate(extra) {
++      if (!this.win) return;
++      const w = this.win;
++      post({ op: 'window', win: this.id, visible: this.currVisible, title: w.title, frame: w.frame,
++        x: w.x, y: w.y, width: w.w, height: w.h, alwaysOnTop: w.onTop, resizable: w.resizable }, extra);
++      this.changed();
++    }
++    changed() {
++      if (this.win && this.currVisible && this.currWinUpdate) { this.dirty = true; scheduleFrames(); }
++    }
++
++    // ---- drawing with the current GC -------------------------------------
++    render(fn, opts) {
++      opts = opts || {};
++      const g = this.gc, ctx = this.ctx;
++      ctx.save();
++      for (const c of g.clips) { ctx.setTransform(c.m[0], c.m[1], c.m[2], c.m[3], c.m[4], c.m[5]); ctx.clip(toPath2D(c.path)); }
++      // strokes on pixel centres, as Java's stroke normalisation does
++      const m = g.m, off = opts.stroke ? 0.5 : 0;
++      ctx.setTransform(m[0], m[1], m[2], m[3], m[4] + off, m[5] + off);
++      ctx.imageSmoothingEnabled = false;          // Java's default interpolation: nearest neighbour
++      const comp = g.composite, rule = comp.rule;
++      ctx.globalAlpha = comp.alpha;
++      const style = this.paintStyle();
++      ctx.fillStyle = style; ctx.strokeStyle = style;
++      const s = g.stroke;
++      ctx.lineWidth = s.width === 0 ? 1 : s.width;
++      ctx.lineCap = ['butt', 'round', 'square'][s.cap];
++      ctx.lineJoin = ['miter', 'round', 'bevel'][s.join];
++      ctx.miterLimit = s.miter;
++      ctx.setLineDash(s.dash ? s.dash : []);
++      ctx.lineDashOffset = s.phase || 0;
++      ctx.font = cssFont(g.font);
++      if (g.xor) {
++        ctx.globalCompositeOperation = 'difference';
++      } else if (rule === 9) {        // DST: leaves the destination alone
++        ctx.restore(); return;
++      } else {
++        const op = { 1: 'destination-out', 2: 'copy', 3: 'source-over', 4: 'destination-over', 5: 'source-in',
++          6: 'destination-in', 7: 'source-out', 8: 'destination-out', 10: 'source-atop', 11: 'destination-atop',
++          12: 'xor' }[rule];
++        // Java composites only where the shape covers: clip the unbounded operations to it
++        if ([2, 5, 6, 7, 11].includes(rule) && opts.area) ctx.clip(opts.area);
++        if (rule === 1) {
++          // CLEAR: everything the shape covers becomes transparent, whatever the source's alpha
++          ctx.globalAlpha = 1; ctx.fillStyle = ctx.strokeStyle = '#000';
++          if (opts.area) {
++            ctx.clip(opts.area);
++            ctx.setTransform(1, 0, 0, 1, 0, 0);
++            ctx.clearRect(0, 0, this.image.canvas.width, this.image.canvas.height);
++            ctx.restore(); this.changed(); return;
++          }
++          if (opts.text) ctx.lineWidth = 2;   // text has no area: take its antialiased fringe too
++        }
++        if (rule === 8) { ctx.fillStyle = ctx.strokeStyle = '#000'; }
++        ctx.globalCompositeOperation = op;
++      }
++      fn(ctx);
++      ctx.restore();
++      this.changed();
++    }
++    paintStyle() {
++      const p = this.gc.paint;
++      if (p.kind === 'Color') return cssColor(p);
++      // GradientPaint (user space); cyclic: repeat c1 -> c2 -> c1 over the area of the image
++      const ctx = this.ctx;
++      if (!p.cyclic) {
++        const gr = ctx.createLinearGradient(p.x1, p.y1, p.x2, p.y2);
++        gr.addColorStop(0, cssColor(p.c1)); gr.addColorStop(1, cssColor(p.c2));
++        return gr;
++      }
++      const dx = p.x2 - p.x1, dy = p.y2 - p.y1, len2 = dx * dx + dy * dy || 1;
++      const inv = invert(this.gc.m), W = this.image.canvas.width, H = this.image.canvas.height;
++      let tmin = Infinity, tmax = -Infinity;
++      for (const [cx, cy] of [[0, 0], [W, 0], [0, H], [W, H]]) {
++        const ux = inv[0] * cx + inv[2] * cy + inv[4], uy = inv[1] * cx + inv[3] * cy + inv[5];
++        const t = ((ux - p.x1) * dx + (uy - p.y1) * dy) / len2;
++        tmin = Math.min(tmin, t); tmax = Math.max(tmax, t);
++      }
++      const k0 = Math.floor(tmin), k1 = Math.ceil(tmax), n = Math.max(1, k1 - k0);
++      if (n > 2000) return cssColor(p.c1);
++      const gr = ctx.createLinearGradient(p.x1 + dx * k0, p.y1 + dy * k0, p.x1 + dx * k1, p.y1 + dy * k1);
++      for (let k = 0; k <= n; k++) gr.addColorStop(k / n, cssColor(((k0 + k) & 1) ? p.c2 : p.c1));
++      return gr;
++    }
++    fillPath(path) { const p2 = toPath2D(path); this.render((c) => c.fill(p2, 'nonzero'), { area: p2 }); }
++    fillShape(s) {
++      const path = shapePath(s), p2 = toPath2D(path), rule = s.type === 'Area' || s.wind === 0 ? 'evenodd' : 'nonzero';
++      this.render((c) => c.fill(p2, rule), { area: p2 });
++    }
++    drawPath(path) { const p2 = toPath2D(path); this.render((c) => c.stroke(p2), { stroke: true }); }
++  }
++
++  function invert(m) {
++    const det = m[0] * m[3] - m[1] * m[2] || 1e-300;
++    return [m[3] / det, -m[1] / det, -m[2] / det, m[0] / det,
++      (m[2] * m[5] - m[3] * m[4]) / det, (m[1] * m[4] - m[0] * m[5]) / det];
++  }
++  const mul = (a, b) => [a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1], a[0] * b[2] + a[2] * b[3],
++    a[1] * b[2] + a[3] * b[3], a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5]];
++  const transformObj = (m) => obj('AffineTransform', { m: m.slice() });
++
++  // ---- frames to the page ----------------------------------------------
++  function post(msg, transfer) { if (Module['orxJdor']) Module['orxJdor'](msg, transfer || []); }
++  let frameScheduled = false;
++  function scheduleFrames() {
++    if (frameScheduled) return;
++    frameScheduled = true;
++    (typeof requestAnimationFrame === 'function' ? requestAnimationFrame : (f) => setTimeout(f, 16))(sendFrames);
++  }
++  function sendFrames() {
++    frameScheduled = false;
++    for (const h of handlers.values()) {
++      if (!h.dirty) continue;
++      h.dirty = false;
++      if (!h.win || !h.currVisible || !h.currWinUpdate || !h.image) continue;
++      const src = h.image.canvas, w = h.win.w, ht = h.win.h;
++      const t = new OffscreenCanvas(w, ht);
++      t.getContext('2d').drawImage(src, 0, 0);
++      const bmp = t.transferToImageBitmap();
++      post({ op: 'frame', win: h.id, bitmap: bmp }, [bmp]);
++    }
++  }
++  Module['jdorFlush'] = sendFrames;
++  Module['jdorScreen'] = (w, h) => { if (w > 0 && h > 0) screen = { width: w | 0, height: h | 0 }; };
++  // the page moved or closed a window
++  Module['jdorEvent'] = (ev) => {
++    const h = handlers.get(ev.win);
++    if (!h || !h.win) return;
++    if (ev.op === 'moved') { h.win.x = ev.x | 0; h.win.y = ev.y | 0; }
++    else if (ev.op === 'closed') { h.currVisible = false; h.win = null; }
++  };
++
++  // =========================================================================
++  // The commands
++  // =========================================================================
++
++  const ALIASES = { AREAUNION: 'AREAADD', AREAXOR: 'AREAEXCLUSIVEOR', CLEAR: 'RESET', COLOUR: 'COLOR',
++    GETCLIPBOARD: 'CLIPBOARDGET', GOTO: 'MOVETO', LOCATION: 'MOVETO', NEW: 'NEWIMAGE', POS: 'MOVETO',
++    POSITION: 'MOVETO', SETCLIPBOARD: 'CLIPBOARDSET', SETCLIPBOARDWITHOUTALPHA: 'CLIPBOARDSETWITHOUTALPHA',
++    SHAPECLIP: 'CLIPSHAPE', SHAPEDRAW: 'DRAWSHAPE', SHAPEFILL: 'FILLSHAPE', WINMOVETO: 'WINLOCATION' };
++  const SHAPE_TYPES = { AREA: 'Area', ARC2D: 'Arc2D', ARC: 'Arc2D', CUBICCURVE2D: 'CubicCurve2D', CUBIC: 'CubicCurve2D',
++    CUBICCURVE: 'CubicCurve2D', ELLIPSE2D: 'Ellipse2D', ELLI: 'Ellipse2D', ELLIPSE: 'Ellipse2D', LINE2D: 'Line2D',
++    LINE: 'Line2D', PATH2D: 'Path2D', PATH: 'Path2D', POLYGON: 'Polygon', QUADCURVE2D: 'QuadCurve2D', QUAD: 'QuadCurve2D',
++    QUADCURVE: 'QuadCurve2D', RECTANGLE2D: 'Rectangle2D', RECT: 'Rectangle2D', RECTANGLE: 'Rectangle2D',
++    ROUNDRECTANGLE2D: 'RoundRectangle2D', ROUNDRECT: 'RoundRectangle2D', ROUNDRECTANGLE: 'RoundRectangle2D' };
++
++  class NeedVar { constructor(name) { this.name = name; } }
++  class Cond {                       // createCondition(): a condition to raise
++    constructor(type, rc, msg, label) { this.type = type; this.rc = rc; this.msg = msg; this.label = label; }
++  }
++  const err = (rc, msg, label) => new Cond('ERROR', rc, msg, label === undefined ? 'nickname argument' : label);
++
++  // the context of one command
++  class Cmd {
++    constructor(h, command, isOR, vars) {
++      this.h = h; this.command = command; this.isOR = isOR; this.vars = vars;
++      this.words = []; this.bounds = [];
++      const re = /[^ \t\n]+/g;
++      let m;
++      while ((m = re.exec(command)) !== null) { this.words.push(m[0]); this.bounds.push([m.index, m.index + m[0].length]); }
++      this.out = []; this.canonical = '';
++      this.result = undefined;       // undefined: no result
++      this.setVars = []; this.sleep = 0; this.async = null;
++    }
++    get n() { return this.words.length; }      // arrCommand.length
++    arg(i) { return this.words[i]; }
++    rest(i) { return this.command.substring(this.bounds[i][0]); }   // from word i to the end
++    text() { return this.command.substring(this.bounds[0][1] + 1); }  // after the first blank
++    canon(s) { this.canonical += ' ' + s; }
++    write(s) { if (this.isOR) this.out.push(s); }
++    // a Rexx variable's value: {t:'S'|'J'|'A'|'N'|'U', ...}
++    variable(name) {
++      const key = name.toUpperCase();
++      if (!this.vars.has(key)) throw new NeedVar(key);
++      return this.vars.get(key);
++    }
++    // nickname -> registered object, else the object a Rexx variable refers to
++    lookup(map, name, kinds, viaVar) {
++      const o = map.get(name.toUpperCase());
++      if (o) return o;
++      if (viaVar === false || !isVarName(name)) return null;
++      const v = this.variable(name);
++      if (v.t !== 'J') return null;
++      const r = objs.get(v.id);
++      return r && (!kinds || kinds.includes(r.kind)) ? r : null;
++    }
++    lookupShape(name, types) {
++      const s = this.lookup(this.h.shapes, name, ['Shape', 'PathIterator']);
++      return s && (!types || types.includes(s.type)) ? s : null;
++    }
++    // int[]/float[] argument: "(1,2,3)" or a Rexx variable (an Array)
++    numArray(s, parse) {
++      if (isVarName(s)) {
++        const v = this.variable(s);
++        if (v.t === 'A') return v.items.map((x) => parse(String(x.v)));
++        if (v.t === 'J') { const o = objs.get(v.id); if (o && o.kind === 'JavaArray') return o.items.slice(); }
++        throw new JdorError('"' + s + '" is not a Rexx variable that refers to an array');
++      }
++      const a = arrayExpr(s, parse);
++      if (!a) throw new JdorError('"' + s + '" is not an array: (n1,n2,...) or a Rexx variable');
++      return a;
++    }
++  }
++
++  const C = {};                      // command name (upper case) -> function(c)
++  const NAMES = {};                  // upper case -> canonical mixed case
++
++  function def(mixed, fn) { NAMES[mixed.toUpperCase()] = mixed; C[mixed.toUpperCase()] = fn; }
++  function noArgs(c) { if (c.n !== 1) iae('this command does not accept any arguments, received ' + (c.n - 1) + ' instead'); }
++  function boolArg(c, v, what) {
++    if (!isBool(v)) iae('the supplied "' + what + '" argument "' + v + '" is not a valid boolean value, valid values (in any case) are: "0", "1", "false", "true", ".false", ".true"');
++    return boolOf(v);
++  }
++  const ints2 = (c, i) => [string2int(c.arg(i)), string2int(c.arg(i + 1))];
++
++  // ---- window -----------------------------------------------------------
++  def('winShow', (c) => { noArgs(c); c.write(c.canonical); const h = c.h; if (h.currVisible) return; h.makeWin(true); });
++  def('winHide', (c) => { noArgs(c); c.write(c.canonical); const h = c.h; if (!h.currVisible || !h.win) return; h.currVisible = false; h.winUpdate(); });
++  def('winClose', (c) => { noArgs(c); c.write(c.canonical); const h = c.h; if (!h.win) return;
++    post({ op: 'close', win: h.id }); h.win = null; h.currVisible = false; });
++  def('winLocation', (c) => {
++    const h = c.h;
++    if (c.n !== 1 && c.n !== 3) iae('this command needs no or exactly 2 arguments, received ' + (c.n - 1) + ' instead');
++    if (!h.win) h.makeWin(true);
++    c.result = h.win.x + ' ' + h.win.y;
++    if (c.n === 3) { const [x, y] = ints2(c, 1); h.win.x = x; h.win.y = y; c.canon(x + ' ' + y); h.winUpdate(); }
++    c.write(c.canonical);
++    if (c.n === 3) c.result = undefined;
++  });
++  function winBoolCommand(c, cmd) {
++    const h = c.h;
++    if (cmd === 'WINALWAYSONTOP') {
++      if (c.n > 2) iae('this command needs no or exactly 1 argument, received ' + (c.n - 1) + ' instead');
++      c.result = h.win && h.win.onTop ? '1' : '0';
++    } else if (c.n !== 1) iae('this command expects no arguments, received ' + (c.n - 1) + ' instead');
++    if (!h.win) h.makeWin(cmd !== 'WINALWAYSONTOPSUPPORTED');
++    if (cmd === 'WINALWAYSONTOP' && c.n !== 1) {
++      const v = boolArg(c, c.arg(1), 'winAlwaysOnTo');
++      c.canon(v ? '.true' : '.false');
++      h.win.onTop = v; h.winUpdate();
++    } else if (cmd === 'WINTOBACK' || cmd === 'WINTOFRONT') {
++      post({ op: cmd === 'WINTOBACK' ? 'toBack' : 'toFront', win: h.id });
++    } else if (cmd === 'WINALWAYSONTOPSUPPORTED') c.result = '1';
++    c.write(c.canonical);
++  }
++  def('winAlwaysOnTop', (c) => winBoolCommand(c, 'WINALWAYSONTOP'));
++  def('winToBack', (c) => winBoolCommand(c, 'WINTOBACK'));
++  def('winToFront', (c) => winBoolCommand(c, 'WINTOFRONT'));
++  def('winAlwaysOnTopSupported', (c) => winBoolCommand(c, 'WINALWAYSONTOPSUPPORTED'));
++  def('winTitle', (c) => {
++    const h = c.h;
++    if (!h.win) h.makeWin(true);
++    c.result = h.win.title;
++    if (c.n === 1) { c.write(c.canonical); return; }
++    const t = c.text();
++    c.write(c.canonical + ' ' + t);
++    h.win.title = t; h.winUpdate();
++    c.result = undefined;
++  });
++  def('winFrame', (c) => {
++    const h = c.h;
++    if (!h.win) h.makeWin(false);
++    c.result = h.win.frame ? '1' : '0';
++    if (c.n === 1) { c.write(c.canonical); return; }
++    if (c.n !== 2) iae('this command needs exactly 2 arguments, received ' + (c.n - 1) + ' instead');
++    const v = boolArg(c, c.arg(1), 'winFrame');
++    c.canon(v ? '.true' : '.false'); c.write(c.canonical);
++    if (h.win.frame !== v) { h.win.frame = v; h.winUpdate(); }
++    c.result = undefined;
++  });
++  function winFlag(c, what, get, set) {
++    c.result = get() ? '1' : '0';
++    if (c.n === 1) { c.write(c.canonical); return; }
++    if (c.n !== 2) iae('this command needs no or exactly 1 argument, received ' + (c.n - 1) + ' instead');
++    const v = boolArg(c, c.arg(1), what);
++    if (get() === v) return;
++    c.canon(v ? '.true' : '.false'); c.write(c.canonical);
++    set(v);
++    c.result = undefined;
++  }
++  def('winResizable', (c) => { const h = c.h; if (!h.win) h.makeWin(false);
++    winFlag(c, 'winResizable', () => h.win.resizable, (v) => { h.win.resizable = v; h.winUpdate(); }); });
++  def('winVisible', (c) => { const h = c.h;
++    winFlag(c, 'winVisible', () => h.currVisible, (v) => { if (!h.win) h.makeWin(v); h.currVisible = v; h.winUpdate(); }); });
++  def('winUpdate', (c) => {
++    const h = c.h;
++    if (c.n === 1) { c.write(c.canonical); c.result = h.currWinUpdate ? '1' : '0'; return; }
++    if (c.n > 2) iae('this command accepts 1 argument at the most, received ' + (c.n - 1) + ' instead');
++    const v = boolArg(c, c.arg(1), 'winUpdate');
++    h.currWinUpdate = v;
++    c.canon(v ? '.true' : '.false'); c.write(c.canonical);
++    h.changed();
++  });
++  def('winSize', (c) => {
++    const h = c.h;
++    if (!h.win) h.makeWin(h.currVisible);
++    c.result = h.win.w + ' ' + h.win.h;
++    if (c.n === 1) { c.write(c.canonical); return; }
++    if (c.n !== 3) iae('this command needs no or exactly 2 arguments, received ' + (c.n - 1) + ' instead');
++    const [w, ht] = ints2(c, 1);
++    c.canon(w + ' ' + ht); c.write(c.canonical);
++    h.win.w = Math.max(1, w); h.win.h = Math.max(1, ht); h.winUpdate();
++    c.result = undefined;
++  });
++  def('winScreenSize', (c) => {
++    if (c.n !== 1) iae('this command does not expect any arguments, received ' + (c.n - 1) + ' instead');
++    c.write(c.canonical);
++    c.result = screen.width + ' ' + screen.height;
++  });
++
++  // ---- printing (the browser has no default printer: settings only) -----
++  def('printScaleToPage', (c) => {
++    const h = c.h;
++    c.result = h.printScaleToPage ? '1' : '0';
++    if (c.n === 1) { c.write(c.canonical); return; }
++    if (c.n !== 2) iae('this command needs no or exactly 1 argument, received ' + (c.n - 1) + ' instead');
++    h.printScaleToPage = boolArg(c, c.arg(1), 'printScaleToPage');
++    c.canon(h.printScaleToPage ? '.true' : '.false'); c.write(c.canonical);
++  });
++  def('printScale', (c) => {
++    const h = c.h;
++    if (c.n > 3) iae('this command needs no or 1 or 2 arguments, received ' + (c.n - 1) + ' instead');
++    c.result = jd(h.printScaleX) + ' ' + jd(h.printScaleY);
++    if (c.n > 1) {
++      const x = parseDoubleJ(c.arg(1)); c.canon(c.arg(1));
++      if (c.n === 2) { h.printScaleX = h.printScaleY = x; }
++      else { h.printScaleY = parseDoubleJ(c.arg(2)); h.printScaleX = x; c.canon(c.arg(2)); }
++    }
++    c.write(c.canonical);
++  });
++  def('printPos', (c) => {
++    const h = c.h;
++    if (c.n > 3) iae('this command expects no, 1 or 2 arguments, received ' + (c.n - 1) + ' instead');
++    c.result = h.printPosX + ' ' + h.printPosY;
++    if (c.n > 1) {                  // (Java fails on a query: it parses argument 1 anyway)
++      const x = string2int(c.arg(1)), y = c.n === 3 ? string2int(c.arg(2)) : x;
++      h.printPosX = x; h.printPosY = y; c.canon(x + ' ' + y);
++    }
++    c.write(c.canonical);
++  });
++  def('printImage', (c) => {
++    if (c.n > 2) iae('this command needs either no or exactly 1 argument (image\'s nickname for lookup), received ' + (c.n - 1) + ' instead');
++    let img = c.h.image;
++    if (c.n === 2) {
++      img = c.lookup(c.h.images, c.arg(1), ['BufferedImage']);
++      if (!img) iae('image (must be a BufferedImage) with the name "' + c.arg(1) + '" not found, you must first use "loadImage ' + c.arg(1) + ' filename" or "pushImage ' + c.arg(1) + '" or assign a BufferedImage to a Rexx variable named "' + c.arg(1) + '"');
++      c.canon(c.arg(1));
++    }
++    c.write(c.canonical);
++    post({ op: 'print', win: c.h.id, bitmap: img.canvas.transferToImageBitmap ? snapshot(img) : null,
++      scaleToPage: c.h.printScaleToPage, x: c.h.printPosX, y: c.h.printPosY, scaleX: c.h.printScaleX, scaleY: c.h.printScaleY });
++  });
++  function snapshot(img) {
++    const t = new OffscreenCanvas(img.canvas.width, img.canvas.height);
++    t.getContext('2d').drawImage(img.canvas, 0, 0);
++    return t.transferToImageBitmap();
++  }
++  def('clipboardGet', () => { throw new JdorError('reading images from the clipboard is not available in the browser'); });
++  function clipboardSet(c) {
++    if (c.n > 2) iae('this command needs either no or exactly 1 argument (image\'s nickname for lookup), received ' + (c.n - 1) + ' instead');
++    let img = c.h.image;
++    if (c.n === 2) {
++      img = c.lookup(c.h.images, c.arg(1), ['BufferedImage']);
++      if (!img) iae('image (must be a BufferedImage) with the name "' + c.arg(1) + '" not found, you must first use "loadImage ' + c.arg(1) + ' filename" or "pushImage ' + c.arg(1) + '" or assign a BufferedImage to a Rexx variable named "' + c.arg(1) + '"');
++      c.canon(c.arg(1));
++    }
++    c.write(c.canonical);
++    const bmp = snapshot(img);
++    post({ op: 'clipboard', win: c.h.id, bitmap: bmp, withoutAlpha: c.cmd === 'CLIPBOARDSETWITHOUTALPHA' }, [bmp]);
++    c.result = img;
++  }
++  def('clipboardSet', clipboardSet);
++  def('clipboardSetWithoutAlpha', clipboardSet);
++
++  // ---- control ----------------------------------------------------------
++  def('sleep', (c) => {
++    if (c.n !== 2) iae('this command needs exactly 1 argument, received ' + (c.n - 1) + ' instead');
++    const secs = parseDoubleJ(c.arg(1));
++    c.write(c.canonical + ' ' + jd(secs));
++    c.sleep = secs;
++  });
++  def('reset', (c) => { if (c.n !== 1) iae('this command does not take any arguments'); c.h.reset(); c.write(c.canonical); });
++  def('assignRC', (c) => {
++    if (c.n !== 2) iae('this command needs exactly 1 (Rexx variable name) argument (the name of the shape and optionally the new winding rule argument), received ' + (c.n - 1) + ' instead');
++    const name = c.arg(1);
++    if (!isVarName(name)) iae('argument [' + name + '] is not a valid Rexx symbol for a Rexx variable name');
++    const v = c.variable('RC');
++    c.setVars.push([name.toUpperCase(), v]);
++    c.write(c.canonical + ' ' + name);
++  });
++  def('noOp', (c) => { c.write(c.canonical); });
++
++  // ---- images ------------------------------------------------------------
++  def('newImage', (c) => {
++    const h = c.h;
++    if (c.n !== 1 && c.n !== 3 && c.n !== 4) iae('this command needs no, 2 (width height) or 3 (width height type) arguments, received ' + (c.n - 1) + ' instead');
++    let w = PREF_W, ht = PREF_H, type = prefImageType;
++    if (c.n > 2) {
++      [w, ht] = ints2(c, 1); c.canon(w + ' ' + ht);
++      if (c.n > 3) { type = constant(IMAGE_TYPES, c.arg(3), 'type'); c.canon(nameOf(IMAGE_TYPES, type)); }
++    }
++    c.write(c.canonical);
++    h.gcStack = [];
++    h.image = newImageObj(w, ht, type);
++    const keep = h.gc;
++    h.gc = newGC();
++    if (keep) { h.gc.aa = keep.aa; h.gc.textAA = keep.textAA; }
++    h.changed();
++  });
++  def('preferredImageType', (c) => {
++    if (c.n > 2) iae('this command needs either no or exactly 1 argument (preferred image type), received ' + (c.n - 1) + ' instead');
++    c.result = '' + prefImageType;
++    if (c.n === 2) { const t = constant(IMAGE_TYPES, c.arg(1), 'type'); c.canon(nameOf(IMAGE_TYPES, t)); prefImageType = t; }
++    c.write(c.canonical);
++  });
++  function imageArg(c, i) {
++    const name = c.arg(i), img = c.lookup(c.h.images, name, ['BufferedImage']);
++    if (!img) iae('image (must be a BufferedImage) with the name "' + name + '" not found, you must first use "loadImage ' + name + ' filename" or "pushImage ' + name + '" or assign a BufferedImage to a Rexx variable named "' + name + '"');
++    return img;
++  }
++  def('imageType', (c) => {
++    if (c.n > 2) iae('this command needs either no or exactly 1 argument (image\'s nickname for lookup), received ' + (c.n - 1) + ' instead');
++    if (c.n === 1) { c.write(c.canonical); c.result = '' + c.h.image.type; return; }
++    const img = imageArg(c, 1);
++    c.write(c.canonical + ' ' + c.arg(1));
++    c.result = '' + img.type;
++  });
++  def('imageCopy', (c) => {
++    if (c.n > 2) iae('this command needs either no or exactly 1 argument (image\'s nickname for lookup), received ' + (c.n - 1) + ' instead');
++    let img = c.h.image;
++    if (c.n === 2) { img = imageArg(c, 1); c.canon(c.arg(1)); }
++    c.write(c.canonical);
++    c.result = copyImageObj(img);
++  });
++  def('imageSize', (c) => {
++    if (c.n > 2) iae('this command needs either no or exactly 1 argument (image\'s nickname for lookup), received ' + (c.n - 1) + ' instead');
++    let img = c.h.image;
++    if (c.n === 2) {
++      img = c.lookup(c.h.images, c.arg(1), ['BufferedImage']);
++      if (!img) throw err('-2', 'image with the name "' + c.arg(1) + '" not found, you must first use "loadImage ' + c.arg(1) + ' filename" or supply a Rexx variable referring to a BufferedImage');
++      c.canon(c.arg(1));
++    }
++    c.write(c.canonical);
++    c.result = img.canvas.width + ' ' + img.canvas.height;
++  });
++  def('image', (c) => {
++    if (c.n > 2) iae('this command needs either no or exactly 1 argument (image\'s nickname for lookup), received ' + (c.n - 1) + ' instead');
++    if (c.n === 1) { c.result = c.h.image; return; }
++    const img = c.h.images.get(c.arg(1).toUpperCase());
++    if (!img) iae('image with the name "' + c.arg(1) + '" not found, you must first use "loadImage ' + c.arg(1) + ' filename"');
++    c.write(c.canonical + ' ' + c.arg(1));
++    c.result = img;
++  });
++  def('GC', (c) => {
++    if (c.n !== 1) iae('this command must not have an argument, received ' + (c.n - 1) + ' instead');
++    c.result = obj('Graphics2D', { h: c.h });
++  });
++  def('loadImage', (c) => {
++    if (c.n < 3) iae('this command needs 2 arguments (imageNickName filename), received ' + (c.n - 1) + ' instead');
++    const nick = c.arg(1), fileName = c.rest(2);
++    let bytes;
++    try { bytes = FS.readFile(fileName); }
++    catch (e) { throw new JdorError('cannot read the file "' + fileName + '"'); }
++    c.write(c.canonical + ' ' + nick + ' ' + fileName);
++    c.async = createImageBitmap(new Blob([bytes])).then((bmp) => {
++      const img = newImageObj(bmp.width, bmp.height, 2);
++      img.ctx.drawImage(bmp, 0, 0);
++      bmp.close();
++      c.h.images.set(nick.toUpperCase(), img);
++      c.result = img.canvas.width + ' ' + img.canvas.height;
++    }, () => { throw new JdorError('"' + fileName + '" is not an image the browser can decode'); });
++  });
++  def('saveImage', (c) => {
++    if (c.n < 2) iae('this command needs 1 argument (filename)');
++    const fileName = c.rest(1);
++    let ext = 'png';
++    const dot = fileName.lastIndexOf('.');
++    if (dot > 1 && dot < fileName.length && fileName.length > dot + 1) ext = fileName.substring(dot + 1);
++    c.write(c.canonical + ' ' + fileName);
++    const mime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' }[ext.toLowerCase()];
++    const src = c.h.image.canvas;
++    let blobP;
++    if (ext.toLowerCase() === 'bmp') blobP = Promise.resolve(new Blob([encodeBMP(src)]));
++    else if (mime) {
++      let canvas = src;
++      if (mime === 'image/jpeg') {     // no alpha in JPEG: as on an opaque image
++        canvas = new OffscreenCanvas(src.width, src.height);
++        const x = canvas.getContext('2d'); x.fillStyle = '#000'; x.fillRect(0, 0, src.width, src.height); x.drawImage(src, 0, 0);
++      }
++      blobP = canvas.convertToBlob({ type: mime, quality: 0.9 });
++    } else {
++      throw new JdorError('"' + c.canonical + '": fileName=[' + fileName + '] hence extension=[' + ext + '] failed, try extension "png" instead');
++    }
++    c.async = blobP.then((b) => b.arrayBuffer()).then((ab) => {
++      FS.writeFile(fileName, new Uint8Array(ab));
++      c.result = '1';
++    });
++  });
++  function encodeBMP(canvas) {
++    const w = canvas.width, h = canvas.height, d = canvas.getContext('2d').getImageData(0, 0, w, h).data;
++    const row = (w * 3 + 3) & ~3, size = 54 + row * h, b = new Uint8Array(size), v = new DataView(b.buffer);
++    b[0] = 66; b[1] = 77; v.setUint32(2, size, true); v.setUint32(10, 54, true); v.setUint32(14, 40, true);
++    v.setInt32(18, w, true); v.setInt32(22, h, true); v.setUint16(26, 1, true); v.setUint16(28, 24, true);
++    v.setUint32(34, row * h, true);
++    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
++      const s = ((h - 1 - y) * w + x) * 4, o = 54 + y * row + x * 3;
++      b[o] = d[s + 2]; b[o + 1] = d[s + 1]; b[o + 2] = d[s];
++    }
++    return b;
++  }
++  function pushPopImage(c, push) {
++    const h = c.h;
++    if (!push && c.n !== 1) iae('this command does not expect arguments, received ' + (c.n - 1) + ' argument(s)');
++    if (push && c.n > 2) iae('this command expects 1 argument at the most (nickName), received ' + (c.n - 1) + ' argument(s)');
++    if (push) {
++      const img = copyImageObj(h.image);
++      h.imageStack.push(img);
++      if (c.n > 1) { h.images.set(c.arg(1).toUpperCase(), img); c.write(c.canonical + ' ' + c.arg(1)); }
++      else c.write(c.canonical);
++      c.result = img;
++      return;
++    }
++    const img = h.imageStack.pop();
++    if (!img) throw err('-16', 'did not return an image (empty stack)', 'empty stack');
++    c.write(c.canonical);
++    const r = new Path2D(); r.rect(0, 0, img.canvas.width, img.canvas.height);
++    h.render((x) => x.drawImage(img.canvas, 0, 0), { area: r });
++    c.result = img;
++  }
++  def('pushImage', (c) => pushPopImage(c, true));
++  def('popImage', (c) => pushPopImage(c, false));
++  def('drawImage', (c) => {
++    const h = c.h, n = c.n;
++    if (![2, 3, 4, 5, 8, 9].includes(n)) iae('this command needs exactly 2, 3, 4, 5, 8 or 9 arguments, received ' + (n - 1) + ' instead');
++    const name = c.arg(1);
++    c.canon(name);
++    const img = c.lookup(h.images, name, ['BufferedImage']);
++    if (!img) iae('image with the name "' + name + '" not found, you must first use "loadImage ' + name + ' filename" or "pushImage ' + name + '" or assign an image to a Rexx variable named "' + name + '"');
++    const cn = { 3: 2, 5: 4, 9: 8 }[n];
++    let bkg = null;
++    if (cn) {
++      bkg = h.colors.get(c.arg(cn).toUpperCase());
++      if (!bkg) throw err('-14', 'color with the supplied nickname "' + c.arg(cn) + '" is not registered');
++    }
++    const x = h.currX, y = h.currY, iw = img.canvas.width, ih = img.canvas.height;
++    let dx = x, dy = y, dw = iw, dh = ih, sx = 0, sy = 0, sw = iw, sh = ih;
++    if (n >= 4) {
++      const [w, ht] = ints2(c, 2);
++      c.canon(w + ' ' + ht);
++      if (n >= 8) {                // as Java: drawImage(img, dx1, dy1, dx2, dy2, sx1, sy1, sx2, sy2): "width height" are the corner
++        const s = [4, 5, 6, 7].map((i) => string2int(c.arg(i)));
++        c.canon(s[0] + ' ' + s[1] + ' ' + s[2] + ' ' + s[3]);
++        dw = w - x; dh = ht - y; sx = s[0]; sy = s[1]; sw = s[2] - s[0]; sh = s[3] - s[1];
++      } else { dw = w; dh = ht; }
++    }
++    if (bkg) c.canon(c.arg(cn));
++    c.write(c.canonical);
++    const r = new Path2D(); r.rect(dx, dy, dw, dh);
++    h.render((ctx) => {
++      if (bkg) { ctx.fillStyle = cssColor(bkg); ctx.fill(r); }
++      if (sw !== 0 && sh !== 0 && dw !== 0 && dh !== 0) ctx.drawImage(img.canvas, sx, sy, sw, sh, dx, dy, dw, dh);
++    }, { area: r });
++  });
++
++  // ---- state ---------------------------------------------------------------
++  def('getState', (c) => {
++    const h = c.h, g = h.gc;
++    if (c.n > 2) iae('this command needs either no or exactly 1 argument (nameOfContextVariable), received ' + (c.n - 1) + ' instead');
++    if (c.n === 2) c.canon(c.arg(1));
++    c.write(c.canonical);
++    const table = (map) => ({ table: [...map.entries()] });
++    const st = { table: [
++      ['currX', '' + h.currX], ['currY', '' + h.currY], ['prefImageType', '' + prefImageType],
++      ['image', h.image], ['GC', obj('Graphics2D', { h })],
++      ['imageWidth', '' + h.image.canvas.width], ['imageHeight', '' + h.image.canvas.height], ['imageType', '' + h.image.type],
++      ['currFontStyle', '' + h.currFontStyle], ['currFontSize', '' + h.currFontSize],
++      ['currVisible', h.currVisible ? '1' : '0'], ['currWinUpdate', h.currWinUpdate ? '1' : '0'],
++      ['printScaleToPage', h.printScaleToPage ? '1' : '0'], ['printPosX', '' + h.printPosX], ['printPosY', '' + h.printPosY],
++      ['printScaleX', jd(h.printScaleX)], ['printScaleY', jd(h.printScaleY)],
++      ['currAntiAliasing', HINTS[g.aa]], ['currTextAntiAliasing', HINTS[g.textAA]],
++      ['gc.background', g.background], ['gc.color', g.color], ['gc.composite', g.composite], ['gc.font', g.font],
++      ['gc.paint', g.paint], ['gc.stroke', g.stroke], ['gc.transform', transformObj(g.m)],
++      ['gcStack', { array: h.gcStack.map((x) => x.obj) }], ['imageStack', { array: h.imageStack.slice() }],
++      ['colors', table(h.colors)], ['gradiantPaints', table(h.gradients)], ['fonts', table(h.fonts)],
++      ['images', table(h.images)], ['shapes', table(h.shapes)], ['strokes', table(h.strokes)], ['transforms', table(h.transforms)]] };
++    if (c.n === 2) c.setVars.push([c.arg(1).toUpperCase(), st]);
++    c.result = st;
++  });
++
++  // ---- colors, paints ------------------------------------------------------
++  def('color', (c) => {
++    const h = c.h, g = h.gc;
++    if (![1, 2, 5, 6].includes(c.n)) iae('this command needs either no, 1, 4 or exactly 5 arguments, received ' + (c.n - 1) + ' instead');
++    c.result = g.color;
++    if (c.n === 1) { c.write(c.canonical); return; }
++    const nick = c.arg(1);
++    c.canon(nick);
++    if (c.n === 2) {
++      const col = c.lookup(h.colors, nick, ['Color']);
++      if (!col) { c.write('-- ERROR (nickname argument): [' + c.command + ']');
++        throw err('-3', 'color with the supplied nickname "' + nick + '" is not registered nor is it a Rexx variable referring to a color', null); }
++      g.color = g.paint = col;
++      c.write(c.canonical);
++      return;
++    }
++    const isFloat = c.rest(2).indexOf('.') >= 0;
++    let col;
++    if (isFloat) {
++      const v = [2, 3, 4, 5].slice(0, c.n - 2).map((i) => parseFloatJ(c.arg(i)));
++      for (const x of v) if (x < 0 || x > 1) iae('Color parameter outside of expected range:' + (v.length === 4 ? ' Red Green Blue Alpha' : ' Red Green Blue'));
++      col = color((v[0] * 255 + 0.5) | 0, (v[1] * 255 + 0.5) | 0, (v[2] * 255 + 0.5) | 0, v.length === 4 ? (v[3] * 255 + 0.5) | 0 : 255);
++      c.canon(v.map(jf).join(' '));
++    } else {
++      const v = [2, 3, 4, 5].slice(0, c.n - 2).map((i) => parseIntJ(c.arg(i)));
++      for (const x of v) if (x < 0 || x > 255) iae('Color parameter outside of expected range:' + (v.length === 4 ? ' Red Green Blue Alpha' : ' Red Green Blue'));
++      col = color(v[0], v[1], v[2], v.length === 4 ? v[3] : 255);
++      c.canon(v.join(' '));
++    }
++    h.colors.set(nick.toUpperCase(), col);
++    g.color = g.paint = col;
++    c.write(c.canonical);
++  });
++  def('gradientPaint', (c) => {
++    const h = c.h, g = h.gc, n = c.n;
++    if (n !== 2 && n !== 8 && n !== 9) iae('this command needs either one, 7 or 8 arguments, received ' + (n - 1) + ' instead');
++    c.result = g.paint;
++    const nick = c.arg(1);
++    c.canon(nick);
++    if (n === 2) {
++      const gp = c.lookup(h.gradients, nick, ['GradientPaint']);
++      if (!gp) { c.write('-- ERROR (nickname argument): [' + c.command + ']');
++        throw err('-4', 'gradientPaint with the supplied nickname "' + nick + '" is not registered nor is it a Rexx variable referring to a GradientPaint object', null); }
++      g.paint = gp; c.write(c.canonical); return;
++    }
++    const x1 = parseFloatJ(c.arg(2)), y1 = parseFloatJ(c.arg(3));
++    const c1 = h.colors.get(c.arg(4).toUpperCase());
++    if (!c1) { c.write('-- ERROR (nickname argument): [' + c.command + ']');
++      throw err('-5', 'argument colorName1 with the supplied nickname "' + c.arg(4) + '" is not registered', null); }
++    const x2 = parseFloatJ(c.arg(5)), y2 = parseFloatJ(c.arg(6));
++    const c2 = h.colors.get(c.arg(7).toUpperCase());
++    if (!c2) { c.write('-- ERROR (nickname2 argument): [' + c.command + ']');
++      throw err('-6', 'argument colorName2 with the supplied nickname "' + c.arg(7) + '" is not registered', null); }
++    c.canon(jf(x1) + ' ' + jf(y1) + ' ' + c.arg(4) + ' ' + jf(x2) + ' ' + jf(y2) + ' ' + c.arg(7));
++    let cyclic = false;
++    if (n === 9) { cyclic = boolArg(c, c.arg(8), 'cyclic'); c.canon(cyclic ? '.true' : '.false'); }
++    const gp = obj('GradientPaint', { x1, y1, c1, x2, y2, c2, cyclic });
++    h.gradients.set(nick.toUpperCase(), gp);
++    g.paint = gp;
++    c.write(c.canonical);
++  });
++  def('setPaintMode', (c) => {
++    if (c.n !== 1) iae('this command needs exactly 1 argument, received ' + (c.n - 1) + ' instead');
++    c.h.gc.xor = null; c.write(c.canonical);
++  });
++  def('paint', (c) => {
++    const h = c.h, g = h.gc;
++    c.result = g.paint;
++    if (c.n === 1) { c.write(c.canonical); return; }
++    if (c.n !== 2) iae('this command needs either no or exactly 1 argument, received ' + (c.n - 1) + ' instead');
++    const nick = c.arg(1);
++    c.canon(nick);
++    const p = h.gradients.get(nick.toUpperCase()) || h.colors.get(nick.toUpperCase()) ||
++      c.lookup(new Map(), nick, ['Color', 'GradientPaint']);
++    if (!p) { c.write('-- ERROR (nickname argument): [' + c.command + ']');
++      throw err('-7', 'neither paint nor gradientPaint with the supplied nickname "' + nick + '" is registered nor supplied with a Rexx variable of that name', null); }
++    g.paint = p; if (p.kind === 'Color') g.color = p;
++    c.write(c.canonical);
++  });
++  def('background', (c) => {
++    const h = c.h, g = h.gc;
++    c.result = g.background;
++    if (c.n === 1) { c.write(c.canonical); return; }
++    if (c.n !== 2) iae('this command needs either no or exactly 1 argument, received ' + (c.n - 1) + ' instead');
++    const nick = c.arg(1);
++    c.canon(nick);
++    const col = c.lookup(h.colors, nick, ['Color']);
++    if (!col) { c.write('-- ERROR (nickname argument): [' + c.command + ']');
++      throw err('-8', 'color with the supplied nickname "' + nick + '" is not registered nor is it a Rexx variable referring to a color', null); }
++    g.background = col;
++    c.write(c.canonical);
++  });
++  def('setXorMode', (c) => {
++    if (c.n !== 2) iae('this command needs exactly 1 argument, received ' + (c.n - 1) + ' instead');
++    const nick = c.arg(1);
++    c.canon(nick);
++    const col = c.lookup(c.h.colors, nick, ['Color']);
++    if (!col) { c.write('-- ERROR (nickname argument): [' + c.command + ']');
++      throw err('-9', 'color with the supplied nickname "' + nick + '" is not registered nor supplied via a Rexx variable of that name', null); }
++    c.h.gc.xor = col;
++    c.write(c.canonical);
++  });
++  def('composite', (c) => {
++    const g = c.h.gc, n = c.n;
++    if (n > 3) iae('this command needs either no, one (rule) or two (rule alpha) arguments, received ' + (n - 1) + ' instead');
++    c.result = g.composite;
++    if (n === 1) { c.write(c.canonical); return; }
++    const rule = constant(COMPOSITES, c.arg(1), 'rule');
++    c.canon(nameOf(COMPOSITES, rule));
++    let alpha = 1;
++    if (n === 3) {
++      alpha = parseFloatJ(c.arg(2));
++      if (!(alpha >= 0 && alpha <= 1)) iae('alpha value out of range');
++      c.canon(jf(alpha));
++    }
++    g.composite = obj('AlphaComposite', { rule, alpha });
++    c.write(c.canonical);
++  });
++  def('render', (c) => {
++    const g = c.h.gc, n = c.n;
++    if (n > 3) iae('this command needs either no, one or two rendering arguments, received ' + (n - 1) + ' instead');
++    c.result = g.aa + ' ' + g.textAA;
++    if (n === 1) { c.write(c.canonical); return; }
++    for (let i = 1; i < n; i++) {
++      const a = c.arg(i).toUpperCase();
++      if (!(a in HINTS)) iae('unknown value for argument # ' + i + ': "' + c.arg(i) + '"');
++      if (a.startsWith('TEXT')) g.textAA = a; else g.aa = a;
++      c.canon(HINTS[a]);
++    }
++    c.write(c.canonical);
++  });
++
++  // ---- clipping -----------------------------------------------------------------
++  def('clipRemove', (c) => {
++    if (c.n !== 1) iae('this command expects no arguments, received ' + (c.n - 1) + ' instead');
++    c.h.gc.clips = []; c.write(c.canonical);
++  });
++  function clipBounds(g) {           // getClipBounds(): user space, or null
++    if (g.clips.length === 0) return null;
++    let x0 = -Infinity, y0 = -Infinity, x1 = Infinity, y1 = Infinity;
++    for (const cl of g.clips) {
++      const b = pathBounds(transformPath(cl.path, cl.m));
++      x0 = Math.max(x0, b[0]); y0 = Math.max(y0, b[1]); x1 = Math.min(x1, b[0] + b[2]); y1 = Math.min(y1, b[1] + b[3]);
++    }
++    if (x1 < x0 || y1 < y0) return [0, 0, 0, 0];
++    const b = pathBounds(transformPath(rectPath(x0, y0, x1 - x0, y1 - y0), invert(g.m)));
++    const fx = Math.floor(b[0] + 1e-9), fy = Math.floor(b[1] + 1e-9);
++    return [fx, fy, Math.ceil(b[0] + b[2] - 1e-9) - fx, Math.ceil(b[1] + b[3] - 1e-9) - fy];
++  }
++  def('clip', (c) => {
++    const g = c.h.gc;
++    if (c.n !== 1 && c.n !== 5) iae('this command expects no or exactly 4 arguments, received ' + (c.n - 1) + ' instead');
++    const r = clipBounds(g);
++    c.result = r ? r.join(' ') : null;
++    if (c.n > 1) {
++      const v = [1, 2, 3, 4].map((i) => string2int(c.arg(i)));
++      c.result = v.join(' ');
++      c.canon(c.result);
++      g.clips = g.clips.concat([{ m: g.m.slice(), path: rectPath(v[0], v[1], v[2], v[3]) }]);
++    }
++    c.write(c.canonical);
++  });
++
++  // ---- strokes, fonts -------------------------------------------------------------
++  def('stroke', (c) => {
++    const h = c.h, g = h.gc, n = c.n;
++    if (n === 4 || n > 8) iae('this command needs either no, 2 (strokeNickName width), 4 (strokeNickName width cap join), 4 or 6 arguments (strokeNickName width cap join miterlimit arrDashes dashPhase), received ' + (n - 1) + ' instead');
++    c.result = g.stroke;
++    if (n === 1) { c.write(c.canonical); return; }
++    const nick = c.arg(1);
++    c.canon(nick);
++    if (n === 2) {
++      const s = c.lookup(h.strokes, nick, ['BasicStroke']);
++      if (!s) { c.write('-- ERROR (nickname argument): [' + c.command + ']');
++        throw err('-10', 'stroke with the supplied nickname "' + nick + '" is not registered nor is it a Rexx variable referring to a stroke', null); }
++      g.stroke = s; c.write(c.canonical); return;
++    }
++    const width = string2int(c.arg(2));
++    c.canon('' + width);
++    let cap = 2, join = 0, miter = 10, dash = null, phase = 0;
++    if (n > 3) {
++      cap = constant(CAPS, c.arg(3), 'cap'); join = constant(JOINS, c.arg(4), 'join');
++      c.canon(nameOf(CAPS, cap) + ' ' + nameOf(JOINS, join));
++      if (n > 5) {
++        miter = parseFloatJ(c.arg(5)); c.canon(jf(miter));
++        if (n > 6) {
++          dash = c.numArray(c.arg(6), parseFloatJ);
++          phase = parseFloatJ(c.arg(7));
++          c.canon(floatArrayExpr(dash) + ' ' + c.arg(7));
++        }
++      }
++    }
++    if (width < 0) iae('negative width');
++    if (miter < 1 && join === 0) iae('miter limit < 1');
++    const s = obj('BasicStroke', { width, cap, join, miter, dash, phase });
++    h.strokes.set(nick.toUpperCase(), s);
++    g.stroke = s;
++    c.write(c.canonical);
++  });
++  def('fontStyle', (c) => {
++    const h = c.h;
++    if (c.n > 2) iae('this command needs either no or exactly 1 argument (fontStyle), received ' + (c.n - 1) + ' instead');
++    c.result = '' + h.currFontStyle;
++    if (c.n === 2) { const s = constant(FONT_STYLES, c.arg(1), 'fontStyle'); c.canon(nameOf(FONT_STYLES, s)); h.currFontStyle = s; }
++    c.write(c.canonical);
++  });
++  def('fontSize', (c) => {
++    const h = c.h;
++    if (c.n > 2) iae('this command needs either no or exactly 1 argument (fontSize), received ' + (c.n - 1) + ' instead');
++    c.result = '' + h.currFontSize;
++    if (c.n === 2) {
++      const s = string2int(c.arg(1));
++      if (s <= 0) iae('illegal fontSize [' + s + ']: must not be 0 or less.');
++      h.currFontSize = s; c.canon('' + s);
++    }
++    c.write(c.canonical);
++  });
++  def('font', (c) => {
++    const h = c.h, g = h.gc;
++    c.result = g.font;
++    if (c.n === 1) { c.write(c.canonical); return; }
++    const nick = c.arg(1);
++    c.canon(nick);
++    if (c.n === 2) {
++      const f = c.lookup(h.fonts, nick, ['Font']);
++      if (!f) { c.write('-- ERROR (nickname argument): [' + c.command + ']');
++        throw err('-11', 'font with the supplied nickname "' + nick + '" is not registered nor is it a Rexx variable referring to a font', null); }
++      g.font = f; c.write(c.canonical); return;
++    }
++    const spec = c.rest(2);
++    const f = makeFont(spec, h.currFontStyle, h.currFontSize);
++    c.canon(spec);
++    h.fonts.set(nick.toUpperCase(), f);
++    g.font = f;
++    c.write(c.canonical);
++  });
++
++  // ---- position, primitives ------------------------------------------------------------
++  def('moveTo', (c) => {
++    const h = c.h;
++    if (c.n > 3) iae('this command needs no, 1 or 2 arguments, received ' + (c.n - 1) + ' instead');
++    c.result = h.currX + ' ' + h.currY;
++    if (c.n > 1) {
++      const x = string2int(c.arg(1)), y = c.n === 3 ? string2int(c.arg(2)) : x;
++      h.currX = x; h.currY = y; c.canon(x + ' ' + y);
++    }
++    c.write(c.canonical);
++  });
++  def('drawLine', (c) => {
++    const h = c.h;
++    if (c.n !== 3) iae('this command needs exactly 2 arguments, received ' + (c.n - 1) + ' instead');
++    const [x, y] = ints2(c, 1);
++    c.canon(x + ' ' + y); c.write(c.canonical);
++    h.drawPath([['M', h.currX, h.currY], ['L', x, y]]);
++  });
++  def('drawString', (c) => {
++    const h = c.h;
++    if (c.command.length <= c.bounds[0][1] + 1) iae('this command needs 1 argument (the string to be drawn)');
++    const s = c.text();
++    c.write(c.canonical + ' ' + s);
++    const x = h.currX, y = h.currY;
++    const clear = h.gc.composite.rule === 1 && !h.gc.xor;
++    h.render((ctx) => {
++      ctx.textBaseline = 'alphabetic';
++      ctx.fillText(s, x, y);
++      if (clear) { ctx.setLineDash([]); ctx.strokeText(s, x, y); }
++    }, { text: true });
++  });
++  function textBounds(h, s) {
++    const ctx = h.ctx;
++    ctx.save(); ctx.font = cssFont(h.gc.font);
++    const m = ctx.measureText(s);
++    ctx.restore();
++    const asc = m.fontBoundingBoxAscent !== undefined ? m.fontBoundingBoxAscent : h.gc.font.size * 0.93;
++    const desc = m.fontBoundingBoxDescent !== undefined ? m.fontBoundingBoxDescent : h.gc.font.size * 0.24;
++    return [0, -asc, m.width, asc + desc];
++  }
++  def('stringBounds', (c) => {
++    if (c.n < 2) iae('this command needs 1 argument (the string to be measured with current font and graphic context)');
++    const s = c.text();
++    c.write(c.canonical + ' ' + s);
++    const b = textBounds(c.h, s).map((v) => jd(Math.fround(v)));
++    c.result = b.join(' ');
++  });
++  function ovalCmd(c, fill) {
++    const h = c.h;
++    if (c.n !== 3) iae('this command needs exactly 2 arguments, received ' + (c.n - 1) + ' instead');
++    const [w, ht] = ints2(c, 1);
++    const p = ellipsePath(h.currX, h.currY, w, ht);
++    if (fill) h.fillPath(p); else h.drawPath(p);
++    c.canon(w + ' ' + ht); c.write(c.canonical);
++  }
++  def('drawOval', (c) => ovalCmd(c, false));
++  def('fillOval', (c) => ovalCmd(c, true));
++  def('copyArea', (c) => {
++    const h = c.h;
++    if (c.n !== 5) iae('this command needs exactly 4 arguments, received ' + (c.n - 1) + ' instead');
++    const [w, ht] = ints2(c, 1), [dx, dy] = ints2(c, 3);
++    c.canon(w + ' ' + ht + ' ' + dx + ' ' + dy); c.write(c.canonical);
++    const m = h.gc.m, x = h.currX, y = h.currY;
++    // device space (copyArea ignores scale and shear for the distance, as Java does with a translation)
++    const sx = m[0] * x + m[2] * y + m[4], sy = m[1] * x + m[3] * y + m[5];
++    const sw = Math.abs(m[0] * w), sh = Math.abs(m[3] * ht);
++    if (sw <= 0 || sh <= 0) return;
++    const tmp = new OffscreenCanvas(Math.ceil(sw), Math.ceil(sh));
++    tmp.getContext('2d').drawImage(h.image.canvas, sx, sy, sw, sh, 0, 0, sw, sh);
++    const ctx = h.ctx;
++    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0);
++    ctx.globalCompositeOperation = 'copy';
++    const r = new Path2D(); r.rect(sx + dx * m[0], sy + dy * m[3], sw, sh); ctx.clip(r);
++    ctx.drawImage(tmp, sx + dx * m[0], sy + dy * m[3]);
++    ctx.restore(); h.changed();
++  });
++  function rectCmd(c, cmd) {
++    const h = c.h, round = cmd === 'DRAWROUNDRECT' || cmd === 'FILLROUNDRECT';
++    if (round && c.n !== 5) iae('this command needs exactly 4 arguments, received ' + (c.n - 1) + ' instead');
++    if (!round && c.n !== 3) iae('this command needs exactly 2 arguments, received ' + (c.n - 1) + ' instead');
++    const [w, ht] = ints2(c, 1);
++    c.canon(w + ' ' + ht);
++    let aw = -1, ah = -1;
++    if (round) { [aw, ah] = ints2(c, 3); c.canon(aw + ' ' + ah); }
++    c.write(c.canonical);
++    const x = h.currX, y = h.currY;
++    switch (cmd) {
++      case 'DRAWRECT': if (w >= 0 && ht >= 0) h.drawPath(rectPath(x, y, w, ht)); break;
++      case 'FILLRECT': if (w > 0 && ht > 0) h.fillPath(rectPath(x, y, w, ht)); break;
++      case 'CLEARRECT': {           // background colour, as with the SRC composite
++        if (w <= 0 || ht <= 0) break;
++        const keep = h.gc.composite, keepP = h.gc.paint, keepX = h.gc.xor;
++        h.gc.composite = { rule: 2, alpha: 1 }; h.gc.paint = h.gc.background; h.gc.xor = null;
++        try { h.fillPath(rectPath(x, y, w, ht)); } finally { h.gc.composite = keep; h.gc.paint = keepP; h.gc.xor = keepX; }
++        break;
++      }
++      case 'DRAWROUNDRECT': h.drawPath(roundRectPath(x, y, w, ht, aw, ah)); break;
++      case 'FILLROUNDRECT': h.fillPath(roundRectPath(x, y, w, ht, aw, ah)); break;
++    }
++  }
++  for (const n of ['drawRect', 'fillRect', 'clearRect', 'drawRoundRect', 'fillRoundRect']) def(n, (c) => rectCmd(c, n.toUpperCase()));
++  function rect3D(c, fill) {
++    const h = c.h;
++    if (c.n !== 4) iae('this command needs exactly 3 arguments, received ' + (c.n - 1) + ' instead');
++    const [w, ht] = ints2(c, 1);
++    const raised = boolArg(c, c.arg(3), 'raised');
++    // Graphics.draw3DRect/fill3DRect: brighter and darker edges of the current colour
++    const col = h.gc.color, x = h.currX, y = h.currY;
++    const brighter = (k) => { let r = k.r, g = k.g, b = k.b; const i = 3; if (r === 0 && g === 0 && b === 0) return color(i, i, i, k.a);
++      if (r > 0 && r < i) r = i; if (g > 0 && g < i) g = i; if (b > 0 && b < i) b = i;
++      return color(Math.min((r / 0.7) | 0, 255), Math.min((g / 0.7) | 0, 255), Math.min((b / 0.7) | 0, 255), k.a); };
++    const darker = (k) => color(Math.max((k.r * 0.7) | 0, 0), Math.max((k.g * 0.7) | 0, 0), Math.max((k.b * 0.7) | 0, 0), k.a);
++    const keep = h.gc.paint;
++    const lit = brighter(col), dim = darker(col);
++    try {
++      if (fill) { h.gc.paint = raised ? col : dim; h.fillPath(rectPath(x + 1, y + 1, w - 2, ht - 2)); }
++      const W = fill ? w - 1 : w, H = fill ? ht - 1 : ht;
++      h.gc.paint = raised ? lit : dim;
++      h.drawPath([['M', x, y], ['L', x, y + H - (fill ? 0 : 1)]]); h.drawPath([['M', x + 1, y], ['L', x + W - 1, y]]);
++      h.gc.paint = raised ? dim : lit;
++      h.drawPath([['M', x + 1, y + H], ['L', x + W, y + H]]); h.drawPath([['M', x + W, y], ['L', x + W, y + H - 1]]);
++    } finally { h.gc.paint = keep; }
++    c.canon(w + ' ' + ht + ' ' + (raised ? '.true' : '.false')); c.write(c.canonical);
++  }
++  def('draw3DRect', (c) => rect3D(c, false));
++  def('fill3DRect', (c) => rect3D(c, true));
++  function arcCmd(c, fill) {
++    const h = c.h;
++    if (c.n !== 5) iae('this command needs exactly 4 arguments, received ' + (c.n - 1) + ' instead');
++    const v = [1, 2, 3, 4].map((i) => string2int(c.arg(i)));
++    const p = arcPath(h.currX, h.currY, v[0], v[1], v[2], v[3], fill ? 2 : 0);
++    if (fill) h.fillPath(p); else h.drawPath(p);
++    c.canon(v.join(' ')); c.write(c.canonical);
++  }
++  def('drawArc', (c) => arcCmd(c, false));
++  def('fillArc', (c) => arcCmd(c, true));
++  function polyCmd(c, cmd) {
++    const h = c.h;
++    if (c.n !== 4) iae('this command needs exactly 3 (xPointsArray yPointsArray nPoints) arguments, received ' + (c.n - 1) + ' instead');
++    const xs = c.numArray(c.arg(1), parseIntJ), ys = c.numArray(c.arg(2), parseIntJ), np = parseIntJ(c.arg(3));
++    if (np > xs.length || np > ys.length) throw new JdorError('nPoints ' + np + ' exceeds the length of the arrays, ' + Math.min(xs.length, ys.length));
++    c.canon(intArrayExpr(xs) + ' ' + intArrayExpr(ys) + ' ' + c.arg(3)); c.write(c.canonical);
++    const p = polyPath(xs, ys, np, cmd !== 'DRAWPOLYLINE');
++    if (cmd === 'FILLPOLYGON') h.fillShape({ type: 'Polygon', wind: 0, path: p }); else h.drawPath(p);
++  }
++  for (const n of ['drawPolyline', 'drawPolygon', 'fillPolygon']) def(n, (c) => polyCmd(c, n.toUpperCase()));
++
++  // ---- transformations ---------------------------------------------------------------
++  function scaleShear(c, scale) {
++    const g = c.h.gc;
++    if (c.n > 3) iae('this command needs either no, one or 2 arguments, received ' + (c.n - 1) + ' instead');
++    const m = g.m;
++    c.result = scale ? jd(m[0]) + ' ' + jd(m[3]) : jd(m[2]) + ' ' + jd(m[1]);
++    if (c.n > 1) {
++      const x = parseDoubleJ(c.arg(1)), y = c.n === 3 ? parseDoubleJ(c.arg(2)) : x;
++      g.m = mul(m, scale ? [x, 0, 0, y, 0, 0] : [1, y, x, 1, 0, 0]);
++      c.canon(jd(x) + ' ' + jd(y));
++    }
++    c.write(c.canonical);
++  }
++  def('scale', (c) => scaleShear(c, true));
++  def('shear', (c) => scaleShear(c, false));
++  def('translate', (c) => {
++    const g = c.h.gc;
++    if (c.n > 3) iae('this command needs no, 1 or 2 arguments, received ' + (c.n - 1) + ' instead');
++    c.result = jd(g.m[4]) + ' ' + jd(g.m[5]);
++    if (c.n > 1) {
++      const x = string2int(c.arg(1)), y = c.n === 3 ? string2int(c.arg(2)) : x;
++      g.m = mul(g.m, [1, 0, 0, 1, x, y]);
++      c.canon(x + ' ' + y);
++    }
++    c.write(c.canonical);
++  });
++  def('rotate', (c) => {
++    const g = c.h.gc;
++    if (c.n !== 2 && c.n !== 4) iae('this command needs exactly one or three arguments, received ' + (c.n - 1) + ' instead');
++    const theta = parseDoubleJ(c.arg(1));
++    c.canon(jd(theta));
++    const r = theta * Math.PI / 180;
++    if (r !== 0) {
++      const cs = Math.cos(r), sn = Math.sin(r), rot = [cs, sn, -sn, cs, 0, 0];
++      if (c.n === 2) g.m = mul(g.m, rot);
++      else {
++        const [x, y] = ints2(c, 2);
++        c.canon(x + ' ' + y);
++        g.m = mul(mul(mul(g.m, [1, 0, 0, 1, x, y]), rot), [1, 0, 0, 1, -x, -y]);
++      }
++    }
++    c.write(c.canonical);
++  });
++  def('transform', (c) => {
++    const h = c.h, g = h.gc, n = c.n;
++    if ((n > 2 && n < 7) || n > 8) iae('this command needs exactly no, 1, 6, or 7 arguments, received ' + (n - 1) + ' instead');
++    let [scX, shY, shX, scY, tX, tY] = g.m;
++    c.result = [tX, tY, scX, scY, shX, shY].map(jd).join(' ');
++    if (n === 1) { c.write(c.canonical); return; }
++    const nick = c.arg(1), u = nick.toUpperCase();
++    if (n === 2) {
++      if (u === 'RESET' || u === 'R') { g.m = [1, 0, 0, 1, 0, 0]; c.canon('RESET'); c.write(c.canonical); return; }
++      c.canon(nick);
++      let t = h.transforms.get(u);
++      if (!t && isVarName(u)) { t = c.lookup(new Map(), nick, ['AffineTransform']); }
++      if (!t) iae('no transform with name "' + nick + '" stored, nor a Rexx variable that refers to an AffineTransform object');
++      c.write(c.canonical);
++      c.result = t;
++      return;
++    }
++    const base = n === 7 ? 1 : 2;
++    const val = (i, cur) => c.arg(base + i) === '.' ? cur : parseDoubleJ(c.arg(base + i));
++    tX = val(0, tX); tY = val(1, tY); scX = val(2, scX); scY = val(3, scY); shX = val(4, shX); shY = val(5, shY);
++    const m = [scX, shY, shX, scY, tX, tY];
++    if (n === 7) {
++      g.m = m;
++      c.canon([tX, tY, scX, scY, shX, shY].map(jd).join(' '));
++    } else {
++      c.canon(nick);
++      const t = transformObj(m);
++      h.transforms.set(u, t);
++      c.result = t;
++    }
++    c.write(c.canonical);
++  });
++  function pushPopGC(c, push) {
++    const h = c.h;
++    if (c.n !== 1) iae('this command does not expect arguments, received ' + (c.n - 1) + ' argument(s)');
++    const cur = obj('Graphics2D', { h });
++    c.result = cur;
++    if (push) { h.gcStack.push({ gc: h.gc, obj: cur }); h.gc = cloneGC(h.gc); }
++    else {
++      const prev = h.gcStack.pop();
++      if (!prev) { c.write('-- ERROR (stack empty): [' + c.command + ']');
++        throw err('-15', 'did not return a GC (stack empty)', null); }
++      h.gc = prev.gc;
++      c.result = prev.obj;
++    }
++    c.write(c.canonical);
++  }
++  def('pushGC', (c) => pushPopGC(c, true));
++  def('popGC', (c) => pushPopGC(c, false));
++
++  // ---- shapes ---------------------------------------------------------------------------
++  def('shape', (c) => {
++    const h = c.h, n = c.n;
++    if (n < 2) iae('this command needs more than ' + n + ' arguments');
++    const nick = c.arg(1), u = nick.toUpperCase();
++    c.canon(nick);
++    if (n === 2) {
++      const s = h.shapes.get(u);
++      if (!s) { c.write('-- ERROR (nickname argument): [' + c.command + ']');
++        throw err('-17', 'Shape with the supplied nickname "' + nick + '" is not registered', null); }
++      c.write(c.canonical); c.result = s; return;
++    }
++    const type = SHAPE_TYPES[c.arg(2).toUpperCase()];
++    if (!type) throw err('-18', 'Shape type "' + c.arg(2) + '" is not supported', null);
++    c.canon(type);
++    const nums = (from, k) => { const r = []; for (let i = 0; i < k; i++) r.push(parseDoubleJ(c.arg(from + i))); return r; };
++    const wrongCount = (rc, msg) => { c.write('-- ERROR (wrong number of arguments for "' + type + '" shape): [' + c.command + ']'); return err(rc, msg, null); };
++    let s;
++    switch (type) {
++      case 'Area': {
++        if (n !== 4) throw wrongCount('-19', 'Shape "' + type + '" needs exactly two arguments ("areaNickName shapeNickName"), however there are ' + (n - 3) + ' supplied');
++        const src = h.shapes.get(c.arg(3).toUpperCase());
++        if (!src || src.kind !== 'Shape') { c.write('-- ERROR (area shape argument): [' + c.command + ']');
++          throw err('-20', 'area argument named "' + c.arg(3) + '" is not registered', null); }
++        c.canon(c.arg(3));
++        s = shape('Area', { mp: JSON.parse(JSON.stringify(areaOf(src))) });
++        break;
++      }
++      case 'Arc2D': {
++        if (n !== 7 && n !== 10) throw wrongCount('-21', 'Shape "' + type + '" needs exactly 4 (rectangle2d start extent type) or 7 arguments (x y w h start extent type), however there are ' + (n - 3) + ' supplied');
++        let x, y, w, ht, start, extent, tstr;
++        if (n === 7) {
++          const r = c.lookupShape(c.arg(3), ['Rectangle2D']);
++          if (!r) { c.write('-- ERROR (rectangle2d argument): [' + c.command + ']');
++            throw err('-22', 'rectangle2d argument named "' + c.arg(3) + '" is not registered nor is it a Rexx variable referring to a Rectangle2D shape', null); }
++          c.canon(c.arg(3));
++          [x, y, w, ht] = r.bounds;
++          start = parseDoubleJ(c.arg(4)); extent = parseDoubleJ(c.arg(5)); tstr = c.arg(6);
++        } else {
++          // as Java: the third and fourth numbers are taken as height and width
++          let hh, ww;
++          [x, y, hh, ww] = nums(3, 4);
++          w = ww; ht = hh;
++          c.canon(jd(x) + ' ' + jd(y) + ' ' + jd(hh) + ' ' + jd(ww));
++          start = parseDoubleJ(c.arg(7)); extent = parseDoubleJ(c.arg(8)); tstr = c.arg(9);
++        }
++        const at = constant(ARC_TYPES, tstr, 'type');
++        c.canon(jd(start) + ' ' + jd(extent) + ' ' + nameOf(ARC_TYPES, at));
++        s = shape('Arc2D', { path: arcPath(x, y, w, ht, start, extent, at), bounds: null });
++        break;
++      }
++      case 'CubicCurve2D': {
++        if (n !== 11) { c.write('-- ERROR (nickname argument): [' + c.command + ']');
++          throw err('-23', 'Shape "' + type + '" needs exactly 8 arguments, however there are ' + (n - 3) + ' supplied', null); }
++        const a = nums(3, 8);
++        c.canon(a.map(jd).join(' '));
++        s = shape(type, { path: [['M', a[0], a[1]], ['C', a[2], a[3], a[4], a[5], a[6], a[7]]] });
++        break;
++      }
++      case 'Ellipse2D': case 'Line2D': case 'Rectangle2D': {
++        if (n !== 7) { c.write('-- ERROR (nickname argument): [' + c.command + ']');
++          throw err('-24', 'Shape "' + type + '" needs exactly 4 arguments, however there are ' + (n - 3) + ' supplied', null); }
++        const a = nums(3, 4);
++        c.canon(a.map(jd).join(' '));
++        if (type === 'Ellipse2D') s = shape(type, { path: ellipsePath(a[0], a[1], a[2], a[3]), bounds: a.slice() });
++        else if (type === 'Line2D') s = shape(type, { path: [['M', a[0], a[1]], ['L', a[2], a[3]]] });
++        else s = shape(type, { path: rectPath(a[0], a[1], a[2], a[3]), bounds: a.slice() });
++        break;
++      }
++      case 'Polygon': {
++        if (n !== 6) iae('this command needs exactly 3 (xPointsArray yPointsArray nPoints) arguments, received ' + (n - 3) + ' instead');
++        const xs = c.numArray(c.arg(3), parseIntJ), ys = c.numArray(c.arg(4), parseIntJ), np = parseIntJ(c.arg(5));
++        c.canon(intArrayExpr(xs) + ' ' + intArrayExpr(ys) + ' ' + c.arg(5));
++        s = shape(type, { path: polyPath(xs, ys, np, true), wind: 0 });
++        break;
++      }
++      case 'QuadCurve2D': case 'RoundRectangle2D': {
++        if (n !== 9) { c.write('-- ERROR (nickname argument): [' + c.command + ']');
++          throw err('-25', 'Shape "' + type + '" needs exactly 6 arguments, however there are ' + (n - 3) + ' supplied', null); }
++        const a = nums(3, 6);
++        c.canon(a.map(jd).join(' '));
++        if (type === 'QuadCurve2D') s = shape(type, { path: [['M', a[0], a[1]], ['Q', a[2], a[3], a[4], a[5]]] });
++        else s = shape(type, { path: roundRectPath(a[0], a[1], a[2], a[3], a[4], a[5]), bounds: a.slice(0, 4) });
++        break;
++      }
++      case 'Path2D': {
++        if (n < 3 || n > 4) { c.write('-- ERROR (nickname argument): [' + c.command + ']');
++          throw err('-26', 'Shape "' + type + '" needs no or exactly 1 argument, however there are ' + (n - 3) + ' supplied', null); }
++        let wind = 1;
++        if (n === 4) wind = constant(WINDING, c.arg(3), 'windingType');
++        c.canon(nameOf(WINDING, wind));
++        s = shape(type, { path: [], wind });
++        break;
++      }
++    }
++    h.shapes.set(u, s);
++    c.write(c.canonical);
++    c.result = s;
++  });
++  function shapeArg(c, i) {
++    const name = c.arg(i);
++    let s = c.h.shapes.get(name.toUpperCase());
++    if (!s && isVarName(name)) {
++      s = c.lookup(new Map(), name, ['Shape']);
++      if (!s) iae('no shape with name "' + name + '" stored, nor a Rexx variable that refers to a Shape object');
++    }
++    if (!s) iae('no shape with name "' + name + '" stored');
++    return s;
++  }
++  function shapeCmd(c, cmd) {
++    const h = c.h;
++    if (c.n !== 2) iae('this command needs no or exactly 1 argument, received ' + (c.n - 1) + ' instead');
++    const s = shapeArg(c, 1);
++    if (cmd === 'DRAWSHAPE') h.drawPath(shapePath(s));
++    else if (cmd === 'FILLSHAPE') h.fillShape(s);
++    else h.gc.clips = h.gc.clips.concat([{ m: h.gc.m.slice(), path: shapePath(s) }]);
++    c.write(c.canonical + ' ' + c.arg(1));
++  }
++  for (const n of ['drawShape', 'fillShape', 'clipShape']) def(n, (c) => shapeCmd(c, n.toUpperCase()));
++  def('shapeBounds', (c) => {
++    if (c.n !== 2) iae('this command needs exactly 1 argument (the name of the shape), received ' + (c.n - 1) + ' instead');
++    const s = c.h.shapes.get(c.arg(1).toUpperCase());
++    if (!s) iae('no shape with name "' + c.arg(1) + '" stored');
++    c.write(c.canonical + ' ' + c.arg(1));
++    c.result = shapeBounds(s).map(jd).join(' ');
++  });
++  function areaCmd(c, cmd) {
++    const h = c.h;
++    if (c.n !== 3) {
++      if (cmd !== 'AREATRANSFORM') iae('this command needs exactly 2 arguments (the name of the area and area/shape to be used as argument for the operation), received ' + (c.n - 1) + ' instead');
++      iae('this command needs exactly 2 arguments (the name of the area and the nickname of a transform to be applied to it), received ' + (c.n - 1) + ' instead');
++    }
++    const a = h.shapes.get(c.arg(1).toUpperCase());
++    if (!a || a.type !== 'Area') iae('no Area shape with name "' + c.arg(1) + '" stored');
++    c.canon(c.arg(1) + ' ' + c.arg(2));
++    if (cmd === 'AREATRANSFORM') {
++      let t = h.transforms.get(c.arg(2).toUpperCase());
++      if (!t && isVarName(c.arg(2))) t = c.lookup(new Map(), c.arg(2), ['AffineTransform']);
++      if (!t) iae('no transform with name "' + c.arg(2) + '" stored, nor a Rexx variable that refers to a transform object');
++      const m = t.m;
++      a.mp = a.mp.map((poly) => poly.map((ring) => ring.map(([x, y]) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]])));
++    } else {
++      let s = h.shapes.get(c.arg(2).toUpperCase());
++      if (!s && isVarName(c.arg(2))) s = c.lookup(new Map(), c.arg(2), ['Shape']);
++      if (!s) iae('no Area or Shape with name "' + c.arg(2) + '" stored, nor a Rexx variable that refers to a shape object');
++      const pc = polyClip(), rhs = areaOf(s);
++      const op = { AREAADD: 'union', AREAEXCLUSIVEOR: 'xor', AREAINTERSECT: 'intersection', AREASUBTRACT: 'difference' }[cmd];
++      a.mp = pc[op](a.mp, rhs);
++    }
++    c.write(c.canonical);
++    c.result = a;
++  }
++  for (const n of ['areaAdd', 'areaExclusiveOr', 'areaIntersect', 'areaSubtract', 'areaTransform']) def(n, (c) => areaCmd(c, n.toUpperCase()));
++  function pathArg(c, i) {
++    const p = c.h.shapes.get(c.arg(i).toUpperCase());
++    if (!p || p.type !== 'Path2D') iae('no Path2D shape with name "' + c.arg(i) + '" stored');
++    return p;
++  }
++  function lastPoint(path) {
++    for (let i = path.length - 1; i >= 0; i--) { const s = path[i]; if (s[0] !== 'Z') return [s[s.length - 2], s[s.length - 1]]; }
++    return null;
++  }
++  def('pathAppend', (c) => {
++    if (c.n < 3 || c.n > 4) iae('this command needs exactly 2 or 3 arguments (the name of the shape and optionally the boolean connect argument), received ' + (c.n - 1) + ' instead');
++    const p = pathArg(c, 1);
++    let src = c.h.shapes.get(c.arg(2).toUpperCase());
++    if (!src) {
++      src = c.lookup(new Map(), c.arg(2), ['Shape', 'PathIterator']);
++      if (!src) iae('no shape with name "' + c.arg(2) + '" stored, nor a Rexx variable pointing to a Shape or PathIterator');
++    }
++    let connect = true;
++    if (c.n === 4) connect = boolArg(c, c.arg(3), 'connect');
++    const segs = src.kind === 'PathIterator' ? src.path : shapePath(src);
++    for (const s of segs) {           // Path2D.append(), as Java
++      if (s[0] === 'M' && connect && p.path.length > 0) {
++        const last = p.path[p.path.length - 1], lp = lastPoint(p.path);
++        if (!(last[0] !== 'Z' && lp && lp[0] === s[1] && lp[1] === s[2])) p.path.push(['L', s[1], s[2]]);
++      } else p.path.push(s.slice());
++      connect = false;
++    }
++    c.canon(c.arg(1) + ' ' + c.arg(2) + ' ' + (connect || c.n !== 4 ? '.true' : (boolOf(c.arg(3)) ? '.true' : '.false')));
++    c.write(c.canonical);
++  });
++  function pathSimple(c, cmd) {
++    if (cmd === 'PATHCLONE') { if (c.n < 2 || c.n > 3) iae('this command needs exactly 1 or 2 arguments (the name of the Path2D shape), received ' + (c.n - 1) + ' instead'); }
++    else if (c.n !== 2) iae('this command needs exactly 1 argument (the name of the Path2D shape), received ' + (c.n - 1) + ' instead');
++    const p = pathArg(c, 1);
++    c.canon(c.arg(1));
++    if (cmd === 'PATHCLOSE') { if (p.path.length && p.path[p.path.length - 1][0] !== 'Z') p.path.push(['Z']); }
++    else if (cmd === 'PATHRESET') p.path = [];
++    else if (cmd === 'PATHCURRENTPOINT') {
++      let pt = null;
++      if (p.path.length) {
++        const last = p.path[p.path.length - 1];
++        if (last[0] === 'Z') { for (let i = p.path.length - 1; i >= 0; i--) if (p.path[i][0] === 'M') { pt = [p.path[i][1], p.path[i][2]]; break; } }
++        else pt = [last[last.length - 2], last[last.length - 1]];
++      }
++      c.result = pt ? jd(pt[0]) + ' ' + jd(pt[1]) : null;
++    } else {
++      const cl = shape('Path2D', { path: clonePath(p.path), wind: p.wind });
++      if (c.n === 3) { c.h.shapes.set(c.arg(2).toUpperCase(), cl); c.canon(c.arg(2)); }
++      c.result = cl;
++    }
++    c.write(c.canonical);
++  }
++  for (const n of ['pathClose', 'pathReset', 'pathCurrentPoint', 'pathClone']) def(n, (c) => pathSimple(c, n.toUpperCase()));
++  function pathTo(c, cmd) {
++    const k = { PATHLINETO: 3, PATHMOVETO: 3, PATHQUADTO: 5, PATHCURVETO: 7 }[cmd];
++    if (c.n !== k + 1) iae('this command needs exactly ' + k + ' arguments, received ' + (c.n - 1) + ' instead');
++    const p = pathArg(c, 1);
++    const a = []; for (let i = 2; i <= k; i++) a.push(parseDoubleJ(c.arg(i)));
++    c.canon(c.arg(1) + ' ' + a.map(jd).join(' '));
++    if (cmd !== 'PATHMOVETO' && p.path.length === 0) throw new JdorError('missing initial moveto in path definition');
++    if (cmd === 'PATHMOVETO') {
++      if (p.path.length && p.path[p.path.length - 1][0] === 'M') p.path[p.path.length - 1] = ['M', a[0], a[1]];
++      else p.path.push(['M', a[0], a[1]]);
++    } else p.path.push([{ PATHLINETO: 'L', PATHQUADTO: 'Q', PATHCURVETO: 'C' }[cmd], ...a]);
++    c.write(c.canonical);
++  }
++  for (const n of ['pathLineTo', 'pathMoveTo', 'pathQuadTo', 'pathCurveTo']) def(n, (c) => pathTo(c, n.toUpperCase()));
++  def('pathTransform', (c) => {
++    if (c.n !== 3) iae('this command needs exactly 2 arguments (the name of the shape and optionally the new winding rule argument), received ' + (c.n - 1) + ' instead');
++    const p = pathArg(c, 1);
++    let t = c.h.transforms.get(c.arg(2).toUpperCase());
++    if (!t) t = c.lookup(new Map(), c.arg(2), ['AffineTransform']);
++    if (!t) iae('no transform with name "' + c.arg(2) + '" stored, nor a Rexx variable pointing to an AffineTransform');
++    p.path = transformPath(p.path, t.m);
++    c.write(c.canonical + ' ' + c.arg(1) + ' ' + c.arg(2));
++  });
++  def('pathWindingRule', (c) => {
++    if (c.n !== 2 && c.n > 3) iae('this command needs exactly 1 or 2 arguments (the name of the shape and optionally the new winding rule argument), received ' + (c.n - 1) + ' instead');
++    const p = pathArg(c, 1);
++    c.canon(c.arg(1));
++    if (c.n === 2) c.result = '' + p.wind;
++    else { const w = constant(WINDING, c.arg(2), 'windingRule'); c.canon(nameOf(WINDING, w)); p.wind = w; }
++    c.write(c.canonical);
++  });
++  def('pathIterator', (c) => {
++    if (c.n < 2 || c.n > 4) iae('this command needs exactly 1, 2 or 3 arguments (the name of the shape and optionally the new winding rule argument), received ' + (c.n - 1) + ' instead');
++    let s = c.h.shapes.get(c.arg(1).toUpperCase());
++    if (!s) {
++      s = c.lookup(new Map(), c.arg(1), ['Shape', 'PathIterator']);
++      if (!s) iae('no shape with name "' + c.arg(1) + '" stored, nor a Rexx variable pointing to a Shape');
++    }
++    c.canon(c.arg(1));
++    let path = s.kind === 'PathIterator' ? s.path : shapePath(s);
++    if (c.n > 2) {
++      let t = c.h.transforms.get(c.arg(2).toUpperCase());
++      if (!t && isVarName(c.arg(2))) t = c.lookup(new Map(), c.arg(2), ['AffineTransform']);
++      if (!t) iae('no transform with name "' + c.arg(2) + '" stored, nor a Rexx variable that refers to an AffineTransform object');
++      c.canon(c.arg(2));
++      path = transformPath(path, t.m);
++      if (c.n === 4) {               // flattened
++        const f = parseDoubleJ(c.arg(3));
++        c.canon(jd(f));
++        path = flatten(path).flatMap((r) => r.map((pt, i) => [i ? 'L' : 'M', pt[0], pt[1]]).concat([['Z']]));
++      }
++    }
++    c.write(c.canonical);
++    c.result = obj('PathIterator', { path: clonePath(path), wind: s.wind });
++  });
++
++  // =========================================================================
++  // Processing a command (Java's processCommand) and the protocol
++  // =========================================================================
++
++  function process(h, command, isOR, vars) {
++    h.nrCommand++;
++    const c = new Cmd(h, command, isOR, vars);
++    const first = c.words.length ? c.words[0].toUpperCase() : '';
++    const key = ALIASES[first] || first;
++    const fn = C[key];
++    if (!fn) {
++      if (c.words.length === 0 || '-#;/"\'.:!?_'.indexOf(c.words[0][0]) >= 0) {   // a comment
++        c.write(command);
++        return c;
++      }
++      c.write('-- FAILURE (unknown command): [' + command + ']');
++      c.cond = new Cond('FAILURE', '-1', 'unknown command');
++      return c;
++    }
++    if (!h.image && key !== 'NEWIMAGE') h.ensureImage();
++    c.cmd = key;
++    c.canonical = NAMES[key];
++    const out0 = c.out.length;
++    try {
++      fn(c);
++    } catch (e) {
++      if (e instanceof NeedVar) { h.nrCommand--; throw e; }
++      if (e instanceof Cond) { c.cond = e; if (e.label) c.write('-- ERROR (' + e.label + '): [' + command + ']'); }
++      else {
++        c.out.length = out0;
++        c.write('-- ERROR (argument): [' + command + ']');
++        c.cond = new Cond('ERROR', '-102', e instanceof JdorError ? e.toString() : 'JDOR (web): ' + e);
++      }
++    }
++    return c;
++  }
++
++  // records: <tag><byte length>:<bytes>
++  const enc = new TextEncoder(), dec = new TextDecoder();
++  function rec(parts, tag, s) {
++    const b = enc.encode(String(s));
++    parts.push(enc.encode(tag + b.length + ':'), b);
++  }
++  function value(parts, v) {
++    if (v === null) rec(parts, 'N', '');
++    else if (typeof v === 'string' || typeof v === 'number') rec(parts, 'S', String(v));
++    else if (v.table) {
++      rec(parts, 'T', v.table.length);
++      for (const [k, x] of v.table) { rec(parts, 'K', k); value(parts, x); }
++    } else if (v.array) { rec(parts, 'A', v.array.length); for (const x of v.array) value(parts, x); }
++    else if (v.t) {                // a Rexx value given back (assignRC)
++      if (v.t === 'S') rec(parts, 'S', v.v);
++      else if (v.t === 'N' || v.t === 'U') rec(parts, 'N', '');
++      else if (v.t === 'J') { const o = objs.get(v.id); if (o) value(parts, o); else rec(parts, 'N', ''); }
++      else if (v.t === 'A') { rec(parts, 'A', v.items.length); for (const x of v.items) value(parts, x); }
++    } else if (v.kind) {
++      const a = Object.assign({ kind: kindName(v) }, attrs(v));
++      rec(parts, 'J', v.kind + '\t' + v.kind + ':' + v.id + '\t' + display(v) +
++        Object.entries(a).map(([k, x]) => '\t' + k + '=' + x).join(''));
++    } else rec(parts, 'S', String(v));
++  }
++  function parseRecords(bytes) {
++    const out = [];
++    let i = 0;
++    while (i < bytes.length) {
++      const tag = String.fromCharCode(bytes[i++]);
++      let j = i;
++      while (j < bytes.length && bytes[j] !== 58) j++;
++      const len = parseInt(dec.decode(bytes.subarray(i, j)), 10);
++      out.push({ tag, data: dec.decode(bytes.subarray(j + 1, j + 1 + len)) });
++      i = j + 1 + len;
++    }
++    return out;
++  }
++  function readVars(bytes) {          // K name, value ... -> Map
++    const recs = parseRecords(bytes), vars = new Map();
++    let i = 0;
++    const val = () => {
++      const r = recs[i++];
++      if (!r) return { t: 'U' };
++      switch (r.tag) {
++        case 'S': return { t: 'S', v: r.data };
++        case 'N': return { t: 'N' };
++        case 'U': return { t: 'U' };
++        case 'J': { const ref = r.data.split('\t')[1] || r.data; const id = parseInt(ref.split(':')[1], 10); return { t: 'J', id }; }
++        case 'A': { const n = parseInt(r.data, 10), items = []; for (let k = 0; k < n; k++) items.push(val()); return { t: 'A', items }; }
++        default: return { t: 'U' };
++      }
++    };
++    while (i < recs.length) {
++      const k = recs[i++];
++      if (k.tag !== 'K') break;
++      vars.set(k.data, val());
++    }
++    return vars;
++  }
++  function reply(parts) {
++    let n = 0;
++    for (const p of parts) n += p.length;
++    const all = new Uint8Array(n);
++    let o = 0;
++    for (const p of parts) { all.set(p, o); o += p.length; }
++    return all;
++  }
++  function replyFor(c, h) {
++    const parts = [];
++    for (const line of c.out) rec(parts, 'O', line);
++    for (const [name, v] of c.setVars) { rec(parts, 'V', name); value(parts, v); }
++    if (c.sleep > 0) rec(parts, 'Z', c.sleep);
++    if (c.cond) rec(parts, 'C', c.cond.type + ' ' + c.cond.rc + ' ' + h.nrCommand + ' ' + c.cond.msg);
++    else if (c.result !== undefined) { rec(parts, 'R', ''); value(parts, c.result); }
++    return reply(parts);
++  }
++
++  let queue = Promise.resolve();      // serialise commands that wait for the browser
++  function execute(op, address, command, isOR, varBytes) {
++    if (op === 2) {                   // a new handler
++      const h = new Handler();
++      const parts = []; rec(parts, 'R', ''); value(parts, h.obj);
++      return reply(parts);
++    }
++    if (op === 3) {                   // bind ADDRESS name -> handler (command: "Handler:id")
++      const id = parseInt(String(command).split(':')[1], 10), h = handlers.get(id);
++      const parts = [];
++      if (!h) rec(parts, 'C', 'FAILURE -1 0 not a JDOR handler');
++      else { environments.set(address, h); rec(parts, 'R', ''); value(parts, h.obj); }
++      return reply(parts);
++    }
++    const h = environments.get(address);
++    if (!h) { const parts = []; rec(parts, 'C', 'FAILURE -1 0 no JDOR handler for ADDRESS ' + address); return reply(parts); }
++    const vars = varBytes ? readVars(varBytes) : new Map();
++    let c;
++    try { c = process(h, command, isOR, vars); }
++    catch (e) {
++      if (e instanceof NeedVar) { const parts = []; rec(parts, 'W', e.name); return reply(parts); }
++      throw e;
++    }
++    if (!c.async) return replyFor(c, h);
++    return c.async.then(() => replyFor(c, h), (e) => {
++      c.out = c.out.filter((l) => !l.startsWith(c.canonical));
++      c.write('-- ERROR (argument): [' + command + ']');
++      c.cond = new Cond('ERROR', '-102', e instanceof JdorError ? e.toString() : 'JDOR (web): ' + e);
++      return replyFor(c, h);
++    });
++  }
++
++  // called through wasm/web-jdor.cpp's proxied call (see the JdorRequest layout there)
++  Module['jdorCall'] = function (ctx, req) {
++    const finish = (bytes) => {
++      const p = _jdor_alloc(bytes.length + 1);
++      HEAPU8.set(bytes, p);
++      HEAPU8[p + bytes.length] = 0;
++      HEAP32[(req + 24) >> 2] = p;
++      HEAP32[(req + 28) >> 2] = bytes.length;
++      _jdor_finish(ctx);
++    };
++    const fail = (e) => {
++      const parts = []; rec(parts, 'C', 'FAILURE -99 0 ' + (e && e.stack || e));
++      finish(reply(parts));
++    };
++    let r;
++    try {
++      const address = UTF8ToString(HEAPU32[req >> 2]);
++      const command = UTF8ToString(HEAPU32[(req + 4) >> 2]);
++      const op = HEAP32[(req + 8) >> 2];
++      const isOR = HEAP32[(req + 16) >> 2] !== 0;
++      const vp = HEAPU32[(req + 20) >> 2];
++      let varBytes = null;
++      if (vp) { let e = vp; while (HEAPU8[e]) e++; varBytes = HEAPU8.slice(vp, e); }
++      r = execute(op, address, command, isOR, varBytes);
++    } catch (e) { fail(e); return; }
++    if (r instanceof Uint8Array) { finish(r); return; }
++    queue = queue.then(() => r).then(finish, fail);
++  };
++})();
+diff --git a/wasm/web/BSF.CLS b/wasm/web/BSF.CLS
+new file mode 100644
+index 0000000..59e2f82
+--- /dev/null
++++ b/wasm/web/BSF.CLS
+@@ -0,0 +1,110 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*
++ * BSF.CLS of the browser build of ooRexx/WASM: NOT the ooRexx-Java bridge.
++ * There is no Java in the browser.  This package provides just what JDOR
++ * programs written for BSF4ooRexx850 use, so they run unchanged on the JDOR
++ * handler of this build (see jdor.cls):
++ *
++ *    .bsf~new("org.oorexx.handlers.jdor.JavaDrawingHandler")
++ *    bsf.importClass("org.oorexx.handlers.jdor.JavaDrawingHandler")  (~new, ~version)
++ *    BsfCommandHandler("add", name, handler)
++ *    bsf.createJavaArrayOf(type, values...)   -> an ooRexx array
++ *    .java.lang.System~getProperty(name)      (a few properties)
++ *    pp(value)                                -> "[value]"
++ *
++ * Anything else raises a syntax error that says so.
++ */
++.local~setEntry("JAVA.LANG.SYSTEM", .BsfJavaLangSystem)
++
++::requires "jdor.cls"
++
++::class bsf public
++::method new class
++  use arg className
++  if className == "org.oorexx.handlers.jdor.JavaDrawingHandler" then return newJdorHandler()
++  raise syntax 93.900 array("BSF.CLS of ooRexx/WASM (no Java in the browser): only JDOR's handler is available, not" className)
++
++::routine bsf.importClass public
++  use arg className
++  if className == "org.oorexx.handlers.jdor.JavaDrawingHandler" then return .BsfJdorHandlerClass
++  raise syntax 93.900 array("BSF.CLS of ooRexx/WASM (no Java in the browser): only JDOR's handler is available, not" className)
++
++::routine bsf.loadClass public
++  use arg className
++  return bsf.importClass(className)
++
++::routine BsfCommandHandler public
++  use strict arg operation, name, handler=.nil
++  select
++    when operation~caselessEquals("add") then do
++      call bindJdorHandler name, handler
++      return .true
++    end
++    otherwise
++      raise syntax 93.900 array("BSF.CLS of ooRexx/WASM: BsfCommandHandler supports only ""add""")
++  end
++
++::routine bsf.createJavaArrayOf public
++  use arg type, ...
++  return arg(2, "array")
++
++::routine pp public
++  return "[" || arg(1)~string || "]"
++
++::class BsfJdorHandlerClass          -- what bsf.importClass returns for the handler class
++::method new class
++  return newJdorHandler()
++::method version class
++  return "100.20230718"
++::method string class
++  return "org.oorexx.handlers.jdor.JavaDrawingHandler"
++
++::class BsfJavaLangSystem
++::method getProperty class
++  use strict arg name, default=.nil
++  select case name
++    when "user.home" then return "/home/rexx"
++    when "user.dir" then return directory()
++    when "user.name" then return userid()
++    when "file.separator" then return "/"
++    when "path.separator" then return ":"
++    when "line.separator" then return "0a"x
++    when "os.name" then return "WebAssembly"
++    when "java.version" then return "none (ooRexx/WASM in the browser)"
++    otherwise return default
++  end
+diff --git a/wasm/web/jdor.cls b/wasm/web/jdor.cls
+new file mode 100644
+index 0000000..8ef981a
+--- /dev/null
++++ b/wasm/web/jdor.cls
+@@ -0,0 +1,116 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*
++ * JDOR in the browser build of ooRexx/WASM: the drawing command handler of
++ * BSF4ooRexx850 ("Java Drawing for ooRexx", Rony G. Flatscher), its commands
++ * on the HTML canvas (wasm/web-jdor.cpp, wasm/web-jdor.js).  No Java: the
++ * commands are served by the browser build itself.
++ *
++ *    address jdor                 -- select the JDOR environment
++ *    newImage 300 200; color red; fillRect 100 50; winShow
++ *    ::requires "jdor.cls"        -- set up the JDOR environment
++ *
++ * Requiring this package sets up the ADDRESS environment JDOR, served by a
++ * handler of its own (an image and its window, created when first used);
++ * a routine selects it with ADDRESS JDOR, as any other environment.
++ * addJdorHandler([name]) gives an environment (default JDOR) a new handler,
++ * for a second window ("call addJdorHandler 'SDOR'") or a fresh start.  The
++ * commands are documented in BSF4ooRexx's jdor_doc.html.
++ *
++ * Objects that commands return (colors, fonts, images, shapes, ...) are
++ * JdorObject instances that say what they are: STRING "a JDOR Image (#99)",
++ * TOSTRING "JDOR Image #99: 500x500, type 2 (ARGB), an OffscreenCanvas",
++ * KIND "Image"; the getters work (rc~width, rc~getWidth, rc~red), and
++ * passing one back by variable name works as in JDOR.
++ */
++call JdorSetup .JdorObject
++call addJdorHandler                 -- set up the JDOR environment
++
++/** Gives ADDRESS environmentName (default JDOR) a new JDOR handler and returns it. */
++::routine addJdorHandler public
++  use strict arg environmentName="JDOR"
++  h = JdorNewHandler()
++  call JdorAddEnvironment environmentName, h
++  return h
++
++/** Returns a new JDOR handler (an image and its window), not yet bound to an ADDRESS name. */
++::routine newJdorHandler public
++  return JdorNewHandler()
++
++/** Lets ADDRESS environmentName serve the commands with handler. */
++::routine bindJdorHandler public
++  use strict arg environmentName, handler
++  call JdorAddEnvironment environmentName, handler
++  return handler
++
++/** The version of JDOR whose commands this handler implements. */
++::routine jdorVersion public
++  return "100.20230718"
++
++::requires "jdor" LIBRARY
++
++/** An object of the JDOR handler (Color, Font, Image, Shape, ...). */
++::class JdorObject public
++::method init
++  expose jkind ref display attrs
++  use strict arg jkind, ref, rest
++  parse var rest display "09"x rest
++  attrs = .stringTable~new
++  do while rest \== ""
++    parse var rest pair "09"x rest
++    parse var pair k "=" v
++    attrs[k~upper] = v
++  end
++::method kind                       -- Color, Font, Image, Shape, Stroke, ...
++  expose attrs
++  return attrs["KIND"]
++::method jdorRef                    -- for the handler: which object this is
++  expose jkind ref
++  return jkind || "09"x || ref
++::method string                     -- a JDOR Image (#99)
++  expose ref attrs
++  return "a JDOR" attrs["KIND"] "(#"ref~substr(ref~pos(":") + 1)")"
++::method toString                   -- JDOR Image #99: what it is
++  expose display
++  return display
++::method unknown                    -- getters: x~size, x~getSize, x~isBold
++  expose attrs
++  use arg name, args
++  n = name~upper
++  if attrs~hasIndex(n) then return attrs[n]
++  if n~startsWith("GET"), attrs~hasIndex(n~substr(4)) then return attrs[n~substr(4)]
++  raise syntax 97.1 array(self, name)
+diff --git a/wasm/web/ooRexx-worker.js b/wasm/web/ooRexx-worker.js
+index 732e019..7de8c97 100644
+--- a/wasm/web/ooRexx-worker.js
++++ b/wasm/web/ooRexx-worker.js
+@@ -41,12 +41,16 @@
+  * stops everything.  The page never blocks.
+  *
+  * page -> worker: {type:'run', scriptUrl, wasmModule, data, args, files, cwd,
+- *                  env, stdin}   (stdin: null = interactive, else Uint8Array
+- *                  followed by end of file)
++ *                  env, stdin, screen}   (stdin: null = interactive, else
++ *                  Uint8Array followed by end of file; screen: {width,
++ *                  height}, what JDOR's winScreenSize answers)
+  *                 {type:'stdin', bytes}   {type:'eof'}
++ *                 {type:'jdor', event}   (the page moved or closed a JDOR
++ *                  window: {op:'moved', win, x, y} | {op:'closed', win})
+  * worker -> page: {type:'out'|'err', bytes, kind}   {type:'input', debug}
+  *                 (kind: 'plain' | 'trace' | 'error'; debug: a read of
+  *                 .debugInput, i.e. interactive trace)
++ *                 {type:'jdor', msg}   (JDOR windows, see wasm/web-jdor.js)
+  *                 {type:'exit', rc, files}   {type:'error', message}
+  */
+ 'use strict';
+@@ -63,6 +67,7 @@ function feed(msg) {
+ function finish(rc) {
+   let files = {};
+   try { if (M && M.orxFlush) M.orxFlush(); } catch (e) {}
++  try { if (M && M.jdorFlush) M.jdorFlush(); } catch (e) {}      // the last JDOR frames
+   try { files = M.orxCollect(cwd); } catch (e) {}
+   const transfer = Object.values(files).map((b) => b.buffer);
+   post({ type: 'exit', rc, files }, transfer);
+@@ -71,6 +76,7 @@ function finish(rc) {
+ self.onmessage = (ev) => {
+   const msg = ev.data;
+   if (msg.type === 'stdin' || msg.type === 'eof') { feed(msg); return; }
++  if (msg.type === 'jdor') { if (M && M.jdorEvent) M.jdorEvent(msg.event); return; }
+   if (msg.type !== 'run' || M) return;
+   cwd = msg.cwd || '/';
+   importScripts(msg.scriptUrl);
+@@ -92,10 +98,12 @@ self.onmessage = (ev) => {
+     orxOut: (b, kind) => post({ type: 'out', bytes: b, kind }, [b.buffer]),
+     orxErr: (b, kind) => post({ type: 'err', bytes: b, kind }, [b.buffer]),
+     orxStdinWanted: (debug) => post({ type: 'input', debug: !!debug }),
++    orxJdor: (m, transfer) => post({ type: 'jdor', msg: m }, transfer),
+     print: (s) => post({ type: 'err', bytes: textBytes(s) }),
+     printErr: (s) => post({ type: 'err', bytes: textBytes(s) }),
+     orxReady: () => {
+       // called by wasm/web-pre.js once the stdin ring is ready
++      if (msg.screen && M.jdorScreen) M.jdorScreen(msg.screen.width, msg.screen.height);
+       const q = queued; queued = [];
+       if (msg.stdin) { M.orxStdinWrite(msg.stdin); M.orxStdinClose(); }
+       for (const m of q) feed(m);
+diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
+index 3d1ae66..ce302cf 100644
+--- a/wasm/web/ooRexx.js
++++ b/wasm/web/ooRexx.js
+@@ -72,6 +72,20 @@
+  *   onInput        ({debug}) => void, the program is waiting for standard
+  *                  input; debug is true when it is interactive trace reading
+  *                  (.debugInput) rather than the program
++ *   onJdor         (msg) => void, JDOR (the drawing command handler, see
++ *                  jdor.cls) shows something; msg.op is
++ *                    'window'  {win, visible, title, frame, x, y, width,
++ *                              height, alwaysOnTop, resizable}: create or
++ *                              update window win (a number)
++ *                    'frame'   {win, bitmap}: what window win shows now (an
++ *                              ImageBitmap; e.g. transferFromImageBitmap)
++ *                    'close'   {win}   'toFront' / 'toBack' {win}
++ *                    'clipboard' {win, bitmap, withoutAlpha}
++ *                    'print'   {win, bitmap, scaleToPage, x, y, scaleX, scaleY}
++ *                  Report the user's moves with run.jdorEvent({op:'moved',
++ *                  win, x, y}) and closes with run.jdorEvent({op:'closed', win}).
++ *   screen         {width, height} JDOR's winScreenSize (default: the
++ *                  window's inner size)
+  */
+ (function (global) {
+   'use strict';
+@@ -126,6 +140,7 @@
+           case 'out': if (opts.onOut) opts.onOut(outDec.decode(m.bytes, { stream: true }), m.kind || 'plain'); break;
+           case 'err': if (opts.onErr) opts.onErr(errDec.decode(m.bytes, { stream: true }), m.kind || 'plain'); break;
+           case 'input': if (opts.onInput) opts.onInput({ debug: !!m.debug }); break;
++          case 'jdor': if (opts.onJdor) opts.onJdor(m.msg); else if (m.msg.bitmap) m.msg.bitmap.close(); break;
+           case 'exit': end({ rc: m.rc, files: m.files, stopped: false }); break;
+           case 'error': end({ rc: null, files: {}, stopped: false, error: m.message }); break;
+         }
+@@ -135,11 +150,13 @@
+         type: 'run', scriptUrl: this.base + 'rexx.js', wasmModule: this.wasmModule,
+         data: this.data.slice(0), args: opts.args || [], files, cwd, env: opts.env || {},
+         stdin: opts.stdin === undefined || opts.stdin === null ? null : bytes(opts.stdin),
++        screen: opts.screen || { width: global.innerWidth || 1280, height: global.innerHeight || 800 },
+       });
+       return {
+         done,
+         write(text) { if (!finished) worker.postMessage({ type: 'stdin', bytes: bytes(text) }); },
+         close() { if (!finished) worker.postMessage({ type: 'eof' }); },
++        jdorEvent(event) { if (!finished) worker.postMessage({ type: 'jdor', event }); },
+         stop() { end({ rc: null, files: {}, stopped: true }); },
+         get running() { return !finished; },
+       };
+diff --git a/wasm/web/polygon-clipping.umd.min.js b/wasm/web/polygon-clipping.umd.min.js
+new file mode 100644
+index 0000000..b49818f
+--- /dev/null
++++ b/wasm/web/polygon-clipping.umd.min.js
+@@ -0,0 +1,39 @@
++/* polygon-clipping 0.15.7 (https://github.com/mfogel/polygon-clipping), used by
++ * JDOR's constructive area geometry (wasm/web-jdor.js); loaded on first use.
++ *
++ * The MIT License (MIT)
++ *
++ * Copyright (c) 2018 Mike Fogel <mike@fogel.ca> - covers everything not specially attributed to others below.
++ *
++ * Copyright (c) 2016 Alexander Milevski <info@w8r.name> - covers all portions originally part of github:w8r/martinez, from which this project was forked on Febuary 2, 2018.
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
++ */
++!function(t,e){"object"==typeof exports&&"undefined"!=typeof module?module.exports=e():"function"==typeof define&&define.amd?define(e):(t="undefined"!=typeof globalThis?globalThis:t||self).polygonClipping=e()}(this,(function(){"use strict";
++/**
++     * splaytree v3.1.2
++     * Fast Splay tree for Node and browser
++     *
++     * @author Alexander Milevski <info@w8r.name>
++     * @license MIT
++     * @preserve
++     */
++/*! *****************************************************************************
++    Copyright (c) Microsoft Corporation. All rights reserved.
++    Licensed under the Apache License, Version 2.0 (the "License"); you may not use
++    this file except in compliance with the License. You may obtain a copy of the
++    License at http://www.apache.org/licenses/LICENSE-2.0
++
++    THIS CODE IS PROVIDED ON AN *AS IS* BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
++    KIND, EITHER EXPRESS OR IMPLIED, INCLUDING WITHOUT LIMITATION ANY IMPLIED
++    WARRANTIES OR CONDITIONS OF TITLE, FITNESS FOR A PARTICULAR PURPOSE,
++    MERCHANTABLITY OR NON-INFRINGEMENT.
++
++    See the Apache Version 2.0 License for specific language governing permissions
++    and limitations under the License.
++    ***************************************************************************** */function t(t,e){var n,r,i,o,s={label:0,sent:function(){if(1&i[0])throw i[1];return i[1]},trys:[],ops:[]};return o={next:l(0),throw:l(1),return:l(2)},"function"==typeof Symbol&&(o[Symbol.iterator]=function(){return this}),o;function l(o){return function(l){return function(o){if(n)throw new TypeError("Generator is already executing.");for(;s;)try{if(n=1,r&&(i=2&o[0]?r.return:o[0]?r.throw||((i=r.return)&&i.call(r),0):r.next)&&!(i=i.call(r,o[1])).done)return i;switch(r=0,i&&(o=[2&o[0],i.value]),o[0]){case 0:case 1:i=o;break;case 4:return s.label++,{value:o[1],done:!1};case 5:s.label++,r=o[1],o=[0];continue;case 7:o=s.ops.pop(),s.trys.pop();continue;default:if(!(i=s.trys,(i=i.length>0&&i[i.length-1])||6!==o[0]&&2!==o[0])){s=0;continue}if(3===o[0]&&(!i||o[1]>i[0]&&o[1]<i[3])){s.label=o[1];break}if(6===o[0]&&s.label<i[1]){s.label=i[1],i=o;break}if(i&&s.label<i[2]){s.label=i[2],s.ops.push(o);break}i[2]&&s.ops.pop(),s.trys.pop();continue}o=e.call(t,s)}catch(t){o=[6,t],r=0}finally{n=i=0}if(5&o[0])throw o[1];return{value:o[0]?o[1]:void 0,done:!0}}([o,l])}}}var e=function(t,e){this.next=null,this.key=t,this.data=e,this.left=null,this.right=null};function n(t,e){return t>e?1:t<e?-1:0}function r(t,n,r){for(var i=new e(null,null),o=i,s=i;;){var l=r(t,n.key);if(l<0){if(null===n.left)break;if(r(t,n.left.key)<0){var h=n.left;if(n.left=h.right,h.right=n,null===(n=h).left)break}s.left=n,s=n,n=n.left}else{if(!(l>0))break;if(null===n.right)break;if(r(t,n.right.key)>0){h=n.right;if(n.right=h.left,h.left=n,null===(n=h).right)break}o.right=n,o=n,n=n.right}}return o.right=n.left,s.left=n.right,n.left=i.right,n.right=i.left,n}function i(t,n,i,o){var s=new e(t,n);if(null===i)return s.left=s.right=null,s;var l=o(t,(i=r(t,i,o)).key);return l<0?(s.left=i.left,s.right=i,i.left=null):l>=0&&(s.right=i.right,s.left=i,i.right=null),s}function o(t,e,n){var i=null,o=null;if(e){var s=n((e=r(t,e,n)).key,t);0===s?(i=e.left,o=e.right):s<0?(o=e.right,e.right=null,i=e):(i=e.left,e.left=null,o=e)}return{left:i,right:o}}function s(t,e,n,r,i){if(t){r(e+(n?"└── ":"├── ")+i(t)+"\n");var o=e+(n?"    ":"│   ");t.left&&s(t.left,o,!1,r,i),t.right&&s(t.right,o,!0,r,i)}}var l=function(){function l(t){void 0===t&&(t=n),this._root=null,this._size=0,this._comparator=t}return l.prototype.insert=function(t,e){return this._size++,this._root=i(t,e,this._root,this._comparator)},l.prototype.add=function(t,n){var i=new e(t,n);null===this._root&&(i.left=i.right=null,this._size++,this._root=i);var o=this._comparator,s=r(t,this._root,o),l=o(t,s.key);return 0===l?this._root=s:(l<0?(i.left=s.left,i.right=s,s.left=null):l>0&&(i.right=s.right,i.left=s,s.right=null),this._size++,this._root=i),this._root},l.prototype.remove=function(t){this._root=this._remove(t,this._root,this._comparator)},l.prototype._remove=function(t,e,n){var i;return null===e?null:0===n(t,(e=r(t,e,n)).key)?(null===e.left?i=e.right:(i=r(t,e.left,n)).right=e.right,this._size--,i):e},l.prototype.pop=function(){var t=this._root;if(t){for(;t.left;)t=t.left;return this._root=r(t.key,this._root,this._comparator),this._root=this._remove(t.key,this._root,this._comparator),{key:t.key,data:t.data}}return null},l.prototype.findStatic=function(t){for(var e=this._root,n=this._comparator;e;){var r=n(t,e.key);if(0===r)return e;e=r<0?e.left:e.right}return null},l.prototype.find=function(t){return this._root&&(this._root=r(t,this._root,this._comparator),0!==this._comparator(t,this._root.key))?null:this._root},l.prototype.contains=function(t){for(var e=this._root,n=this._comparator;e;){var r=n(t,e.key);if(0===r)return!0;e=r<0?e.left:e.right}return!1},l.prototype.forEach=function(t,e){for(var n=this._root,r=[],i=!1;!i;)null!==n?(r.push(n),n=n.left):0!==r.length?(n=r.pop(),t.call(e,n),n=n.right):i=!0;return this},l.prototype.range=function(t,e,n,r){for(var i=[],o=this._comparator,s=this._root;0!==i.length||s;)if(s)i.push(s),s=s.left;else{if(o((s=i.pop()).key,e)>0)break;if(o(s.key,t)>=0&&n.call(r,s))return this;s=s.right}return this},l.prototype.keys=function(){var t=[];return this.forEach((function(e){var n=e.key;return t.push(n)})),t},l.prototype.values=function(){var t=[];return this.forEach((function(e){var n=e.data;return t.push(n)})),t},l.prototype.min=function(){return this._root?this.minNode(this._root).key:null},l.prototype.max=function(){return this._root?this.maxNode(this._root).key:null},l.prototype.minNode=function(t){if(void 0===t&&(t=this._root),t)for(;t.left;)t=t.left;return t},l.prototype.maxNode=function(t){if(void 0===t&&(t=this._root),t)for(;t.right;)t=t.right;return t},l.prototype.at=function(t){for(var e=this._root,n=!1,r=0,i=[];!n;)if(e)i.push(e),e=e.left;else if(i.length>0){if(e=i.pop(),r===t)return e;r++,e=e.right}else n=!0;return null},l.prototype.next=function(t){var e=this._root,n=null;if(t.right){for(n=t.right;n.left;)n=n.left;return n}for(var r=this._comparator;e;){var i=r(t.key,e.key);if(0===i)break;i<0?(n=e,e=e.left):e=e.right}return n},l.prototype.prev=function(t){var e=this._root,n=null;if(null!==t.left){for(n=t.left;n.right;)n=n.right;return n}for(var r=this._comparator;e;){var i=r(t.key,e.key);if(0===i)break;i<0?e=e.left:(n=e,e=e.right)}return n},l.prototype.clear=function(){return this._root=null,this._size=0,this},l.prototype.toList=function(){return function(t){var n=t,r=[],i=!1,o=new e(null,null),s=o;for(;!i;)n?(r.push(n),n=n.left):r.length>0?n=(n=s=s.next=r.pop()).right:i=!0;return s.next=null,o.next}(this._root)},l.prototype.load=function(t,n,r){void 0===n&&(n=[]),void 0===r&&(r=!1);var i=t.length,o=this._comparator;if(r&&f(t,n,0,i-1,o),null===this._root)this._root=h(t,n,0,i),this._size=i;else{var s=function(t,n,r){var i=new e(null,null),o=i,s=t,l=n;for(;null!==s&&null!==l;)r(s.key,l.key)<0?(o.next=s,s=s.next):(o.next=l,l=l.next),o=o.next;null!==s?o.next=s:null!==l&&(o.next=l);return i.next}(this.toList(),function(t,n){for(var r=new e(null,null),i=r,o=0;o<t.length;o++)i=i.next=new e(t[o],n[o]);return i.next=null,r.next}(t,n),o);i=this._size+i,this._root=u({head:s},0,i)}return this},l.prototype.isEmpty=function(){return null===this._root},Object.defineProperty(l.prototype,"size",{get:function(){return this._size},enumerable:!0,configurable:!0}),Object.defineProperty(l.prototype,"root",{get:function(){return this._root},enumerable:!0,configurable:!0}),l.prototype.toString=function(t){void 0===t&&(t=function(t){return String(t.key)});var e=[];return s(this._root,"",!0,(function(t){return e.push(t)}),t),e.join("")},l.prototype.update=function(t,e,n){var s=this._comparator,l=o(t,this._root,s),h=l.left,u=l.right;s(t,e)<0?u=i(e,n,u,s):h=i(e,n,h,s),this._root=function(t,e,n){return null===e?t:(null===t||((e=r(t.key,e,n)).left=t),e)}(h,u,s)},l.prototype.split=function(t){return o(t,this._root,this._comparator)},l.prototype[Symbol.iterator]=function(){var e,n,r;return t(this,(function(t){switch(t.label){case 0:e=this._root,n=[],r=!1,t.label=1;case 1:return r?[3,6]:null===e?[3,2]:(n.push(e),e=e.left,[3,5]);case 2:return 0===n.length?[3,4]:[4,e=n.pop()];case 3:return t.sent(),e=e.right,[3,5];case 4:r=!0,t.label=5;case 5:return[3,1];case 6:return[2]}}))},l}();function h(t,n,r,i){var o=i-r;if(o>0){var s=r+Math.floor(o/2),l=t[s],u=n[s],f=new e(l,u);return f.left=h(t,n,r,s),f.right=h(t,n,s+1,i),f}return null}function u(t,e,n){var r=n-e;if(r>0){var i=e+Math.floor(r/2),o=u(t,e,i),s=t.head;return s.left=o,t.head=t.head.next,s.right=u(t,i+1,n),s}return null}function f(t,e,n,r,i){if(!(n>=r)){for(var o=t[n+r>>1],s=n-1,l=r+1;;){do{s++}while(i(t[s],o)<0);do{l--}while(i(t[l],o)>0);if(s>=l)break;var h=t[s];t[s]=t[l],t[l]=h,h=e[s],e[s]=e[l],e[l]=h}f(t,e,n,l,i),f(t,e,l+1,r,i)}}const c=(t,e)=>t.ll.x<=e.x&&e.x<=t.ur.x&&t.ll.y<=e.y&&e.y<=t.ur.y,p=(t,e)=>{if(e.ur.x<t.ll.x||t.ur.x<e.ll.x||e.ur.y<t.ll.y||t.ur.y<e.ll.y)return null;const n=t.ll.x<e.ll.x?e.ll.x:t.ll.x,r=t.ur.x<e.ur.x?t.ur.x:e.ur.x;return{ll:{x:n,y:t.ll.y<e.ll.y?e.ll.y:t.ll.y},ur:{x:r,y:t.ur.y<e.ur.y?t.ur.y:e.ur.y}}};let g=Number.EPSILON;void 0===g&&(g=Math.pow(2,-52));const a=g*g,y=(t,e)=>{if(-g<t&&t<g&&-g<e&&e<g)return 0;const n=t-e;return n*n<a*t*e?0:t<e?-1:1};class x{constructor(){this.tree=new l,this.round(0)}round(t){const e=this.tree.add(t),n=this.tree.prev(e);if(null!==n&&0===y(e.key,n.key))return this.tree.remove(t),n.key;const r=this.tree.next(e);return null!==r&&0===y(e.key,r.key)?(this.tree.remove(t),r.key):t}}const b=new class{constructor(){this.reset()}reset(){this.xRounder=new x,this.yRounder=new x}round(t,e){return{x:this.xRounder.round(t),y:this.yRounder.round(e)}}},v=11102230246251565e-32,d=134217729,m=(3+8*v)*v;function E(t,e,n,r,i){let o,s,l,h,u=e[0],f=r[0],c=0,p=0;f>u==f>-u?(o=u,u=e[++c]):(o=f,f=r[++p]);let g=0;if(c<t&&p<n)for(f>u==f>-u?(s=u+o,l=o-(s-u),u=e[++c]):(s=f+o,l=o-(s-f),f=r[++p]),o=s,0!==l&&(i[g++]=l);c<t&&p<n;)f>u==f>-u?(s=o+u,h=s-o,l=o-(s-h)+(u-h),u=e[++c]):(s=o+f,h=s-o,l=o-(s-h)+(f-h),f=r[++p]),o=s,0!==l&&(i[g++]=l);for(;c<t;)s=o+u,h=s-o,l=o-(s-h)+(u-h),u=e[++c],o=s,0!==l&&(i[g++]=l);for(;p<n;)s=o+f,h=s-o,l=o-(s-h)+(f-h),f=r[++p],o=s,0!==l&&(i[g++]=l);return 0===o&&0!==g||(i[g++]=o),g}function S(t){return new Float64Array(t)}const _=22204460492503146e-32,w=11093356479670487e-47,k=S(4),R=S(8),I=S(12),P=S(16),N=S(4);function A(t,e,n,r,i,o){const s=(e-o)*(n-i),l=(t-i)*(r-o),h=s-l,u=Math.abs(s+l);return Math.abs(h)>=33306690738754716e-32*u?h:-function(t,e,n,r,i,o,s){let l,h,u,f,c,p,g,a,y,x,b,v,S,A,O,L,$,M;const z=t-i,B=n-i,G=e-o,T=r-o;A=z*T,p=d*z,g=p-(p-z),a=z-g,p=d*T,y=p-(p-T),x=T-y,O=a*x-(A-g*y-a*y-g*x),L=G*B,p=d*G,g=p-(p-G),a=G-g,p=d*B,y=p-(p-B),x=B-y,$=a*x-(L-g*y-a*y-g*x),b=O-$,c=O-b,k[0]=O-(b+c)+(c-$),v=A+b,c=v-A,S=A-(v-c)+(b-c),b=S-L,c=S-b,k[1]=S-(b+c)+(c-L),M=v+b,c=M-v,k[2]=v-(M-c)+(b-c),k[3]=M;let q=function(t,e){let n=e[0];for(let r=1;r<t;r++)n+=e[r];return n}(4,k),C=_*s;if(q>=C||-q>=C)return q;if(c=t-z,l=t-(z+c)+(c-i),c=n-B,u=n-(B+c)+(c-i),c=e-G,h=e-(G+c)+(c-o),c=r-T,f=r-(T+c)+(c-o),0===l&&0===h&&0===u&&0===f)return q;if(C=w*s+m*Math.abs(q),q+=z*f+T*l-(G*u+B*h),q>=C||-q>=C)return q;A=l*T,p=d*l,g=p-(p-l),a=l-g,p=d*T,y=p-(p-T),x=T-y,O=a*x-(A-g*y-a*y-g*x),L=h*B,p=d*h,g=p-(p-h),a=h-g,p=d*B,y=p-(p-B),x=B-y,$=a*x-(L-g*y-a*y-g*x),b=O-$,c=O-b,N[0]=O-(b+c)+(c-$),v=A+b,c=v-A,S=A-(v-c)+(b-c),b=S-L,c=S-b,N[1]=S-(b+c)+(c-L),M=v+b,c=M-v,N[2]=v-(M-c)+(b-c),N[3]=M;const F=E(4,k,4,N,R);A=z*f,p=d*z,g=p-(p-z),a=z-g,p=d*f,y=p-(p-f),x=f-y,O=a*x-(A-g*y-a*y-g*x),L=G*u,p=d*G,g=p-(p-G),a=G-g,p=d*u,y=p-(p-u),x=u-y,$=a*x-(L-g*y-a*y-g*x),b=O-$,c=O-b,N[0]=O-(b+c)+(c-$),v=A+b,c=v-A,S=A-(v-c)+(b-c),b=S-L,c=S-b,N[1]=S-(b+c)+(c-L),M=v+b,c=M-v,N[2]=v-(M-c)+(b-c),N[3]=M;const j=E(F,R,4,N,I);A=l*f,p=d*l,g=p-(p-l),a=l-g,p=d*f,y=p-(p-f),x=f-y,O=a*x-(A-g*y-a*y-g*x),L=h*u,p=d*h,g=p-(p-h),a=h-g,p=d*u,y=p-(p-u),x=u-y,$=a*x-(L-g*y-a*y-g*x),b=O-$,c=O-b,N[0]=O-(b+c)+(c-$),v=A+b,c=v-A,S=A-(v-c)+(b-c),b=S-L,c=S-b,N[1]=S-(b+c)+(c-L),M=v+b,c=M-v,N[2]=v-(M-c)+(b-c),N[3]=M;const U=E(j,I,4,N,P);return P[U-1]}(t,e,n,r,i,o,u)}const O=(t,e)=>t.x*e.y-t.y*e.x,L=(t,e)=>t.x*e.x+t.y*e.y,$=(t,e,n)=>{const r=A(t.x,t.y,e.x,e.y,n.x,n.y);return r>0?-1:r<0?1:0},M=t=>Math.sqrt(L(t,t)),z=(t,e,n)=>{const r={x:e.x-t.x,y:e.y-t.y},i={x:n.x-t.x,y:n.y-t.y};return O(i,r)/M(i)/M(r)},B=(t,e,n)=>{const r={x:e.x-t.x,y:e.y-t.y},i={x:n.x-t.x,y:n.y-t.y};return L(i,r)/M(i)/M(r)},G=(t,e,n)=>0===e.y?null:{x:t.x+e.x/e.y*(n-t.y),y:n},T=(t,e,n)=>0===e.x?null:{x:n,y:t.y+e.y/e.x*(n-t.x)};class q{static compare(t,e){const n=q.comparePoints(t.point,e.point);return 0!==n?n:(t.point!==e.point&&t.link(e),t.isLeft!==e.isLeft?t.isLeft?1:-1:F.compare(t.segment,e.segment))}static comparePoints(t,e){return t.x<e.x?-1:t.x>e.x?1:t.y<e.y?-1:t.y>e.y?1:0}constructor(t,e){void 0===t.events?t.events=[this]:t.events.push(this),this.point=t,this.isLeft=e}link(t){if(t.point===this.point)throw new Error("Tried to link already linked events");const e=t.point.events;for(let t=0,n=e.length;t<n;t++){const n=e[t];this.point.events.push(n),n.point=this.point}this.checkForConsuming()}checkForConsuming(){const t=this.point.events.length;for(let e=0;e<t;e++){const n=this.point.events[e];if(void 0===n.segment.consumedBy)for(let r=e+1;r<t;r++){const t=this.point.events[r];void 0===t.consumedBy&&(n.otherSE.point.events===t.otherSE.point.events&&n.segment.consume(t.segment))}}}getAvailableLinkedEvents(){const t=[];for(let e=0,n=this.point.events.length;e<n;e++){const n=this.point.events[e];n!==this&&!n.segment.ringOut&&n.segment.isInResult()&&t.push(n)}return t}getLeftmostComparator(t){const e=new Map,n=n=>{const r=n.otherSE;e.set(n,{sine:z(this.point,t.point,r.point),cosine:B(this.point,t.point,r.point)})};return(t,r)=>{e.has(t)||n(t),e.has(r)||n(r);const{sine:i,cosine:o}=e.get(t),{sine:s,cosine:l}=e.get(r);return i>=0&&s>=0?o<l?1:o>l?-1:0:i<0&&s<0?o<l?-1:o>l?1:0:s<i?-1:s>i?1:0}}}let C=0;class F{static compare(t,e){const n=t.leftSE.point.x,r=e.leftSE.point.x,i=t.rightSE.point.x,o=e.rightSE.point.x;if(o<n)return 1;if(i<r)return-1;const s=t.leftSE.point.y,l=e.leftSE.point.y,h=t.rightSE.point.y,u=e.rightSE.point.y;if(n<r){if(l<s&&l<h)return 1;if(l>s&&l>h)return-1;const n=t.comparePoint(e.leftSE.point);if(n<0)return 1;if(n>0)return-1;const r=e.comparePoint(t.rightSE.point);return 0!==r?r:-1}if(n>r){if(s<l&&s<u)return-1;if(s>l&&s>u)return 1;const n=e.comparePoint(t.leftSE.point);if(0!==n)return n;const r=t.comparePoint(e.rightSE.point);return r<0?1:r>0?-1:1}if(s<l)return-1;if(s>l)return 1;if(i<o){const n=e.comparePoint(t.rightSE.point);if(0!==n)return n}if(i>o){const n=t.comparePoint(e.rightSE.point);if(n<0)return 1;if(n>0)return-1}if(i!==o){const t=h-s,e=i-n,f=u-l,c=o-r;if(t>e&&f<c)return 1;if(t<e&&f>c)return-1}return i>o?1:i<o||h<u?-1:h>u?1:t.id<e.id?-1:t.id>e.id?1:0}constructor(t,e,n,r){this.id=++C,this.leftSE=t,t.segment=this,t.otherSE=e,this.rightSE=e,e.segment=this,e.otherSE=t,this.rings=n,this.windings=r}static fromRing(t,e,n){let r,i,o;const s=q.comparePoints(t,e);if(s<0)r=t,i=e,o=1;else{if(!(s>0))throw new Error(`Tried to create degenerate segment at [${t.x}, ${t.y}]`);r=e,i=t,o=-1}const l=new q(r,!0),h=new q(i,!1);return new F(l,h,[n],[o])}replaceRightSE(t){this.rightSE=t,this.rightSE.segment=this,this.rightSE.otherSE=this.leftSE,this.leftSE.otherSE=this.rightSE}bbox(){const t=this.leftSE.point.y,e=this.rightSE.point.y;return{ll:{x:this.leftSE.point.x,y:t<e?t:e},ur:{x:this.rightSE.point.x,y:t>e?t:e}}}vector(){return{x:this.rightSE.point.x-this.leftSE.point.x,y:this.rightSE.point.y-this.leftSE.point.y}}isAnEndpoint(t){return t.x===this.leftSE.point.x&&t.y===this.leftSE.point.y||t.x===this.rightSE.point.x&&t.y===this.rightSE.point.y}comparePoint(t){if(this.isAnEndpoint(t))return 0;const e=this.leftSE.point,n=this.rightSE.point,r=this.vector();if(e.x===n.x)return t.x===e.x?0:t.x<e.x?1:-1;const i=(t.y-e.y)/r.y,o=e.x+i*r.x;if(t.x===o)return 0;const s=(t.x-e.x)/r.x,l=e.y+s*r.y;return t.y===l?0:t.y<l?-1:1}getIntersection(t){const e=this.bbox(),n=t.bbox(),r=p(e,n);if(null===r)return null;const i=this.leftSE.point,o=this.rightSE.point,s=t.leftSE.point,l=t.rightSE.point,h=c(e,s)&&0===this.comparePoint(s),u=c(n,i)&&0===t.comparePoint(i),f=c(e,l)&&0===this.comparePoint(l),g=c(n,o)&&0===t.comparePoint(o);if(u&&h)return g&&!f?o:!g&&f?l:null;if(u)return f&&i.x===l.x&&i.y===l.y?null:i;if(h)return g&&o.x===s.x&&o.y===s.y?null:s;if(g&&f)return null;if(g)return o;if(f)return l;const a=((t,e,n,r)=>{if(0===e.x)return T(n,r,t.x);if(0===r.x)return T(t,e,n.x);if(0===e.y)return G(n,r,t.y);if(0===r.y)return G(t,e,n.y);const i=O(e,r);if(0==i)return null;const o={x:n.x-t.x,y:n.y-t.y},s=O(o,e)/i,l=O(o,r)/i;return{x:(t.x+l*e.x+(n.x+s*r.x))/2,y:(t.y+l*e.y+(n.y+s*r.y))/2}})(i,this.vector(),s,t.vector());return null===a?null:c(r,a)?b.round(a.x,a.y):null}split(t){const e=[],n=void 0!==t.events,r=new q(t,!0),i=new q(t,!1),o=this.rightSE;this.replaceRightSE(i),e.push(i),e.push(r);const s=new F(r,o,this.rings.slice(),this.windings.slice());return q.comparePoints(s.leftSE.point,s.rightSE.point)>0&&s.swapEvents(),q.comparePoints(this.leftSE.point,this.rightSE.point)>0&&this.swapEvents(),n&&(r.checkForConsuming(),i.checkForConsuming()),e}swapEvents(){const t=this.rightSE;this.rightSE=this.leftSE,this.leftSE=t,this.leftSE.isLeft=!0,this.rightSE.isLeft=!1;for(let t=0,e=this.windings.length;t<e;t++)this.windings[t]*=-1}consume(t){let e=this,n=t;for(;e.consumedBy;)e=e.consumedBy;for(;n.consumedBy;)n=n.consumedBy;const r=F.compare(e,n);if(0!==r){if(r>0){const t=e;e=n,n=t}if(e.prev===n){const t=e;e=n,n=t}for(let t=0,r=n.rings.length;t<r;t++){const r=n.rings[t],i=n.windings[t],o=e.rings.indexOf(r);-1===o?(e.rings.push(r),e.windings.push(i)):e.windings[o]+=i}n.rings=null,n.windings=null,n.consumedBy=e,n.leftSE.consumedBy=e.leftSE,n.rightSE.consumedBy=e.rightSE}}prevInResult(){return void 0!==this._prevInResult||(this.prev?this.prev.isInResult()?this._prevInResult=this.prev:this._prevInResult=this.prev.prevInResult():this._prevInResult=null),this._prevInResult}beforeState(){if(void 0!==this._beforeState)return this._beforeState;if(this.prev){const t=this.prev.consumedBy||this.prev;this._beforeState=t.afterState()}else this._beforeState={rings:[],windings:[],multiPolys:[]};return this._beforeState}afterState(){if(void 0!==this._afterState)return this._afterState;const t=this.beforeState();this._afterState={rings:t.rings.slice(0),windings:t.windings.slice(0),multiPolys:[]};const e=this._afterState.rings,n=this._afterState.windings,r=this._afterState.multiPolys;for(let t=0,r=this.rings.length;t<r;t++){const r=this.rings[t],i=this.windings[t],o=e.indexOf(r);-1===o?(e.push(r),n.push(i)):n[o]+=i}const i=[],o=[];for(let t=0,r=e.length;t<r;t++){if(0===n[t])continue;const r=e[t],s=r.poly;if(-1===o.indexOf(s))if(r.isExterior)i.push(s);else{-1===o.indexOf(s)&&o.push(s);const t=i.indexOf(r.poly);-1!==t&&i.splice(t,1)}}for(let t=0,e=i.length;t<e;t++){const e=i[t].multiPoly;-1===r.indexOf(e)&&r.push(e)}return this._afterState}isInResult(){if(this.consumedBy)return!1;if(void 0!==this._isInResult)return this._isInResult;const t=this.beforeState().multiPolys,e=this.afterState().multiPolys;switch(H.type){case"union":{const n=0===t.length,r=0===e.length;this._isInResult=n!==r;break}case"intersection":{let n,r;t.length<e.length?(n=t.length,r=e.length):(n=e.length,r=t.length),this._isInResult=r===H.numMultiPolys&&n<r;break}case"xor":{const n=Math.abs(t.length-e.length);this._isInResult=n%2==1;break}case"difference":{const n=t=>1===t.length&&t[0].isSubject;this._isInResult=n(t)!==n(e);break}default:throw new Error(`Unrecognized operation type found ${H.type}`)}return this._isInResult}}class j{constructor(t,e,n){if(!Array.isArray(t)||0===t.length)throw new Error("Input geometry is not a valid Polygon or MultiPolygon");if(this.poly=e,this.isExterior=n,this.segments=[],"number"!=typeof t[0][0]||"number"!=typeof t[0][1])throw new Error("Input geometry is not a valid Polygon or MultiPolygon");const r=b.round(t[0][0],t[0][1]);this.bbox={ll:{x:r.x,y:r.y},ur:{x:r.x,y:r.y}};let i=r;for(let e=1,n=t.length;e<n;e++){if("number"!=typeof t[e][0]||"number"!=typeof t[e][1])throw new Error("Input geometry is not a valid Polygon or MultiPolygon");let n=b.round(t[e][0],t[e][1]);n.x===i.x&&n.y===i.y||(this.segments.push(F.fromRing(i,n,this)),n.x<this.bbox.ll.x&&(this.bbox.ll.x=n.x),n.y<this.bbox.ll.y&&(this.bbox.ll.y=n.y),n.x>this.bbox.ur.x&&(this.bbox.ur.x=n.x),n.y>this.bbox.ur.y&&(this.bbox.ur.y=n.y),i=n)}r.x===i.x&&r.y===i.y||this.segments.push(F.fromRing(i,r,this))}getSweepEvents(){const t=[];for(let e=0,n=this.segments.length;e<n;e++){const n=this.segments[e];t.push(n.leftSE),t.push(n.rightSE)}return t}}class U{constructor(t,e){if(!Array.isArray(t))throw new Error("Input geometry is not a valid Polygon or MultiPolygon");this.exteriorRing=new j(t[0],this,!0),this.bbox={ll:{x:this.exteriorRing.bbox.ll.x,y:this.exteriorRing.bbox.ll.y},ur:{x:this.exteriorRing.bbox.ur.x,y:this.exteriorRing.bbox.ur.y}},this.interiorRings=[];for(let e=1,n=t.length;e<n;e++){const n=new j(t[e],this,!1);n.bbox.ll.x<this.bbox.ll.x&&(this.bbox.ll.x=n.bbox.ll.x),n.bbox.ll.y<this.bbox.ll.y&&(this.bbox.ll.y=n.bbox.ll.y),n.bbox.ur.x>this.bbox.ur.x&&(this.bbox.ur.x=n.bbox.ur.x),n.bbox.ur.y>this.bbox.ur.y&&(this.bbox.ur.y=n.bbox.ur.y),this.interiorRings.push(n)}this.multiPoly=e}getSweepEvents(){const t=this.exteriorRing.getSweepEvents();for(let e=0,n=this.interiorRings.length;e<n;e++){const n=this.interiorRings[e].getSweepEvents();for(let e=0,r=n.length;e<r;e++)t.push(n[e])}return t}}class Y{constructor(t,e){if(!Array.isArray(t))throw new Error("Input geometry is not a valid Polygon or MultiPolygon");try{"number"==typeof t[0][0][0]&&(t=[t])}catch(t){}this.polys=[],this.bbox={ll:{x:Number.POSITIVE_INFINITY,y:Number.POSITIVE_INFINITY},ur:{x:Number.NEGATIVE_INFINITY,y:Number.NEGATIVE_INFINITY}};for(let e=0,n=t.length;e<n;e++){const n=new U(t[e],this);n.bbox.ll.x<this.bbox.ll.x&&(this.bbox.ll.x=n.bbox.ll.x),n.bbox.ll.y<this.bbox.ll.y&&(this.bbox.ll.y=n.bbox.ll.y),n.bbox.ur.x>this.bbox.ur.x&&(this.bbox.ur.x=n.bbox.ur.x),n.bbox.ur.y>this.bbox.ur.y&&(this.bbox.ur.y=n.bbox.ur.y),this.polys.push(n)}this.isSubject=e}getSweepEvents(){const t=[];for(let e=0,n=this.polys.length;e<n;e++){const n=this.polys[e].getSweepEvents();for(let e=0,r=n.length;e<r;e++)t.push(n[e])}return t}}class V{static factory(t){const e=[];for(let n=0,r=t.length;n<r;n++){const r=t[n];if(!r.isInResult()||r.ringOut)continue;let i=null,o=r.leftSE,s=r.rightSE;const l=[o],h=o.point,u=[];for(;i=o,o=s,l.push(o),o.point!==h;)for(;;){const t=o.getAvailableLinkedEvents();if(0===t.length){const t=l[0].point,e=l[l.length-1].point;throw new Error(`Unable to complete output ring starting at [${t.x}, ${t.y}]. Last matching segment found ends at [${e.x}, ${e.y}].`)}if(1===t.length){s=t[0].otherSE;break}let n=null;for(let t=0,e=u.length;t<e;t++)if(u[t].point===o.point){n=t;break}if(null!==n){const t=u.splice(n)[0],r=l.splice(t.index);r.unshift(r[0].otherSE),e.push(new V(r.reverse()));continue}u.push({index:l.length,point:o.point});const r=o.getLeftmostComparator(i);s=t.sort(r)[0].otherSE;break}e.push(new V(l))}return e}constructor(t){this.events=t;for(let e=0,n=t.length;e<n;e++)t[e].segment.ringOut=this;this.poly=null}getGeom(){let t=this.events[0].point;const e=[t];for(let n=1,r=this.events.length-1;n<r;n++){const r=this.events[n].point,i=this.events[n+1].point;0!==$(r,t,i)&&(e.push(r),t=r)}if(1===e.length)return null;const n=e[0],r=e[1];0===$(n,t,r)&&e.shift(),e.push(e[0]);const i=this.isExteriorRing()?1:-1,o=this.isExteriorRing()?0:e.length-1,s=this.isExteriorRing()?e.length:-1,l=[];for(let t=o;t!=s;t+=i)l.push([e[t].x,e[t].y]);return l}isExteriorRing(){if(void 0===this._isExteriorRing){const t=this.enclosingRing();this._isExteriorRing=!t||!t.isExteriorRing()}return this._isExteriorRing}enclosingRing(){return void 0===this._enclosingRing&&(this._enclosingRing=this._calcEnclosingRing()),this._enclosingRing}_calcEnclosingRing(){let t=this.events[0];for(let e=1,n=this.events.length;e<n;e++){const n=this.events[e];q.compare(t,n)>0&&(t=n)}let e=t.segment.prevInResult(),n=e?e.prevInResult():null;for(;;){if(!e)return null;if(!n)return e.ringOut;if(n.ringOut!==e.ringOut)return n.ringOut.enclosingRing()!==e.ringOut?e.ringOut:e.ringOut.enclosingRing();e=n.prevInResult(),n=e?e.prevInResult():null}}}class X{constructor(t){this.exteriorRing=t,t.poly=this,this.interiorRings=[]}addInterior(t){this.interiorRings.push(t),t.poly=this}getGeom(){const t=[this.exteriorRing.getGeom()];if(null===t[0])return null;for(let e=0,n=this.interiorRings.length;e<n;e++){const n=this.interiorRings[e].getGeom();null!==n&&t.push(n)}return t}}class Q{constructor(t){this.rings=t,this.polys=this._composePolys(t)}getGeom(){const t=[];for(let e=0,n=this.polys.length;e<n;e++){const n=this.polys[e].getGeom();null!==n&&t.push(n)}return t}_composePolys(t){const e=[];for(let n=0,r=t.length;n<r;n++){const r=t[n];if(!r.poly)if(r.isExteriorRing())e.push(new X(r));else{const t=r.enclosingRing();t.poly||e.push(new X(t)),t.poly.addInterior(r)}}return e}}class W{constructor(t){let e=arguments.length>1&&void 0!==arguments[1]?arguments[1]:F.compare;this.queue=t,this.tree=new l(e),this.segments=[]}process(t){const e=t.segment,n=[];if(t.consumedBy)return t.isLeft?this.queue.remove(t.otherSE):this.tree.remove(e),n;const r=t.isLeft?this.tree.add(e):this.tree.find(e);if(!r)throw new Error(`Unable to find segment #${e.id} [${e.leftSE.point.x}, ${e.leftSE.point.y}] -> [${e.rightSE.point.x}, ${e.rightSE.point.y}] in SweepLine tree.`);let i,o,s=r,l=r;for(;void 0===i;)s=this.tree.prev(s),null===s?i=null:void 0===s.key.consumedBy&&(i=s.key);for(;void 0===o;)l=this.tree.next(l),null===l?o=null:void 0===l.key.consumedBy&&(o=l.key);if(t.isLeft){let r=null;if(i){const t=i.getIntersection(e);if(null!==t&&(e.isAnEndpoint(t)||(r=t),!i.isAnEndpoint(t))){const e=this._splitSafely(i,t);for(let t=0,r=e.length;t<r;t++)n.push(e[t])}}let s=null;if(o){const t=o.getIntersection(e);if(null!==t&&(e.isAnEndpoint(t)||(s=t),!o.isAnEndpoint(t))){const e=this._splitSafely(o,t);for(let t=0,r=e.length;t<r;t++)n.push(e[t])}}if(null!==r||null!==s){let t=null;if(null===r)t=s;else if(null===s)t=r;else{t=q.comparePoints(r,s)<=0?r:s}this.queue.remove(e.rightSE),n.push(e.rightSE);const i=e.split(t);for(let t=0,e=i.length;t<e;t++)n.push(i[t])}n.length>0?(this.tree.remove(e),n.push(t)):(this.segments.push(e),e.prev=i)}else{if(i&&o){const t=i.getIntersection(o);if(null!==t){if(!i.isAnEndpoint(t)){const e=this._splitSafely(i,t);for(let t=0,r=e.length;t<r;t++)n.push(e[t])}if(!o.isAnEndpoint(t)){const e=this._splitSafely(o,t);for(let t=0,r=e.length;t<r;t++)n.push(e[t])}}}this.tree.remove(e)}return n}_splitSafely(t,e){this.tree.remove(t);const n=t.rightSE;this.queue.remove(n);const r=t.split(e);return r.push(n),void 0===t.consumedBy&&this.tree.add(t),r}}const Z="undefined"!=typeof process&&process.env.POLYGON_CLIPPING_MAX_QUEUE_SIZE||1e6,D="undefined"!=typeof process&&process.env.POLYGON_CLIPPING_MAX_SWEEPLINE_SEGMENTS||1e6;const H=new class{run(t,e,n){H.type=t,b.reset();const r=[new Y(e,!0)];for(let t=0,e=n.length;t<e;t++)r.push(new Y(n[t],!1));if(H.numMultiPolys=r.length,"difference"===H.type){const t=r[0];let e=1;for(;e<r.length;)null!==p(r[e].bbox,t.bbox)?e++:r.splice(e,1)}if("intersection"===H.type)for(let t=0,e=r.length;t<e;t++){const e=r[t];for(let n=t+1,i=r.length;n<i;n++)if(null===p(e.bbox,r[n].bbox))return[]}const i=new l(q.compare);for(let t=0,e=r.length;t<e;t++){const e=r[t].getSweepEvents();for(let t=0,n=e.length;t<n;t++)if(i.insert(e[t]),i.size>Z)throw new Error("Infinite loop when putting segment endpoints in a priority queue (queue size too big).")}const o=new W(i);let s=i.size,h=i.pop();for(;h;){const t=h.key;if(i.size===s){const e=t.segment;throw new Error(`Unable to pop() ${t.isLeft?"left":"right"} SweepEvent [${t.point.x}, ${t.point.y}] from segment #${e.id} [${e.leftSE.point.x}, ${e.leftSE.point.y}] -> [${e.rightSE.point.x}, ${e.rightSE.point.y}] from queue.`)}if(i.size>Z)throw new Error("Infinite loop when passing sweep line over endpoints (queue size too big).");if(o.segments.length>D)throw new Error("Infinite loop when passing sweep line over endpoints (too many sweep line segments).");const e=o.process(t);for(let t=0,n=e.length;t<n;t++){const n=e[t];void 0===n.consumedBy&&i.insert(n)}s=i.size,h=i.pop()}b.reset();const u=V.factory(o.segments);return new Q(u).getGeom()}};var J={union:function(t){for(var e=arguments.length,n=new Array(e>1?e-1:0),r=1;r<e;r++)n[r-1]=arguments[r];return H.run("union",t,n)},intersection:function(t){for(var e=arguments.length,n=new Array(e>1?e-1:0),r=1;r<e;r++)n[r-1]=arguments[r];return H.run("intersection",t,n)},xor:function(t){for(var e=arguments.length,n=new Array(e>1?e-1:0),r=1;r<e;r++)n[r-1]=arguments[r];return H.run("xor",t,n)},difference:function(t){for(var e=arguments.length,n=new Array(e>1?e-1:0),r=1;r<e;r++)n[r-1]=arguments[r];return H.run("difference",t,n)}};return J}));
++//# sourceMappingURL=polygon-clipping.umd.min.js.map

@@ -1,0 +1,102 @@
+#!/usr/bin/env rexx
+-- Adapted for ooRexx/WASM: JDOR without BSF4ooRexx or Java (see NOTICE)
+/*
+   Name:    "1-170_JDOR_lineHeight.rxj"
+   Invoke:  "rexx 1-170_JDOR_lineHeight.rxj [?]"
+            "rexxj 1-170_JDOR_lineHeight.rxj [?]" (Windows)
+            "rexxj.sh 1-170_JDOR_lineHeight.rxj [?]" (Unix)
+
+            ? ... optional argument, if supplied displays processed JDOR commands
+
+   Purpose:  Demonstrates the use of the command font to fetch and query the size
+             of it in order to calculate the necessary line height to draw multiple
+             strings with the same line height.
+
+   Date:    2022-10-03
+
+   Author:  Rony G. Flatscher, WU Vienna
+
+   Changes: 2022-10-31 - changed "goto" to "moveTo"
+            2022-11-27 - change current directory to source directory to allow access to png files
+            2023-05-30 - added optional argument ? to show processed JDOR commands
+                         in canonical form
+                       - creates and defines JDOR handler explicitly
+                       - changed "new" to "newImage"
+
+   last change: Revision: $Revision: 951 $ $Author: orexx $ $Date: 2022-08-10 18:06:25 +0200 (Mi., 10 Aug 2022) $
+                (svn hint: use 'propset svn:keywords "Author Date Revision" filename')
+
+   license:
+
+    ------------------------ Apache Version 2.0 license -------------------------
+       Copyright (C) 2022-2023 Rony G. Flatscher
+
+       Licensed under the Apache License, Version 2.0 (the "License");
+       you may not use this file except in compliance with the License.
+       You may obtain a copy of the License at
+
+           http://www.apache.org/licenses/LICENSE-2.0
+
+       Unless required by applicable law or agreed to in writing, software
+       distributed under the License is distributed on an "AS IS" BASIS,
+       WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+       See the License for the specific language governing permissions and
+       limitations under the License.
+    -----------------------------------------------------------------------------
+*/
+   -- make sure we change current directory to program's directory
+parse source . . s      -- get full path to this program
+oldDir=directory(filespec('location',s))  -- change current directory to this program's source directory
+
+
+bShowCommands=(arg(1)="?") -- ? supplied as argument, then show JDOR commands in canonical form
+-- set default environment to JDOR
+if bShowCommands then
+   address jdor with output using (.stdout)  -- redirect output
+else
+   address jdor
+
+   -- now we can use JDOR commands
+width =220              -- define width of image in pixels (there are 72 px to an inch)
+height=250              -- define height of image in pixels (there are 72 px to an inch)
+newImage width height   -- create new bitmap with currX=0, currY=0, width=220, height=250
+winShow                 -- show frame on screen
+   -- draw two lines forming a big X
+drawLine width height   -- from currX=0, currY=0
+color red               -- set the color to red (preregistered with nickname "RED")
+moveTo width 0          -- currX=220, currY=0
+say "--> 1) rc (old position):  " pp(rc)  -- RC refers to the previous command's result: "220 0" (currX=220, currY=0)
+drawLine 0 height       -- from currX=250, currY=0
+   -- draw a rectangle at the center of the bitmap
+len = 50                -- drawing a rectangle with each side being 50 px (a square)
+moveTo (width-len)/2 (height-len)/2 -- go to the center minus half of the square's side lengths
+color green             -- set color to green (preregistered with nickname "GREEN")
+fillRect len len        -- fill the square with the green color
+stroke str3 3           -- set line stroke to 3 points width, store it with nickname "STR3"
+color blue              -- set color to blue (preregistered with nickname "BLUE")
+drawRect len len        -- draw the frame with the blue color
+   -- draw a string (text) at the lower half of the bitmap
+color somePurple 127 46 111   -- define a custom RGB color, store it with nickname "SOMEPURPLE"
+say "--> 2) (color) rc:         " pp(rc)  -- show result from command (the Java oclor object)
+say "-->    (color) rc~toString:" pp(rc~toString) -- shows the RGB intensities of the color
+newY=height-40
+         -- define an array of three strings
+font                    -- get the current font
+say "--> 3) (font)  rc~toString:" pp(rc~toString)  -- show the current font
+size=rc~size            -- get the size from the current font (uses method getSize() of java.awt.Font)
+lineHeight = size + 3   -- line height plus 3 px interline padding
+say "--> 4) lineHeight:         " pp(lineHeight)   -- show line height
+text=("Hello world ...", "... from JDOR ...", "(a Rexx command handler)")  -- array of 3 strings
+do counter c i=0 to 30 by lineHeight   -- iterate over array of strings
+   moveTo 50 (newY+i)   -- set position
+   drawString text[c]   -- draw the string
+end
+   -- save the current image in current directory
+saveImage "1-170_JDOR_lineHeight.png"  -- save image to file "1-170_JDOR_lineHeight.png"
+if \bShowCommands then say "'sleep 4.987' ..."
+sleep 4.987             -- sleep for 3.123 seconds
+
+::requires "jdor.cls"   -- set up the JDOR environment
+
+::routine pp       -- as in BSF4ooRexx: the value in brackets
+  return "[" || arg(1)~string || "]"

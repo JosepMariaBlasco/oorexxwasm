@@ -1,0 +1,58 @@
+Rexx Parser
+Copyright (c) 2024-2026 Josep Maria Blasco <josep.maria.blasco@epbcn.com>
+
+This project is licensed under the Apache License, Version 2.0 (see
+LICENSE), except for the files listed below, which keep the license of
+their origin.
+
+
+Files under the Common Public License 1.0 (see LICENSE-CPL)
+------------------------------------------------------------
+
+Derived from ooRexx:
+
+  Copyright (c) 1995, 2004 IBM Corporation. All rights reserved.
+  Copyright (c) 2005-2026 Rexx Language Association. All rights reserved.
+
+  bin/resources/rexxmsg.xml          ooRexx's error message definitions,
+                                     unchanged
+  bin/parser/ANSI.ErrorText.cls      generated from rexxmsg.xml by
+                                     tests/GenErrorText.rex (the generator
+                                     itself is Apache 2.0); the generated
+                                     code around the texts is
+                                     Copyright (c) 2024-2026 Josep Maria Blasco
+
+Rexx Language Association (each file states its own years):
+
+  Copyright (c) Rexx Language Association. All rights reserved.
+
+  tests/framework/OOREXXUNIT.CLS     the ooRexxUnit test framework
+  tests/framework/ooTest.frm
+  tests/framework/worker.rex
+  bin/ebnf2svg.rex
+  bin/extract_svg_from_rr_xhtml.rex
+
+
+Third-party material under other licenses
+-----------------------------------------
+
+  css/bootstrap*.css                 Bootstrap, Copyright 2011-2019
+                                     Twitter, Inc. MIT License (includes
+                                     normalize.css, MIT License)
+  css/pandoc/*.css                   Pandoc highlighting styles:
+                                     GPL-2.0 or BSD-3-Clause (see
+                                     css/pandoc/readme.md)
+  csl/*.csl                          Citation Style Language styles:
+                                     Creative Commons Attribution-ShareAlike
+                                     3.0 Unported (see csl/readme.md)
+  css/vim/vimfiles/*.vim             Vim color schemes: the Vim license
+                                     ("same as Vim"); the rexx-vim-*.css
+                                     styles in css/ are derived from them
+  bin/parser/resources/UnicodeData-15.0.0.txt
+                                     Unicode Character Database,
+                                     Copyright Unicode, Inc. Unicode License
+                                     (https://www.unicode.org/license.txt)
+
+
+The RVM (bin/modules/rvm/) is not part of this repository; it carries
+its own NOTICE.

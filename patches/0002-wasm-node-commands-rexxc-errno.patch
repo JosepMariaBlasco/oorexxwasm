@@ -1,0 +1,1297 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
+Date: Sun, 4 Oct 2026 11:46:28 +0200
+Subject: [PATCH 2/5] WebAssembly port, Node: external commands, rexxc, host
+ errno values
+
+wasm/build-node.sh relinks the runtime (no recompilation) as a Node-only
+command-line ooRexx that sees the host file system and environment
+(NODERAWFS, wasm/node-pre.js), with rexx and rexxc launchers.
+
+- ADDRESS commands under Node run as host processes (child_process.spawnSync
+  on the interpreter thread), with ADDRESS ... WITH redirection; in the
+  browser they still fail closed;
+- rexxc linked into the WASM rexx executable (multi-call: rexx.js
+  --orx-wasm-rexxc), the class files installed in the build;
+- .RexxInfo~executable and ~libraryPath from the location of rexx.js;
+- errno values seen by Rexx programs (RC of CD, stream ERROR:n, SysMkDir,
+  SysFileDelete, ...) mapped from WASI to Linux numbers (HOST_ERRNO; the
+  identity on every other platform);
+- LINES() / CHARS() on the host's stdin: SysFile::hasData() asks
+  ioctl(FIONREAD), which Emscripten answers 0 without writing the count;
+  node-pre.js answers it (a file: the bytes left; a terminal, /dev/null:
+  0; a pipe: read ahead), the same results as native;
+- samples/rexxtry.rex copied next to rexx (`rexx rexxtry`);
+- wasm/tests/qualify-node-cli.sh: qualification of the Node command-line
+  build, with assertions.
+---
+ CMakeLists.txt                               |   4 +
+ common/platform/unix/SysFile.hpp             |  13 +
+ common/platform/unix/SysProcess.cpp          | 230 ++++++++++++++++-
+ common/platform/unix/SysProcess.hpp          |   4 +
+ common/platform/windows/SysFile.hpp          |   3 +
+ interpreter/platform/unix/SysRexxUtil.cpp    |   9 +-
+ interpreter/platform/unix/SystemCommands.cpp | 256 ++++++++++++++++++-
+ interpreter/runtime/RexxUtilCommon.cpp       |   8 +-
+ interpreter/streamLibrary/StreamNative.cpp   |  20 +-
+ utilities/rexx/platform/unix/rexx.cpp        |  13 +
+ wasm/README.md                               |  21 +-
+ wasm/build-node.sh                           |  84 ++++++
+ wasm/build-wasm.sh                           |   4 +-
+ wasm/node-pre.js                             |  91 +++++++
+ wasm/rexxc-main.cpp                          |  46 ++++
+ wasm/tests/qualify-node-cli.sh               | 105 ++++++++
+ 16 files changed, 876 insertions(+), 35 deletions(-)
+ create mode 100755 wasm/build-node.sh
+ create mode 100644 wasm/node-pre.js
+ create mode 100644 wasm/rexxc-main.cpp
+ create mode 100755 wasm/tests/qualify-node-cli.sh
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 3806165..5c639db 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1066,6 +1066,10 @@ endif ()
+ # have a rexx library target
+ add_executable(rexx_exe ${build_utilities_rexx_dir}/rexx.cpp
+                         ${platform_rexx_exe_sources})
++if (EMSCRIPTEN)
++  # rexxc is part of the WASM rexx executable (multi-call, see the file)
++  target_sources(rexx_exe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/wasm/rexxc-main.cpp)
++endif ()
+ # This allows the executable to have the same name as the library.
+ SET_TARGET_PROPERTIES(rexx_exe
+   PROPERTIES OUTPUT_NAME rexx)
+diff --git a/common/platform/unix/SysFile.hpp b/common/platform/unix/SysFile.hpp
+index 30aa016..51e59d8 100644
+--- a/common/platform/unix/SysFile.hpp
++++ b/common/platform/unix/SysFile.hpp
+@@ -88,6 +88,7 @@ public:
+ 
+ #define LINE_TERMINATOR "\n"
+ 
++
+     bool open(const char *name, int openFlags, int openMode, int shareMode);
+     bool open(int handle);
+     void reset();
+@@ -161,4 +162,16 @@ protected:
+     int64_t fileSize;       // current known file size
+ };
+ 
++// An errno value as Rexx programs should see it.  The WASM build's libc uses
++// WASI error numbers; Rexx code is written against the Linux ones (see
++// SysProcess::hostErrno).  Identity on real Unix systems.
++#if defined(__EMSCRIPTEN__)
++#include "SysProcess.hpp"
++#define HOST_ERRNO(e) SysProcess::hostErrno(e)
++#define HOST_ERRNO_REVERSE(e) SysProcess::localErrno(e)
++#else
++#define HOST_ERRNO(e) (e)
++#define HOST_ERRNO_REVERSE(e) (e)
++#endif
++
+ #endif
+diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
+index 485a701..5481206 100644
+--- a/common/platform/unix/SysProcess.cpp
++++ b/common/platform/unix/SysProcess.cpp
+@@ -75,6 +75,200 @@ const char *SysProcess::executableFullPath = NULL;
+ // directory of our Rexx shared libraries
+ const char *SysProcess::libraryLocation = NULL;
+ 
++#if defined(__EMSCRIPTEN__)
++#include <emscripten.h>
++
++// WASI errno (what the Emscripten libc returns) -> Linux errno.  Error
++// numbers reach Rexx programs (RC of CD, stream descriptions ERROR:n,
++// SysMkDir, SysFileDelete, ...), which are written against the Linux values.
++static const struct { int wasm; int host; } wasmErrnoTable[] =
++{
++    { EPERM, 1 },
++    { ENOENT, 2 },
++    { ESRCH, 3 },
++    { EINTR, 4 },
++    { EIO, 5 },
++    { ENXIO, 6 },
++    { E2BIG, 7 },
++    { ENOEXEC, 8 },
++    { EBADF, 9 },
++    { ECHILD, 10 },
++    { EAGAIN, 11 },
++    { ENOMEM, 12 },
++    { EACCES, 13 },
++    { EFAULT, 14 },
++    { EBUSY, 16 },
++    { EEXIST, 17 },
++    { EXDEV, 18 },
++    { ENODEV, 19 },
++    { ENOTDIR, 20 },
++    { EISDIR, 21 },
++    { EINVAL, 22 },
++    { ENFILE, 23 },
++    { EMFILE, 24 },
++    { ENOTTY, 25 },
++    { ETXTBSY, 26 },
++    { EFBIG, 27 },
++    { ENOSPC, 28 },
++    { ESPIPE, 29 },
++    { EROFS, 30 },
++    { EMLINK, 31 },
++    { EPIPE, 32 },
++    { EDOM, 33 },
++    { ERANGE, 34 },
++    { EDEADLK, 35 },
++    { ENAMETOOLONG, 36 },
++    { ENOLCK, 37 },
++    { ENOSYS, 38 },
++    { ENOTEMPTY, 39 },
++    { ELOOP, 40 },
++    { ENOMSG, 42 },
++    { EIDRM, 43 },
++    { ENOLINK, 67 },
++    { EPROTO, 71 },
++    { EMULTIHOP, 72 },
++    { EBADMSG, 74 },
++    { EOVERFLOW, 75 },
++    { EILSEQ, 84 },
++    { ENOTSOCK, 88 },
++    { EDESTADDRREQ, 89 },
++    { EMSGSIZE, 90 },
++    { EPROTOTYPE, 91 },
++    { ENOPROTOOPT, 92 },
++    { EPROTONOSUPPORT, 93 },
++    { EAFNOSUPPORT, 97 },
++    { EADDRINUSE, 98 },
++    { EADDRNOTAVAIL, 99 },
++    { ENETDOWN, 100 },
++    { ENETUNREACH, 101 },
++    { ENETRESET, 102 },
++    { ECONNABORTED, 103 },
++    { ECONNRESET, 104 },
++    { ENOBUFS, 105 },
++    { EISCONN, 106 },
++    { ENOTCONN, 107 },
++    { ETIMEDOUT, 110 },
++    { ECONNREFUSED, 111 },
++    { EHOSTUNREACH, 113 },
++    { EALREADY, 114 },
++    { EINPROGRESS, 115 },
++    { ESTALE, 116 },
++    { EDQUOT, 122 },
++    { ECANCELED, 125 },
++    { EOWNERDEAD, 130 },
++    { ENOTRECOVERABLE, 131 },
++    { ENOSTR, 60 },
++    { EBFONT, 59 },
++    { EBADSLT, 57 },
++    { EBADRQC, 56 },
++    { ENOANO, 55 },
++    { ENOTBLK, 15 },
++    { ECHRNG, 44 },
++    { EL3HLT, 46 },
++    { EL3RST, 47 },
++    { ELNRNG, 48 },
++    { EUNATCH, 49 },
++    { ENOCSI, 50 },
++    { EL2HLT, 51 },
++    { EBADE, 52 },
++    { EBADR, 53 },
++    { EXFULL, 54 },
++    { ENODATA, 61 },
++    { ETIME, 62 },
++    { ENOSR, 63 },
++    { ENONET, 64 },
++    { ENOPKG, 65 },
++    { EREMOTE, 66 },
++    { EADV, 68 },
++    { ESRMNT, 69 },
++    { ECOMM, 70 },
++    { EDOTDOT, 73 },
++    { ENOTUNIQ, 76 },
++    { EBADFD, 77 },
++    { EREMCHG, 78 },
++    { ELIBACC, 79 },
++    { ELIBBAD, 80 },
++    { ELIBSCN, 81 },
++    { ELIBMAX, 82 },
++    { ELIBEXEC, 83 },
++    { ERESTART, 85 },
++    { ESTRPIPE, 86 },
++    { EUSERS, 87 },
++    { ESOCKTNOSUPPORT, 94 },
++    { EOPNOTSUPP, 95 },
++    { EPFNOSUPPORT, 96 },
++    { ESHUTDOWN, 108 },
++    { ETOOMANYREFS, 109 },
++    { EHOSTDOWN, 112 },
++    { EUCLEAN, 117 },
++    { ENOTNAM, 118 },
++    { ENAVAIL, 119 },
++    { EISNAM, 120 },
++    { EREMOTEIO, 121 },
++    { ENOMEDIUM, 123 },
++    { EMEDIUMTYPE, 124 },
++    { ENOKEY, 126 },
++    { EKEYEXPIRED, 127 },
++    { EKEYREVOKED, 128 },
++    { EKEYREJECTED, 129 },
++    { ERFKILL, 132 },
++    { EL2NSYNC, 45 },
++    { EWOULDBLOCK, 11 },
++    { EDEADLOCK, 35 },
++    { ENOTSUP, 95 },
++    { EHWPOISON, 133 },
++};
++#endif
++
++int SysProcess::hostErrno(int e)
++{
++#if defined(__EMSCRIPTEN__)
++    for (size_t i = 0; i < sizeof(wasmErrnoTable) / sizeof(wasmErrnoTable[0]); i++)
++    {
++        if (wasmErrnoTable[i].wasm == e)
++        {
++            return wasmErrnoTable[i].host;
++        }
++    }
++#endif
++    return e;
++}
++
++int SysProcess::localErrno(int e)
++{
++#if defined(__EMSCRIPTEN__)
++    for (size_t i = 0; i < sizeof(wasmErrnoTable) / sizeof(wasmErrnoTable[0]); i++)
++    {
++        if (wasmErrnoTable[i].host == e)
++        {
++            return wasmErrnoTable[i].wasm;
++        }
++    }
++#endif
++    return e;
++}
++
++#if defined(__EMSCRIPTEN__)
++
++/**
++ * WASM: the directory of the loaded rexx.js under Node (with a trailing
++ * slash) into buf; returns 0 if there is none (browser) or it does not fit.
++ * /proc/self/exe would name the node binary, and there is no dladdr().  The
++ * Node command-line build puts its `rexx` launcher and rexx.img there.
++ */
++EM_JS(int, wasmScriptDirectory, (char *buf, int size), {
++    if (typeof process !== 'object' || !process.versions || !process.versions.node ||
++        typeof scriptDirectory !== 'string' || scriptDirectory.length === 0 ||
++        scriptDirectory.charAt(0) !== '/')
++    {
++        return 0;
++    }
++    if (lengthBytesUTF8(scriptDirectory) >= size) return 0;
++    stringToUTF8(scriptDirectory, buf, size);
++    return 1;
++});
++#endif
++
+ 
+ #ifdef HAVE_KERN_PROC_ARGV
+ /**
+@@ -271,6 +465,15 @@ const char* SysProcess::getExecutableFullPath()
+     char path[PATH_MAX] = ""; // we have no valid path yet
+     const char *path_p = path;
+ 
++#if defined(__EMSCRIPTEN__)
++    // WASM under Node: the `rexx` launcher next to rexx.js, if this file
++    // system can see it (NODERAWFS); realpath() below fails otherwise and
++    // the result is NULL (.nil), as in the browser.
++    if (wasmScriptDirectory(path, sizeof(path) - 5))
++    {
++        strcat(path, "rexx");
++    }
++#else
+     // run Darwin/Solaris/BSD-specific functions to retrieve the path
+     // in some cases they may fail to retrieve a valid path (e. g. on
+     // NetBSD where HAVE_KERN_PROC_PATHNAME is defined, sysctl succeeds,
+@@ -368,6 +571,7 @@ const char* SysProcess::getExecutableFullPath()
+         }
+         path[bytes] = '\0'; // we must always add a trailing NUL
+     }
++#endif // __EMSCRIPTEN__
+ 
+     // this is the file location with any symbolic links resolved.
+     char *modulePath = realpath(path_p, NULL);
+@@ -395,7 +599,31 @@ const char* SysProcess::getLibraryLocation()
+         return libraryLocation;
+     }
+ 
+-#ifdef HAVE_DLADDR
++#if defined(__EMSCRIPTEN__)
++    // WASM: the directory of rexx.js, if this file system can see it
++    char dir[PATH_MAX];
++    if (wasmScriptDirectory(dir, sizeof(dir)) && access(dir, F_OK) == 0)
++    {
++        char *resolved = realpath(dir, NULL);
++        if (resolved != NULL)
++        {
++            size_t len = strlen(resolved);
++            char *location = (char *)malloc(len + 2);
++            if (location != NULL)
++            {
++                memcpy(location, resolved, len);
++                if (len == 0 || location[len - 1] != '/')
++                {
++                    location[len++] = '/';
++                }
++                location[len] = '\0';
++                libraryLocation = location;
++            }
++            free(resolved);
++        }
++    }
++    return libraryLocation;
++#elif defined(HAVE_DLADDR)
+     Dl_info dlInfo;
+     if (dladdr((void *)RexxCreateQueue, &dlInfo) == 0)
+     {
+diff --git a/common/platform/unix/SysProcess.hpp b/common/platform/unix/SysProcess.hpp
+index d683ad9..28f0600 100644
+--- a/common/platform/unix/SysProcess.hpp
++++ b/common/platform/unix/SysProcess.hpp
+@@ -62,6 +62,10 @@ class SysProcess
+          return (int)getpid();
+      }
+      static const char* getExecutableFullPath();
++     // errno as the host OS numbers it (the WASM build uses WASI numbers
++     // internally; Rexx programs see the Linux values); identity elsewhere
++     static int hostErrno(int e);
++     static int localErrno(int e);   // the reverse, e.g. for strerror()
+      static const char* getLibraryLocation();
+      static void beep(int frequency, int duration);
+ 
+diff --git a/common/platform/windows/SysFile.hpp b/common/platform/windows/SysFile.hpp
+index 5bd484f..f51abef 100644
+--- a/common/platform/windows/SysFile.hpp
++++ b/common/platform/windows/SysFile.hpp
+@@ -45,6 +45,9 @@
+ #ifndef Included_SysFile
+ #define Included_SysFile
+ 
++// see the unix SysFile.hpp (WASM errno numbering); identity on Windows
++#define HOST_ERRNO(e) (e)
++
+ #include "rexxapitypes.h"
+ #include <io.h>
+ #include <fcntl.h>
+diff --git a/interpreter/platform/unix/SysRexxUtil.cpp b/interpreter/platform/unix/SysRexxUtil.cpp
+index 5c65735..885bdaa 100644
+--- a/interpreter/platform/unix/SysRexxUtil.cpp
++++ b/interpreter/platform/unix/SysRexxUtil.cpp
+@@ -164,6 +164,7 @@
+ #include "RexxUtilCommon.hpp"
+ #include "Utilities.hpp"
+ #include "RexxInternalApis.h"
++#include "SysFile.hpp"                // HOST_ERRNO
+ 
+ #if defined __APPLE__
+ #define open64 open
+@@ -584,7 +585,7 @@ RexxRoutine2(int, SysMkDir, CSTRING, path, OPTIONAL_int32_t, mode)
+     {
+         mode = S_IRWXU | S_IRWXG | S_IRWXO;
+     }
+-    return mkdir(qualifiedName, mode) == 0 ? 0 : errno;
++    return mkdir(qualifiedName, mode) == 0 ? 0 : HOST_ERRNO(errno);
+ }
+ 
+ 
+@@ -1092,7 +1093,7 @@ RexxRoutine1(int, SysCloseMutexSem, uintptr_t, vhandle)
+ RexxRoutine2(int, SysSetPriority, OPTIONAL_int32_t, cls, int32_t, prio)
+ {
+     // priority is the negated prio argument
+-    return setpriority(PRIO_PROCESS, 0, -prio) == 0 ? 0 : errno;
++    return setpriority(PRIO_PROCESS, 0, -prio) == 0 ? 0 : HOST_ERRNO(errno);
+ }
+ 
+ /**
+@@ -1505,7 +1506,7 @@ RexxRoutine1(RexxObjectPtr, SysQueryProcess, OPTIONAL_CSTRING, selector)
+     if (iRc)
+     {
+         char buffer[100];
+-        snprintf(buffer, sizeof(buffer), "System error; errno = %d", errno);
++        snprintf(buffer, sizeof(buffer), "System error; errno = %d", HOST_ERRNO(errno));
+         return context->NewStringFromAsciiz(buffer);
+     }
+     if (!strcasecmp(selector, "PTIME")) /* Calculate the used CPU time*/
+@@ -1619,7 +1620,7 @@ RexxRoutine1(RexxObjectPtr, SysQueryProcess, OPTIONAL_CSTRING, selector)
+ 
+ RexxRoutine1(RexxStringObject, SysGetErrorText, int32_t, errnum)
+ {
+-    const char *errmsg = strerror(errnum);
++    const char *errmsg = strerror(HOST_ERRNO_REVERSE(errnum));
+     if (errmsg == NULL)
+     {
+         return context->NullString();
+diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform/unix/SystemCommands.cpp
+index 5abf65b..8a0f7aa 100644
+--- a/interpreter/platform/unix/SystemCommands.cpp
++++ b/interpreter/platform/unix/SystemCommands.cpp
+@@ -57,6 +57,7 @@
+ #include "InterpreterInstance.hpp"
+ #include "SysInterpreterInstance.hpp"
+ #include "SysThread.hpp"
++#include "SysFile.hpp"                // HOST_ERRNO
+ 
+ #include "RexxInternalApis.h"
+ #include <sys/types.h>
+@@ -608,7 +609,7 @@ bool sys_process_cd(RexxExitContext *context, const char * cmd, RexxObjectPtr rc
+     int errCode = chdir(unquoted);
+     if (errCode < 0)
+     {
+-        errCode = errno;
++        errCode = HOST_ERRNO(errno);
+     }
+     free(unquoted);
+ 
+@@ -806,6 +807,244 @@ RexxObjectPtr ErrorFailure(RexxExitContext *context, CSTRING commandString)
+ }
+ 
+ 
++#if defined(__EMSCRIPTEN__)
++#include <emscripten.h>
++
++/*
++ * External commands in the WASM build.
++ *
++ * Under Node a command runs as a real host process through
++ * child_process.spawnSync().  The interpreter runs on a pthread
++ * (PROXY_TO_PTHREAD), i.e. a Node worker thread, where blocking is legal, so
++ * the call is made directly on the calling thread: concurrent Rexx threads
++ * can run commands at the same time and the JS main thread stays free.
++ * Without redirection the child inherits the real stdin/stdout/stderr; with
++ * ADDRESS ... WITH redirection INPUT is passed as a buffer and OUTPUT/ERROR
++ * are collected as buffers.  Interleaved OUTPUT+ERROR (same target) is done
++ * by a tiny sh wrapper that does 2>&1 and then exec's the original argv, so
++ * argv is preserved exactly.
++ *
++ * The child gets the interpreter's environment (environ, as changed by
++ * SET/EXPORT/VALUE(...,'ENVIRONMENT'); if PATH is still Emscripten's default
++ * "/", the host PATH) and current directory, provided the
++ * latter exists on the host (it does with NODERAWFS; with MEMFS it may not,
++ * then the child starts in the Node process' directory).
++ *
++ * In the browser there are no processes: commands fail closed (FAILURE,
++ * RC 127), as before.
++ *
++ * Results (OUTPUT/ERROR buffers) are kept in a per-thread JS global between
++ * the run and the copy calls; each JS worker has its own globalThis, and a
++ * thread runs one command at a time.
++ */
++
++// flags for wasmCommandRun
++#define WASM_CMD_INPUT      1
++#define WASM_CMD_OUTPUT     2
++#define WASM_CMD_ERROR      4
++#define WASM_CMD_SAME       8      // OUTPUT and ERROR to the same target
++
++// special return codes of wasmCommandRun
++#define WASM_CMD_NO_PROCESSES  (-100000)
++
++EM_JS(int, wasmCommandRun, (char **argv, char **envp, const char *cwd,
++                            const char *input, int inputLength, int flags), {
++    if (typeof process !== 'object' || !process.versions || !process.versions.node ||
++        typeof require !== 'function')
++    {
++        return -100000;                        // no processes in the browser
++    }
++    var cp = require('child_process');
++    var fs = require('fs');
++    var os = require('os');
++    var u32 = new Uint32Array(wasmMemory.buffer);
++    var strings = function(p) {
++        var list = [];
++        if (!p) return list;
++        for (var i = p >> 2; u32[i] !== 0; i++) list.push(UTF8ToString(u32[i]));
++        return list;
++    };
++    var args = strings(argv);
++    var env = {};
++    strings(envp).forEach(function(e) {
++        var eq = e.indexOf('=');
++        if (eq > 0) env[e.substring(0, eq)] = e.substring(eq + 1);
++    });
++    // a runtime that did not import the host environment (the MEMFS build)
++    // has Emscripten's default PATH=/; search the host PATH then
++    if ((env.PATH === undefined || env.PATH === '/') && process.env.PATH)
++    {
++        env.PATH = process.env.PATH;
++    }
++    var dir = cwd ? UTF8ToString(cwd) : undefined;
++    try { if (!dir || !fs.statSync(dir).isDirectory()) dir = undefined; }
++    catch (e) { dir = undefined; }
++
++    var file = args[0];
++    var rest = args.slice(1);
++    if (flags & 8)
++    {   // OUTPUT and ERROR interleaved into one target
++        rest = ['-c', 'exec 2>&1; exec "$0" "$@"', file].concat(rest);
++        file = '/bin/sh';
++    }
++    var options = {
++        cwd: dir, env: env, argv0: args[0],
++        maxBuffer: 0x7fffffff,
++        stdio: [(flags & 1) ? 'pipe' : 'inherit',
++                (flags & 2) ? 'pipe' : 'inherit',
++                ((flags & 4) && !(flags & 8)) ? 'pipe' : 'inherit']
++    };
++    if (flags & 1)
++    {
++        options.input = inputLength > 0 ?
++            Buffer.from(new Uint8Array(wasmMemory.buffer, input, inputLength)) :
++            Buffer.alloc(0);
++    }
++    globalThis.__orxCmd = null;
++    var r;
++    try
++    {
++        // throws synchronously for bad arguments, e.g. an empty command
++        // name (ADDRESS PATH ''); natively posix_spawnp() fails: FAILURE
++        r = cp.spawnSync(file, rest, options);
++    }
++    catch (e)
++    {
++        return 127;
++    }
++    globalThis.__orxCmd = [r.stdout || null, r.stderr || null];
++    if (r.error)
++    {
++        // EPIPE: the command did not read all of INPUT -- not an error
++        if (r.error.code === 'EPIPE' && r.status !== null) return r.status;
++        return 127;                            // could not start: unknown command
++    }
++    if (r.status !== null) return r.status;
++    var sig = r.signal ? (os.constants.signals[r.signal] || 1) : 1;
++    return -sig;
++});
++
++// length of the collected OUTPUT (0) or ERROR (1) buffer
++EM_JS(int, wasmCommandResultLength, (int which), {
++    var res = globalThis.__orxCmd;
++    return (res && res[which]) ? res[which].length : 0;
++});
++
++// copy the collected OUTPUT (0) or ERROR (1) buffer to buf, then drop it
++EM_JS(void, wasmCommandResultCopy, (int which, char *buf), {
++    var res = globalThis.__orxCmd;
++    if (res && res[which])
++    {
++        new Uint8Array(wasmMemory.buffer).set(res[which], buf);
++        res[which] = null;
++    }
++});
++
++/**
++ * Hand a collected OUTPUT/ERROR buffer to the redirection context.
++ */
++static void wasmCommandDeliver(RexxIORedirectorContext *ioContext, int which)
++{
++    int length = wasmCommandResultLength(which);
++    if (length <= 0)
++    {
++        return;
++    }
++    char *buffer = (char *)malloc(length);
++    if (buffer == NULL)
++    {
++        return;
++    }
++    wasmCommandResultCopy(which, buffer);
++    if (which == 0)
++    {
++        ioContext->WriteOutputBuffer(buffer, length);
++    }
++    else
++    {
++        ioContext->WriteErrorBuffer(buffer, length);
++    }
++    free(buffer);
++}
++
++/**
++ * WASM version of the process part of ioCommandHandler (see above).
++ */
++static RexxObjectPtr wasmCommandHandler(RexxExitContext *context, CSTRING commandString,
++                                        char **argv, RexxIORedirectorContext *ioContext)
++{
++    int flags = 0;
++    CSTRING inputBuffer = NULL;
++    size_t inputLength = 0;
++
++    if (ioContext->IsRedirectionRequested())
++    {
++        if (ioContext->IsInputRedirected())
++        {
++            flags |= WASM_CMD_INPUT;
++            ioContext->ReadInputBuffer(&inputBuffer, &inputLength);
++        }
++        if (ioContext->IsOutputRedirected())
++        {
++            flags |= WASM_CMD_OUTPUT;
++            if (ioContext->AreOutputAndErrorSameTarget())
++            {
++                flags |= WASM_CMD_SAME;
++            }
++        }
++        if (ioContext->IsErrorRedirected() && !ioContext->AreOutputAndErrorSameTarget())
++        {
++            flags |= WASM_CMD_ERROR;
++        }
++    }
++    else
++    {
++        // try to handle special commands like 'cd' or 'export' internally
++        RexxObjectPtr rc = NULLOBJECT;
++        if (handleCommandInternally(context, (char *)commandString, rc))
++        {
++            return rc;
++        }
++    }
++
++    char cwd[PATH_MAX];
++    if (getcwd(cwd, sizeof(cwd)) == NULL)
++    {
++        cwd[0] = '\0';
++    }
++
++    int rc = wasmCommandRun(argv, getEnvironment(), cwd[0] != '\0' ? cwd : NULL,
++                            inputBuffer, (int)inputLength, flags);
++    if (rc == WASM_CMD_NO_PROCESSES)
++    {
++        return ErrorFailure(context, commandString);
++    }
++
++    if (flags & WASM_CMD_OUTPUT)
++    {
++        wasmCommandDeliver(ioContext, 0);
++    }
++    if (flags & WASM_CMD_ERROR)
++    {
++        wasmCommandDeliver(ioContext, 1);
++    }
++
++    // same mapping as the native code below
++    if (rc == UNKNOWN_COMMAND)
++    {
++        return ErrorFailure(context, commandString);
++    }
++    else if (rc != 0)
++    {
++        context->RaiseCondition("ERROR", context->String(commandString),
++          NULL, context->WholeNumberToObject(rc));
++        return NULLOBJECT;
++    }
++    return context->False();
++}
++#endif
++
++
+ /**
+  * A redirecting test command handler.
+  *
+@@ -826,18 +1065,6 @@ RexxObjectPtr RexxEntry ioCommandHandler(RexxExitContext *context, RexxStringObj
+     CSTRING environment = context->CString(address);
+     CSTRING commandString = context->CString(command);
+ 
+-#if defined(__EMSCRIPTEN__)
+-    // There is no child-process model in the browser WASM profile.  Keep
+-    // commands handled entirely in-process (cd/set/unset/export), and fail
+-    // closed for commands that would require posix_spawnp().
+-    RexxObjectPtr internalRc = NULLOBJECT;
+-    if (handleCommandInternally(context, (char *)commandString, internalRc))
+-    {
+-        return internalRc;
+-    }
+-    return ErrorFailure(context, commandString);
+-#else
+-
+     if (Utilities::strCaselessCompare("path", environment) == 0)
+     {   // For the no-shell "direct" environment we need to break the command
+         // string into a command name and separate arguments each (we have no
+@@ -878,6 +1105,9 @@ RexxObjectPtr RexxEntry ioCommandHandler(RexxExitContext *context, RexxStringObj
+         argv[3] = NULL;
+     }
+ 
++#if defined(__EMSCRIPTEN__)
++    return wasmCommandHandler(context, commandString, argv, ioContext);
++#else
+     if (ioContext->IsRedirectionRequested())
+     {
+         InputWriterThread inputThread; // separate thread if we need to write INPUT
+diff --git a/interpreter/runtime/RexxUtilCommon.cpp b/interpreter/runtime/RexxUtilCommon.cpp
+index bd839de..80892fa 100644
+--- a/interpreter/runtime/RexxUtilCommon.cpp
++++ b/interpreter/runtime/RexxUtilCommon.cpp
+@@ -1673,7 +1673,7 @@ RexxRoutine1(int, SysRmDir, CSTRING, path)
+ {
+     RoutineQualifiedName qualifiedName(context, path);
+ 
+-    return SysFileSystem::deleteDirectory(qualifiedName);
++    return HOST_ERRNO(SysFileSystem::deleteDirectory(qualifiedName));
+ }
+ 
+ /*************************************************************************
+@@ -1690,7 +1690,7 @@ RexxRoutine1(int, SysFileDelete, CSTRING, path)
+ {
+     RoutineQualifiedName qualifiedName(context, path);
+ 
+-    return SysFileSystem::deleteFile(qualifiedName);
++    return HOST_ERRNO(SysFileSystem::deleteFile(qualifiedName));
+ }
+ 
+ 
+@@ -1937,7 +1937,7 @@ RexxRoutine2(int, SysFileCopy, CSTRING, from, CSTRING, to)
+     RoutineQualifiedName fromFile(context, from);
+     RoutineQualifiedName toFile(context, to);
+ 
+-    return SysFileSystem::copyFile(fromFile, toFile);
++    return HOST_ERRNO(SysFileSystem::copyFile(fromFile, toFile));
+ }
+ 
+ 
+@@ -1956,7 +1956,7 @@ RexxRoutine2(int, SysFileMove, CSTRING, from, CSTRING, to)
+     RoutineQualifiedName fromFile(context, from);
+     RoutineQualifiedName toFile(context, to);
+ 
+-    return SysFileSystem::moveFile(fromFile, toFile);
++    return HOST_ERRNO(SysFileSystem::moveFile(fromFile, toFile));
+ }
+ 
+ 
+diff --git a/interpreter/streamLibrary/StreamNative.cpp b/interpreter/streamLibrary/StreamNative.cpp
+index c12de90..c19918e 100644
+--- a/interpreter/streamLibrary/StreamNative.cpp
++++ b/interpreter/streamLibrary/StreamNative.cpp
+@@ -493,7 +493,7 @@ void StreamInfo::close()
+     // and raise a NOTREADY condition if anything went amiss
+     if (!closed)
+     {
+-        defaultResult = context->WholeNumberToObject(fileInfo.errorInfo());
++        defaultResult = context->WholeNumberToObject(HOST_ERRNO(fileInfo.errorInfo()));
+         notreadyError();
+     }
+     // no longer open for business
+@@ -832,7 +832,7 @@ void StreamInfo::implicitOpen(int type)
+             if (defaultResult == NULLOBJECT)
+             {
+                 char work[30];
+-                snprintf(work, sizeof(work), "ERROR:%d", fileInfo.errorInfo());
++                snprintf(work, sizeof(work), "ERROR:%d", HOST_ERRNO(fileInfo.errorInfo()));
+                 defaultResult = context->NewStringFromAsciiz(work);
+             }
+             notreadyError();
+@@ -2222,7 +2222,7 @@ const char *StreamInfo::streamFlush()
+     if (!fileInfo.flush())
+     {
+         char         work[30];              /* error information buffer          */
+-        snprintf(work, sizeof(work), "ERROR:%d", fileInfo.errorInfo());   /* format the error return           */
++        snprintf(work, sizeof(work), "ERROR:%d", HOST_ERRNO(fileInfo.errorInfo()));   /* format the error return           */
+                                         /* go raise a notready condition     */
+         notreadyError(fileInfo.errorInfo(), context->NewStringFromAsciiz(work));
+     }
+@@ -2433,7 +2433,7 @@ const char *StreamInfo::streamOpen(const char *options)
+         if (!SysFileSystem::fileExists(qualified_name))
+         {
+             char work[32];
+-            snprintf(work, sizeof(work), "ERROR:%d", ENOENT);
++            snprintf(work, sizeof(work), "ERROR:%d", HOST_ERRNO(ENOENT));
+             // raise a notready condition
+             notreadyError(ENOENT, context->NewStringFromAsciiz(work));
+         }
+@@ -2467,7 +2467,7 @@ const char *StreamInfo::streamOpen(const char *options)
+             {
+                 char work[32];
+ 
+-                snprintf(work, sizeof(work), "ERROR:%d", fileInfo.errorInfo()); /* format the error return           */
++                snprintf(work, sizeof(work), "ERROR:%d", HOST_ERRNO(fileInfo.errorInfo())); /* format the error return           */
+                 /* go raise a notready condition     */
+                 notreadyError(fileInfo.errorInfo(), context->NewStringFromAsciiz(work));
+             }
+@@ -2477,7 +2477,7 @@ const char *StreamInfo::streamOpen(const char *options)
+         else
+         {
+             char work[32];
+-            snprintf(work, sizeof(work), "ERROR:%d", fileInfo.errorInfo()); /* format the error return           */
++            snprintf(work, sizeof(work), "ERROR:%d", HOST_ERRNO(fileInfo.errorInfo())); /* format the error return           */
+             /* go raise a notready condition     */
+             notreadyError(fileInfo.errorInfo(), context->NewStringFromAsciiz(work));
+         }
+@@ -3644,12 +3644,12 @@ RexxStringObject StreamInfo::getDescription()
+             if (errorString != NULL)
+             {
+                                                  /* format the result string          */
+-                snprintf(work, sizeof(work), "NOTREADY:%d %s", errorInfo, errorString);
++                snprintf(work, sizeof(work), "NOTREADY:%d %s", HOST_ERRNO(errorInfo), errorString);
+             }
+             else
+             {
+                                                  /* format the result string          */
+-                snprintf(work, sizeof(work), "NOTREADY:%d", errorInfo);
++                snprintf(work, sizeof(work), "NOTREADY:%d", HOST_ERRNO(errorInfo));
+ 
+             }
+             return context->NewStringFromAsciiz(work);
+@@ -3666,12 +3666,12 @@ RexxStringObject StreamInfo::getDescription()
+             if (errorString != NULL)
+             {
+                                                  /* format the result string          */
+-                snprintf(work, sizeof(work), "ERROR:%d %s", errorInfo, errorString);
++                snprintf(work, sizeof(work), "ERROR:%d %s", HOST_ERRNO(errorInfo), errorString);
+             }
+             else
+             {
+                                                  /* format the result string          */
+-                snprintf(work, sizeof(work), "ERROR:%d", errorInfo);
++                snprintf(work, sizeof(work), "ERROR:%d", HOST_ERRNO(errorInfo));
+ 
+             }
+             return context->NewStringFromAsciiz(work);
+diff --git a/utilities/rexx/platform/unix/rexx.cpp b/utilities/rexx/platform/unix/rexx.cpp
+index 7ebfbe0..6d0b5ff 100644
+--- a/utilities/rexx/platform/unix/rexx.cpp
++++ b/utilities/rexx/platform/unix/rexx.cpp
+@@ -54,6 +54,11 @@
+ 
+ #include <oorexxapi.h>
+ 
++#if defined(__EMSCRIPTEN__)
++// rexxc is linked into the WASM rexx executable (see wasm/rexxc-main.cpp)
++int orxWasmRexxcMain(int argc, char **argv);
++#endif
++
+ int main (int argc, char **argv) {
+     int   i;                             /* loop counter                      */
+     int   rc = 0;                        /* actually running program RC       */
+@@ -78,6 +83,14 @@ int main (int argc, char **argv) {
+     wholenumber_t overrideCount = 0;        // +1 one time (switch -o), -1 always=global (switch -og)
+     char          overrideString[512] = ""; // "::OPTIONS" directive string
+ 
++#if defined(__EMSCRIPTEN__)
++    if (argc > 1 && strcmp(argv[1], "--orx-wasm-rexxc") == 0)
++    {
++        argv[1] = argv[0];
++        return orxWasmRexxcMain(argc - 1, argv + 1);
++    }
++#endif
++
+     for (i = 1; i < argc; i++) {         /* loop through the arguments        */
+                                          /* is this option a switch?          */
+         if (program_name == NULL && (*(cp=*(argv+i)) == '-')) {
+diff --git a/wasm/README.md b/wasm/README.md
+index fe34342..2f537c3 100644
+--- a/wasm/README.md
++++ b/wasm/README.md
+@@ -11,7 +11,8 @@ transport for stream sockets.
+ ## WASM platform policy
+ 
+ * no curses / orxncurses;
+-* no child process spawning from ADDRESS handlers;
++* external commands: under Node run as host processes (`child_process`); in
++  the browser they fail closed (RC 127);
+ * no external rxapi daemon: the API server (external data queues, function
+   and subcom registration, macrospace) is linked in and reached through an
+   in-process transport (`rexxapi/common/platform/unix/SysLoopbackConnection`);
+@@ -89,6 +90,22 @@ connect/send/recv, 5,000-byte partial stream reads, arbitrary binary strings,
+ finite select timeout/readiness, nonblocking EINPROGRESS completion,
+ connection refusal, DNS/localhost, and the unchanged `.StreamSocket` wrapper.
+ 
++## Node command-line build (`wasm/build-node.sh`)
++
++`wasm/build-node.sh [BUILD_DIR]` relinks the runtime (no recompilation) into
++`BUILD_DIR/bin-node` as a Node-only command-line ooRexx (`-sNODERAWFS=1
++-sENVIRONMENT=node`, `wasm/node-pre.js`): it sees the host file system and
++the host environment variables, and ADDRESS commands run as host processes
++(`child_process.spawnSync` on the interpreter thread, so concurrent Rexx
++threads can run commands; ADDRESS ... WITH redirection is supported).
++`bin-node/rexx` and `bin-node/rexxc` are launchers; `rexxc` is a multi-call
++entry of the same `rexx.js` (`wasm/rexxc-main.cpp`).  Error numbers seen by
++Rexx programs (RC of CD, stream `ERROR:n`, SysMkDir, ...) are the Linux ones,
++not the WASI ones of the Emscripten libc (`HOST_ERRNO`).
++
++    ./wasm/build-node.sh /tmp/oorexx-wasm-build
++    ./wasm/tests/qualify-node-cli.sh /tmp/oorexx-wasm-build/bin-node
++
+ ## Browser status
+ 
+ The generated `rexx.js/rexx.wasm/rexx.data` target `node,web,worker`. A pthread
+@@ -108,7 +125,7 @@ browser; see the limits below).
+ * UDP/datagram semantics are not qualified.
+ * Native TCP servers need a WebSocket-facing endpoint/proxy; a real WebSocket
+   server can be addressed directly.
+-* ADDRESS commands requiring an OS child process fail closed (RC 127).
++* Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).
+ * Maximum recursion depth is set by the JS engine's native stack (internal
+   CALL / internal function calls / method calls): Node about 7,100 / 5,400 /
+   4,000; browser workers about 900 / 700 / 500 in Chromium, 1,300 / 900 / 700
+diff --git a/wasm/build-node.sh b/wasm/build-node.sh
+new file mode 100755
+index 0000000..c30f77e
+--- /dev/null
++++ b/wasm/build-node.sh
+@@ -0,0 +1,84 @@
++#!/usr/bin/env bash
++#/*----------------------------------------------------------------------------*/
++#/*                                                                            */
++#/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++#/*                                                                            */
++#/* This program and the accompanying materials are made available under       */
++#/* the terms of the Common Public License v1.0 which accompanies this         */
++#/* distribution. A copy is also available at the following address:           */
++#/* https://www.oorexx.org/license.html                                        */
++#/*                                                                            */
++#/* Redistribution and use in source and binary forms, with or                 */
++#/* without modification, are permitted provided that the following            */
++#/* conditions are met:                                                        */
++#/*                                                                            */
++#/* Redistributions of source code must retain the above copyright             */
++#/* notice, this list of conditions and the following disclaimer.              */
++#/* Redistributions in binary form must reproduce the above copyright          */
++#/* notice, this list of conditions and the following disclaimer in            */
++#/* the documentation and/or other materials provided with the distribution.   */
++#/*                                                                            */
++#/* Neither the name of Rexx Language Association nor the names                */
++#/* of its contributors may be used to endorse or promote products             */
++#/* derived from this software without specific prior written permission.      */
++#/*                                                                            */
++#/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++#/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++#/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++#/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++#/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++#/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++#/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++#/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++#/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++#/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++#/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++#/*                                                                            */
++#/*----------------------------------------------------------------------------*/
++# Relink the WASM runtime (no recompilation of the interpreter) as a
++# Node-only command-line ooRexx: the host file system (NODERAWFS), the host
++# environment variables and external commands as host processes.
++#
++# Usage: wasm/build-node.sh [BUILD_DIR=build-wasm] [OUTDIR=BUILD_DIR/bin-node]
++#   (BUILD_DIR: a build made by wasm/build-wasm.sh; EM_CONFIG from it)
++#   EXTRA_LDFLAGS="--profiling-funcs" wasm/build-node.sh ...  (wasm function names)
++# Output: OUTDIR/{rexx.js,rexx.wasm,rexx.img,*.cls} and the launchers
++#   rexx, rexxc (shell scripts running node rexx.js)
++set -euo pipefail
++SRC=$(cd "$(dirname "$0")/.." && pwd)
++BUILD=$(cd "${1:-$SRC/build-wasm}" && pwd)
++OUT=${2:-$BUILD/bin-node}; mkdir -p "$OUT"; OUT=$(cd "$OUT" && pwd)
++export EM_CONFIG="$BUILD/.emscripten"
++
++cmd=$(cat "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
++cmd=$(sed -E 's/--preload-file [^ ]+//g; s/-sENVIRONMENT=[^ ]+//; s/-sFORCE_FILESYSTEM=1//' <<<"$cmd")
++cmd=${cmd//-o bin\/rexx.js/-o $OUT\/rexx.js}
++(cd "$BUILD" && eval "$cmd" -sNODERAWFS=1 -sENVIRONMENT=node \
++   --pre-js "$SRC/wasm/node-pre.js" ${EXTRA_LDFLAGS:-})
++cp "$BUILD/bin/rexx.img" "$OUT/"
++# rexxtry, as native installs have it next to rexx (rexx rexxtry)
++cp "$SRC/samples/rexxtry.rex" "$OUT/"
++# the portable extension classes (::REQUIRES finds them next to rexx.img via
++# PATH), as wasm/build-web.sh: not the Windows ones (ooDialog, OLE, winsystm),
++# not ncurses (no native library here)
++for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp.cls \
++           rxftp/rxftp.cls rxregexp/rxregexp.cls json/json.cls yaml/yaml.cls \
++           csvStream/csvStream.cls dateparser/dateparser.cls; do
++  cp "$SRC/extensions/$cls" "$OUT/"
++done
++
++launcher() {   # launcher NAME [rexx.js option]
++  cat > "$OUT/$1" <<SH
++#!/usr/bin/env bash
++# ooRexx/WASM $1 (Node, host file system); rexx.img and the classes via PATH
++DIR=\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)
++PATH="\$DIR:\$PATH" exec node "\$DIR/rexx.js" ${2:+$2 }"\$@"
++SH
++  chmod +x "$OUT/$1"
++}
++launcher rexx
++# multi-call tools of the same rexx.js/rexx.wasm (see wasm/rexxc-main.cpp)
++for tool in rexxc; do
++  launcher $tool --orx-wasm-$tool
++done
++ls -l "$OUT" | awk 'NR>1 && $9 !~ /\.cls$/ {print $5, $9}'
+diff --git a/wasm/build-wasm.sh b/wasm/build-wasm.sh
+index 469a79f..33431aa 100755
+--- a/wasm/build-wasm.sh
++++ b/wasm/build-wasm.sh
+@@ -72,7 +72,9 @@ emcmake cmake -S "$SRC" -B "$BUILD" \
+   -C "$SRC/cmake/wasm-emscripten-6.0.9-cache.cmake" \
+   -DCMAKE_BUILD_TYPE=Release \
+   -DORX_ENABLE_IPO=OFF
+-cmake --build "$BUILD" --target rexx_exe -j"${JOBS:-4}"
++# class_files: the .cls of the extensions and the samples support files
++# (complex.cls, pipe.cls, jabberwocky.txt, ...) the test suite expects
++cmake --build "$BUILD" --target rexx_exe class_files -j"${JOBS:-4}"
+ 
+ echo
+ echo "WASM runtime built in $BUILD/bin"
+diff --git a/wasm/node-pre.js b/wasm/node-pre.js
+new file mode 100644
+index 0000000..8079eb7
+--- /dev/null
++++ b/wasm/node-pre.js
+@@ -0,0 +1,91 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++// Pre-js of the Node command-line build (wasm/build-node.sh).
++Module['preRun'] = (Module['preRun'] || []).concat([function() {
++  // the host environment is the environment of the Rexx process
++  for (var k in process.env) ENV[k] = process.env[k];
++  // Emscripten 6.0.9 NODERAWFS: FS.fstat() dereferences stream.node, which
++  // the streams of the standard handles (fd 0-2) opened by NODERAWFS do not
++  // have (TypeError on node_ops); ask Node directly for those.
++  var origFstat = FS.fstat;
++  FS.fstat = function(fd) {
++    var st = FS.getStream(fd);
++    if (st && !st.stream_ops && !st.node && st.nfd !== undefined) {
++      try { return fs.fstatSync(st.nfd); }
++      catch (e) { if (e.code) throw new FS.ErrnoError(ERRNO_CODES[e.code]); throw e; }
++    }
++    return origFstat(fd);
++  };
++
++  // LINES()/CHARS() on STDIN: SysFile::hasData() asks ioctl(FIONREAD), which
++  // Emscripten answers 0 (success) without writing the count, so the caller
++  // saw whatever its variable held (LINES() was always 1).  Answer it for the
++  // host's fd 0: a regular file, the bytes left; a terminal, /dev/null or any
++  // other device, 0; a pipe or socket, Node cannot ask without reading, so
++  // the bytes are read ahead (this waits for the writer, where native ooRexx
++  // would answer 0 if it has not written yet) and served to the next reads.
++  var FIONREAD = 0x541B, stdinAhead = null, origIoctl = FS.ioctl, origRead = FS.read;
++  function stdinAvailable(stream) {
++    if (stdinAhead && stdinAhead.length) return stdinAhead.length;
++    var st;
++    try { st = fs.fstatSync(0); } catch (e) { return 0; }
++    if (st.isFile()) return Math.max(0, st.size - stream.position);
++    if (!st.isFIFO() && !st.isSocket()) return 0;
++    var buf = Buffer.alloc(65536), n = 0;
++    try { n = fs.readSync(0, buf, 0, buf.length, null); }
++    catch (e) { if (e.code !== 'EAGAIN' && e.code !== 'EOF') throw e; }
++    stdinAhead = buf.subarray(0, n);
++    return n;
++  }
++  FS.ioctl = function(stream, cmd, arg) {
++    if (cmd === FIONREAD && stream.nfd === 0) {
++      HEAP32[arg >> 2] = stdinAvailable(stream);
++      return 0;
++    }
++    return origIoctl(stream, cmd, arg);
++  };
++  FS.read = function(stream, buffer, offset, length, position) {
++    if (stream.nfd === 0 && stdinAhead && stdinAhead.length && position === undefined) {
++      var n = Math.min(length, stdinAhead.length);
++      buffer.set(stdinAhead.subarray(0, n), offset);
++      stdinAhead = stdinAhead.subarray(n);
++      stream.position += n;
++      return n;
++    }
++    return origRead(stream, buffer, offset, length, position);
++  };
++}]);
+diff --git a/wasm/rexxc-main.cpp b/wasm/rexxc-main.cpp
+new file mode 100644
+index 0000000..6538f75
+--- /dev/null
++++ b/wasm/rexxc-main.cpp
+@@ -0,0 +1,46 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*----------------------------------------------------------------------------*/
++/* WASM build: rexxc linked into the rexx executable (multi-call).            */
++/*                                                                            */
++/* A separate rexxc.wasm would duplicate the whole interpreter (~1 MB) and    */
++/* its link options.  Instead RexxCompiler.cpp is compiled into rexx_exe with */
++/* its main() renamed; rexx.cpp dispatches to it when the first argument is   */
++/* --orx-wasm-rexxc (which is what the Node `rexxc` launcher passes).         */
++/*----------------------------------------------------------------------------*/
++#define main orxWasmRexxcMain
++#include "../utilities/rexxc/platform/unix/RexxCompiler.cpp"
+diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
+new file mode 100755
+index 0000000..f5e9a9f
+--- /dev/null
++++ b/wasm/tests/qualify-node-cli.sh
+@@ -0,0 +1,105 @@
++#!/usr/bin/env bash
++#/*----------------------------------------------------------------------------*/
++#/*                                                                            */
++#/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++#/*                                                                            */
++#/* This program and the accompanying materials are made available under       */
++#/* the terms of the Common Public License v1.0 which accompanies this         */
++#/* distribution. A copy is also available at the following address:           */
++#/* https://www.oorexx.org/license.html                                        */
++#/*                                                                            */
++#/* Redistribution and use in source and binary forms, with or                 */
++#/* without modification, are permitted provided that the following            */
++#/* conditions are met:                                                        */
++#/*                                                                            */
++#/* Redistributions of source code must retain the above copyright             */
++#/* notice, this list of conditions and the following disclaimer.              */
++#/* Redistributions in binary form must reproduce the above copyright          */
++#/* notice, this list of conditions and the following disclaimer in            */
++#/* the documentation and/or other materials provided with the distribution.   */
++#/*                                                                            */
++#/* Neither the name of Rexx Language Association nor the names                */
++#/* of its contributors may be used to endorse or promote products             */
++#/* derived from this software without specific prior written permission.      */
++#/*                                                                            */
++#/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++#/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++#/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++#/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++#/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++#/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++#/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++#/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++#/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++#/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++#/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++#/*                                                                            */
++#/*----------------------------------------------------------------------------*/
++# Qualification of the Node command-line build (wasm/build-node.sh), with
++# assertions: exit status 0 and "QUALIFICATION PASS" only if every check
++# passes; otherwise "QUALIFICATION FAIL (n): ..." and exit status 1.
++#
++# Usage: wasm/tests/qualify-node-cli.sh BIN_NODE
++#   BIN_NODE: the output directory of wasm/build-node.sh (with the rexx,
++#   rexxc, rxqueue and rxsubcom launchers), e.g. /tmp/oorexx-wasm-build/bin-node
++# Needs node and python3.  Uses the TCP/UDP ports 50110-50119 on 127.0.0.1.
++set -uo pipefail
++NB=$(cd "${1:?usage: qualify-node-cli.sh BIN_NODE}" && pwd)
++[[ -x $NB/rexx ]] || { echo "no $NB/rexx (run wasm/build-node.sh)" >&2; exit 2; }
++T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
++# GNU timeout (Linux coreutils); on macOS Homebrew's coreutils also has gtimeout
++TIMEOUT=$(command -v timeout || command -v gtimeout) || { echo 'qualification needs GNU timeout (macOS: brew install coreutils)' >&2; exit 2; }
++export NB
++X="\"$NB/rexx\""
++PASSED=0; FAILED=()
++
++# check TITLE REGEX... -- SHELL-SNIPPET
++# Runs the snippet (bash, in a scratch directory, 90 s timeout) and prints
++# its output; every REGEX must match some line of the output (stdout+stderr)
++# and the exit status must be 0.  A REGEX starting with '!' must match no line.
++check() {
++  local title=$1; shift
++  local pats=() p miss=() out rc
++  while [[ $1 != -- ]]; do pats+=("$1"); shift; done; shift
++  out=$(cd "$T" && "$TIMEOUT" 90 bash -c "$1" 2>&1); rc=$?
++  for p in "${pats[@]}"; do
++    if [[ $p == !* ]]; then grep -Eq -- "${p:1}" <<<"$out" && miss+=("no /${p:1}/")
++    else grep -Eq -- "$p" <<<"$out" || miss+=("/$p/"); fi
++  done
++  (( rc == 0 )) || miss+=("exit status $rc")
++  if (( ${#miss[@]} )); then
++    FAILED+=("$title"); printf 'FAIL  %s\n      expected: %s\n' "$title" "${miss[*]}"
++    tail -n 8 <<<"$out" | sed 's/^/      | /'
++  else
++    PASSED=$((PASSED+1)); printf 'ok    %s\n' "$title"
++  fi
++}
++
++# --- host files, environment, external commands, rexxc
++cat > "$T/cmds.rex" <<'EOF'
++'echo hi'; say 'rc='rc
++address system 'exit 3'; say 'rc='rc
++address system 'printf "a\nb\n"' with output stem o.; say 'stem='o.0 o.2
++EOF
++check "host files + environment" '^hola$' '^env=xyz$' -- \
++  "QTEST_VAR=xyz $X -e 'call lineout \"$T/h.txt\",\"hola\"; call lineout \"$T/h.txt\"; say linein(\"$T/h.txt\"); say \"env=\"value(\"QTEST_VAR\",,\"ENVIRONMENT\")' && test -f '$T/h.txt'"
++check "external commands: output, rc, ADDRESS WITH" '^hi$' '^rc=0$' '^rc=3$' '^stem=2 b$' -- "$X cmds.rex"
++check "host errno values (stream ERROR:2)" '^ERROR:2$' -- \
++  "$X -e 'say stream(\"$T/no/such/dir/x\", \"c\", \"open read\")'"
++# --- LINES() / CHARS() on the host's stdin (ioctl FIONREAD answered in node-pre.js)
++printf 'uno\ndos\ntres\n' > "$T/in3.txt"
++check "LINES() on stdin: terminal-less, empty, pipe, file, loop" '^devnull=0$' '^empty=0$' '^pipe=1$' '^file=1 chars=13$' '^loop=3$' -- \
++  "printf 'devnull='; $X -e 'say lines()' </dev/null; printf 'empty='; true | $X -e 'say lines()'; printf 'pipe='; cat in3.txt | $X -e 'say lines()'; printf 'file='; $X -e 'say lines() \"chars=\"chars()' < in3.txt; printf 'loop='; cat in3.txt | $X -e 'n = 0; do while lines() > 0; parse pull l; n = n + 1; end; say n'"
++check "rexxtry next to rexx (rexx rexxtry)" '^42$' -- "cd / && printf 'say 6*7\\nexit\\n' | $X rexxtry"
++check ".RexxInfo~executable" "^$NB/rexx\$" -- "$X -e 'say .RexxInfo~executable'"
++check "rexxc compile + run" '^compiled ok$' -- \
++  "echo 'say \"compiled ok\"' > c.rex && \"$NB/rexxc\" c.rex c.rxc >/dev/null && $X c.rxc"
++
++
++
++echo
++if (( ${#FAILED[@]} )); then
++  echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
++  exit 1
++fi
++echo "QUALIFICATION PASS ($PASSED checks)"

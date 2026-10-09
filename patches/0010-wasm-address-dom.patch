@@ -1,0 +1,1407 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
+Date: Wed, 7 Oct 2026 18:46:16 +0200
+Subject: [PATCH] wasm: ADDRESS DOM, the page from classic Rexx (browser)
+
+wasm/web/dom.cls, written in Rexx over cmdhandler.cls and js.cls (the page
+realm): .CommandHandler~register("DOM", ...).  A root (the run option
+dom: {root} of ooRexx.js, the page's body by default; NEW makes a floating
+panel in a Shadow DOM and makes it the root; ROOT PAGE | ref), a current
+element as in XEDIT (LOCATE, UP, TOP; CREATE, FIELD, BUTTON, TABLE and LIST
+add without moving it), a label for a one-off target ('ref: CMD', a
+nickname or a CSS selector).  Commands NEW, ROOT, LOCATE, UP, TOP, CLOSE,
+CREATE, REMOVE, CLEAR, TEXT, VALUE, ATTR, STYLE, CLASS, SHOW, HIDE,
+ENABLE, DISABLE, FOCUS, FIELD, BUTTON, TABLE, LIST, CSS, ON, OFF, WAIT.
+Values FROM var and INTO var (a string, a .JSObject for an element, a
+.DomEvent for WAIT); RC 0, positive + ERROR when the outcome is not the
+expected one, negative + FAILURE when the program is wrong.  WAIT
+dispatches .js~handler events while it waits for its own.  A built-in
+stylesheet for the panels (light and dark).  ooRexx.js: option dom, as
+the environment variable ORX_DOM_ROOT.  Preloaded in bin-web.  Test:
+wasm/tests/dom.rex (64 checks) and three more cases in web-api.py.  Not
+part of the posted RFE.
+---
+ wasm/build-web.sh       |    4 +-
+ wasm/tests/dom.rex      |  238 +++++++++
+ wasm/tests/web-api.html |    2 +-
+ wasm/tests/web-api.py   |   11 +
+ wasm/web/dom.cls        | 1032 +++++++++++++++++++++++++++++++++++++++
+ wasm/web/ooRexx.js      |   14 +-
+ 6 files changed, 1298 insertions(+), 3 deletions(-)
+ create mode 100644 wasm/tests/dom.rex
+ create mode 100644 wasm/web/dom.cls
+
+diff --git a/wasm/build-web.sh b/wasm/build-web.sh
+index 2f58d6f..ba05446 100755
+--- a/wasm/build-web.sh
++++ b/wasm/build-web.sh
+@@ -72,10 +72,12 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+            csvStream/csvStream.cls dateparser/dateparser.cls cmdhandler/cmdhandler.cls; do
+   PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
+ done
+-# JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
++# js.cls and what is built on it (FETCH, DOM), JDOR's classes; BSF.CLS (also as
++# bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
+ PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls"
+           "--preload-file" "$SRC/wasm/web/commandwords.cls@/usr/lib/ooRexx/commandwords.cls"
+           "--preload-file" "$SRC/wasm/web/fetch.cls@/usr/lib/ooRexx/fetch.cls"
++          "--preload-file" "$SRC/wasm/web/dom.cls@/usr/lib/ooRexx/dom.cls"
+           "--preload-file" "$SRC/wasm/web/jdor.cls@/usr/lib/ooRexx/jdor.cls"
+           "--preload-file" "$SRC/wasm/web/BSF.CLS@/usr/lib/ooRexx/BSF.CLS"
+           "--preload-file" "$SRC/wasm/web/BSF.CLS@/usr/lib/ooRexx/bsf.cls")
+diff --git a/wasm/tests/dom.rex b/wasm/tests/dom.rex
+new file mode 100644
+index 0000000..02342de
+--- /dev/null
++++ b/wasm/tests/dom.rex
+@@ -0,0 +1,238 @@
++/* dom.rex: tests of ADDRESS DOM (wasm/web/dom.cls), in the browser.         */
++/* Run with the page realm granted and no root to start with:                */
++/*   run option js: {page: true}, dom: {root: null}                          */
++/* Events are made from Rexx (element~click, dispatchEvent), so the test    */
++/* needs nobody at the page.  Prints one line per check; exits 1 if any     */
++/* fails.                                                                    */
++.local~ok = 0; .local~bad = 0
++w = .js~page; doc = w~document
++address dom
++call on error name onError
++call on failure name onFailure
++
++-- no root yet
++call expect "TEXT x", -2, "FAILURE", "no root: RC -2"
++
++-- a panel
++'NEW "Test panel" AS p INTO body'
++call check "NEW: RC 0, INTO the body", rc == 0 & body~isA(.JSObject) & body["className"] == "body"
++panels = doc~querySelectorAll(".orx-dom-panel")
++call check "NEW: a panel on the page", panels~length == 1
++host = panels~item(0)
++call check "NEW: a Shadow DOM with the title", host~shadowRoot~querySelector(".title")~textContent == "Test panel"
++
++-- CREATE does not move the current element; labels
++'CREATE h h2 "A title"'
++'CREATE out p'
++'out: TEXT "hello world"'
++'h: TEXT INTO t'
++call check "CREATE + label by nickname", t == "A title"
++'h2: TEXT INTO t'
++call check "label by selector", t == "A title"
++'"p, h2": TEXT INTO t'
++call check "quoted label (a selector with blanks)", t == "A title"
++'TEXT INTO t'
++call check "CREATE did not move the current element (the body)", t == "A titlehello world"
++address dom "out: TEXT" with output stem o.
++call check "TEXT without INTO: to WITH OUTPUT", o.0 == 1 & o.1 == "hello world"
++call check "the panel's elements are in the Shadow DOM", host~shadowRoot~querySelector("p")~textContent == "hello world"
++call check "and not in the page", doc~body~textContent~pos("hello world") = 0
++
++-- LOCATE, UP, TOP
++'LOCATE out INTO el'
++msg = "from a variable"
++'TEXT FROM msg'
++call check "LOCATE INTO: a .JSObject; TEXT FROM var", el~isA(.JSObject) & el~textContent == msg
++'UP'
++'TEXT INTO t'
++call check "UP: to the parent", t == "A titlefrom a variable"
++call expect "UP", 2, "ERROR", "UP at the root: RC 2, ERROR"
++call expect "LOCATE nosuch", 2, "ERROR", "LOCATE not found: RC 2, ERROR"
++'LOCATE INTO el2 h'
++call check "INTO anywhere: LOCATE INTO el ref", rc == 0 & el2~tagName == "H2"
++'TOP'
++'CREATE INTO e2 tmp span "x"'
++call check "INTO anywhere: CREATE INTO el nick tag text", e2~textContent == "x" & e2~parentElement == body
++'tmp: REMOVE' 
++'LOCATE h'; 'TOP'; 'TEXT INTO t'
++call check "TOP", t~left(7) == "A title"
++
++-- wrong programs: FAILURE
++call expect "zzz: TEXT a", -4, "FAILURE", "unknown label: RC -4"
++call expect '"[[": TEXT a', -3, "FAILURE", "bad selector: RC -3"
++call expect "FROB", -3, "FAILURE", "unknown command: RC -3"
++call expect 'TEXT "unclosed', -3, "FAILURE", "quote not closed: RC -3"
++call expect "TEXT a b", -3, "FAILURE", "two values: RC -3"
++drop nothing
++call expect "TEXT FROM nothing", -3, "FAILURE", "FROM an unset variable: RC -3"
++call expect 'CREATE x "bad tag"', -5, "FAILURE", "a JavaScript error: RC -5"
++
++call expect "h: TEXT INTO a INTO b", -3, "FAILURE", "two INTO: RC -3"
++'out: TEXT "INTO"'
++'out: TEXT INTO t'
++call check "a quoted INTO is a word, not a keyword", t == "INTO"
++
++-- attributes, styles, classes, visibility
++'out: ATTR title "two words"'
++'out: ATTR title INTO v'
++call check "ATTR set and get", v == "two words" & el~getAttribute("title") == "two words"
++'out: ATTR nothing INTO v'
++call check "ATTR absent: empty", v == ""
++'out: STYLE color "rgb(255, 0, 0)"'
++'out: STYLE color INTO v'
++call check "STYLE set and get", v == "rgb(255, 0, 0)"
++'out: CLASS +a b c'
++'out: CLASS -a'
++'out: CLASS INTO v'
++call check "CLASS +, -, plain", v == "b c"
++'out: HIDE'
++call check "HIDE", el~hidden == 1
++'out: SHOW'
++call check "SHOW", el~hidden == 0
++
++-- fields and buttons
++'FIELD name "Your name" INTO f'
++call check "FIELD: an input with a label", f~tagName == "INPUT" & f~parentElement~querySelector("label")~textContent == "Your name"
++'name: VALUE Ana'
++'name: VALUE INTO v'
++call check "VALUE set and get", v == "Ana" & f~value == "Ana"
++'FIELD agree "I agree" CHECKBOX'
++'agree: VALUE 1'
++'agree: VALUE INTO v'
++call check "FIELD CHECKBOX: VALUE 1/0", v == 1
++'FIELD notes "" TEXTAREA INTO ta'
++call check "FIELD TEXTAREA", ta~tagName == "TEXTAREA"
++'name: DISABLE'
++call check "DISABLE", f~disabled == 1
++'name: ENABLE'
++call check "ENABLE", f~disabled == 0
++'BUTTON go "Go on" GO INTO b'
++call check "BUTTON", b~tagName == "BUTTON" & b~textContent == "Go on"
++
++-- events
++b~click
++'WAIT 2 INTO ev'
++call check "BUTTON with NAME: WAIT gets the click", rc == 0 & ev~isA(.DomEvent) & ev~name == "GO" & ev~target == "GO"
++call check ".DomEvent: element and jsEvent", ev~element == b & ev~jsEvent~type == "click"
++errorRaised = 0
++'WAIT 0.2 INTO ev'
++call check "WAIT: time over, RC 1, no ERROR", rc == 1 & errorRaised == 0 & \var("ev")
++'name: ON input TYPED'
++f~value = "Bob"
++f~dispatchEvent(w["Event"]~new("input"))
++'WAIT 2 INTO ev'
++call check "ON input: the event and the value", ev~name == "TYPED" & ev~value == "Bob" & ev~target == "NAME"
++'name: ON enter ENTERED'
++f~dispatchEvent(w["KeyboardEvent"]~new("keydown", w~eval("({key: 'a'})")))
++f~dispatchEvent(w["KeyboardEvent"]~new("keydown", w~eval("({key: 'Enter'})")))
++'WAIT 2 INTO ev'
++call check "ON enter: only the Enter key", ev~name == "ENTERED" & ev~key == "Enter"
++'name: OFF enter'
++f~dispatchEvent(w["KeyboardEvent"]~new("keydown", w~eval("({key: 'Enter'})")))
++'WAIT 0.3'
++call check "OFF", rc == 1
++-- a .js~handler and ADDRESS DOM together
++counter = .Counter~new
++'CREATE other span x INTO o'
++o~addEventListener("click", .js~handler(counter, "hit"))
++o~click; b~click
++'WAIT 2 INTO ev'
++call check "WAIT dispatches .js~handler events meanwhile", ev~name == "GO" & counter~hits == 1
++address dom "WAIT 2" with output stem n.
++b~click
++address dom "WAIT 2" with output stem n.
++call check "WAIT without INTO: the name to WITH OUTPUT", n.0 == 1 & n.1 == "GO"
++
++-- tables and lists
++rows = .array~of(.array~of("City", "Max"), .array~of("Barcelona", 24), .array~of("Girona", 22))
++'TABLE HEADER FROM rows INTO tb'
++call check "TABLE HEADER FROM an Array of Arrays", tb~tHead~rows~length == 1 & tb~tBodies~item(0)~rows~length == 2 & tb~rows~item(2)~cells~item(0)~textContent == "Girona"
++t.1 = "a" || "09"x || "b"; t.2 = "c" || "09"x || "d"; t.0 = 2
++'LOCATE table'
++address dom "TABLE" with input stem t.
++call check "TABLE on a table: rows replaced, WITH INPUT with tabs", tb~rows~length == 2 & tb~tHead == .nil & tb~rows~item(1)~cells~item(1)~textContent == "d"
++'TOP'
++'TABLE FROM t.'
++call check "TABLE FROM a stem", body~querySelectorAll("table")~length == 2
++items = .array~of("one", "two", "three")
++'LIST FROM items INTO ul'
++call check "LIST FROM an Array", ul~tagName == "UL" & ul~children~length == 3 & ul~lastElementChild~textContent == "three"
++
++-- CSS: the panel's own; the page's does not get in
++'CSS ".b { color: rgb(1, 2, 3) }"'
++'out: STYLE color "" '
++'out: STYLE color INTO v'
++call check "CSS: rules for the panel", v == "rgb(1, 2, 3)"
++pageStyle = doc~createElement("style"); pageStyle~textContent = "h2 { color: rgb(9, 9, 9) !important }"
++doc~head~appendChild(pageStyle)
++'h: STYLE color INTO v'
++call check "the page's CSS does not reach the panel", v \== "rgb(9, 9, 9)"
++pageStyle~remove
++
++-- REMOVE, CLEAR
++'out: REMOVE'
++call expect "out: TEXT a", -4, "FAILURE", "REMOVE: the nickname is gone"
++'CREATE box div'
++'box: CREATE - span one'
++'box: CREATE - span two'
++'box: CLEAR'
++'box: TEXT INTO v'
++call check "CLEAR", v == ""
++
++-- the close button: CLOSE, and no root any more
++host~shadowRoot~querySelector(".close")~click
++'WAIT 2 INTO ev'
++call check "the close button: CLOSE event", ev~name == "CLOSE" & ev~target == "P"
++call check "the panel is gone", doc~querySelectorAll(".orx-dom-panel")~length == 0
++call expect "TEXT x", -2, "FAILURE", "after CLOSE: no root"
++
++-- the CLOSE command, two panels, ROOT
++'NEW one AS first'
++'CREATE a p "in one"'
++'NEW two'
++'CREATE b p "in two"'
++call check "two panels", doc~querySelectorAll(".orx-dom-panel")~length == 2
++'ROOT first'
++'TEXT INTO v'
++call check "ROOT nickname: back to a panel", v == "in one"
++'CLOSE'
++call check "CLOSE: the panel goes", doc~querySelectorAll(".orx-dom-panel")~length == 1
++call expect "TEXT x", -2, "FAILURE", "after CLOSE: no root"
++'ROOT PAGE'
++'CREATE pg div "on the page" INTO d'
++call check "ROOT PAGE: on the page itself", d~parentElement == doc~body
++'pg: REMOVE'
++'b: CLOSE'
++
++say
++say .ok "passed," .bad "failed"
++exit .bad > 0
++
++onError:   errorRaised = rc; return
++onFailure: return
++
++expect: procedure expose errorRaised
++  use arg command, wantRc, condition, name
++  errorRaised = ""
++  address dom command with error stem err.
++  ok = rc == wantRc
++  if condition == "ERROR" then ok = ok & errorRaised == wantRc
++  call check name, ok
++  return
++
++check: procedure
++  use arg name, ok
++  if ok then do; .local~ok += 1; say "ok   " name; end
++  else do; .local~bad += 1; say "FAIL " name; end
++  return
++
++::class Counter
++::attribute hits get
++::method init
++  expose hits
++  hits = 0
++::method hit
++  expose hits
++  hits += 1
++
++::requires "dom.cls"
+diff --git a/wasm/tests/web-api.html b/wasm/tests/web-api.html
+index 860e798..6fc868b 100644
+--- a/wasm/tests/web-api.html
++++ b/wasm/tests/web-api.html
+@@ -68,7 +68,7 @@ window.rexxRun = async (source, o = {}) => {
+     }
+   };
+   const run = rexx.run({
+-    args: ['prog.rex'].concat(o.args || []), files, stdin: o.stdin, js: o.js,
++    args: ['prog.rex'].concat(o.args || []), files, stdin: o.stdin, js: o.js, dom: o.dom,
+     onOut: (t, kind) => { out += t; mark(t, kind); }, onErr: (t, kind) => { err += t; mark(t, kind); }, onJdor,
+     onInput: (info) => { asks++; debug.push(!!(info && info.debug));
+       if (inputs.length) run.write(inputs.shift() + '\n'); else run.close(); },
+diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
+index da8cd5e..a6d88cf 100755
+--- a/wasm/tests/web-api.py
++++ b/wasm/tests/web-api.py
+@@ -171,6 +171,17 @@ CASES = [
+   # ADDRESS FETCH (wasm/web/fetch.cls over cmdhandler.cls and js.cls): the portable test
+   ("fetch", open(f"{SRC}/wasm/tests/fetch.rex").read(), {"js": {"worker": True}, "args": ["http://127.0.0.1:8124"]},
+      lambda r: "44 passed, 0 failed" in r["out"] and r["rc"] == 0),
++  # ADDRESS DOM (wasm/web/dom.cls over cmdhandler.cls and js.cls): the portable test
++  ("dom", open(f"{SRC}/wasm/tests/dom.rex").read(), {"js": {"page": True}, "dom": {"root": None}},
++     lambda r: "64 passed, 0 failed" in r["out"] and r["rc"] == 0),
++  ("dom no page", 'call on failure name f; address dom "TEXT x"; say rc; exit; f: return\n::requires "dom.cls"', {},
++     lambda r: r["out"] == "-1\n" and "js: {page: true}" in r["err"]),
++  ("dom default root", 'address dom "CREATE x span hi INTO s"; say s~parentElement~tagName; address dom "x: REMOVE"\n'
++                       '::requires "dom.cls"', {"js": {"page": True}},
++     lambda r: r["out"] == "BODY\n"),
++  ("dom root option", 'address dom "CREATE x span hi INTO s"; say s~parentElement~id; address dom "x: REMOVE"\n'
++                      '::requires "dom.cls"', {"js": {"page": True}, "dom": {"root": "#log"}},
++     lambda r: r["out"] == "log\n"),
+   # .JSObject: JavaScript objects as Rexx objects (wasm/web-js.cpp, wasm/js-bridge.js, wasm/web/js.cls)
+   ("js not granted", 'say .js~Math~max(1, 2)\n::requires "js.cls"', {},
+      lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
+diff --git a/wasm/web/dom.cls b/wasm/web/dom.cls
+new file mode 100644
+index 0000000..9166315
+--- /dev/null
++++ b/wasm/web/dom.cls
+@@ -0,0 +1,1032 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:          */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*
++ * dom.cls: ADDRESS DOM, the page (HTML) from classic Rexx (ooRexx/WASM in the
++ * browser).  Written in Rexx on top of cmdhandler.cls (a command environment
++ * written in Rexx) and js.cls (the page's DOM as .JSObjects); commands are
++ * split by commandwords.cls, as FETCH's.
++ *
++ *    ::requires "dom.cls"
++ *    address dom
++ *    'NEW "Hello"'                         -- a panel, where the rest goes
++ *    'FIELD name "Your name"'
++ *    'BUTTON ok "Say hello" OK'            -- a click is the event OK
++ *    'CREATE answer p'
++ *    'WAIT INTO ev'                        -- until something happens
++ *    'name: VALUE INTO who'                -- the field's value
++ *    'answer: TEXT FROM msg'               -- msg: a variable
++ *
++ * Commands: words separated by blanks, case does not matter; a word in
++ * quotes ("..." or '...', the quote doubled inside) may hold blanks.  Where
++ * a value is expected, FROM name takes it from the variable name.  A value a
++ * command gives goes to the variable named by INTO name, anywhere after the
++ * command's name, as the most natural ooRexx value (a string, a .JSObject for
++ * an element, a .DomEvent); without INTO it is written to WITH OUTPUT, or to
++ * the console.  (The words INTO and FROM are keywords only unquoted.)
++ *
++ * Where: everything happens inside the current ROOT (selectors only find
++ * what is in it).  The page that runs ooRexx chooses the first one (run
++ * option dom: {root: "#app"}; the page's body by default; none at all in the
++ * playground); NEW makes a panel (a small floating window, in a Shadow DOM:
++ * the page's styles do not reach it, its own do not leak) and makes it the
++ * root; ROOT PAGE goes back to the whole page.
++ *
++ * Which element: like XEDIT, there is a CURRENT ELEMENT, and commands act on
++ * it.  LOCATE moves it, UP and TOP too; NEW and ROOT put it at the root;
++ * CREATE, FIELD, BUTTON, TABLE and LIST add to it without moving it (so a
++ * panel is filled without going up and down).  For a one-off target, a
++ * LABEL before the command:
++ *
++ *    'out: TEXT hola'              an element's nickname (CREATE gives them)
++ *    '#total: TEXT 42'             or a CSS selector
++ *    '"#form input": VALUE ""'     in quotes if it has blanks
++ *
++ * The label is the first word, up to its last ":" (so li:first-child: TEXT x
++ * works); a nickname is looked up first, then a selector.  A label never
++ * moves the current element.  Careful: the label goes INSIDE the quotes; in
++ * out: 'TEXT hola' the out: is a Rexx label, and the command goes to the
++ * current element.
++ *
++ *   NEW [title] [AS nickname] [INTO el]   a panel (a nickname for ROOT)
++ *   ROOT PAGE | ref                       the root: the whole page, or an
++ *                                         element (a panel by its nickname)
++ *   LOCATE ref [INTO el]                  the current element (RC 2: none)
++ *   UP, TOP                               to the parent (RC 2 at the root);
++ *                                         to the root
++ *   CLOSE                                 the panel of the element goes away
++ *   CREATE nickname tag [text] [INTO el]  a new element, the target's last
++ *                                         child ("-": no nickname)
++ *   REMOVE, CLEAR                         the element; its children
++ *   TEXT [value] [INTO var]               the text: set, or get
++ *   VALUE [value] [INTO var]              a field's value (a checkbox: 1/0)
++ *   ATTR name [value] [INTO var]          an attribute
++ *   STYLE property [value] [INTO var]     a CSS property (CSS names:
++ *                                         background-color); get: as shown
++ *   CLASS [+a] [-b] [c] [INTO var]        add (+ or nothing), remove (-)
++ *                                         classes; get: all of them
++ *   SHOW, HIDE, ENABLE, DISABLE, FOCUS
++ *   FIELD nickname [label] [type]         a labelled input; type TEXT (the
++ *                                         default), PASSWORD, NUMBER, EMAIL,
++ *                                         DATE, CHECKBOX or TEXTAREA
++ *   BUTTON nickname text [NAME]           a button; with NAME, its clicks
++ *                                         are the event NAME (ON click NAME)
++ *   TABLE [HEADER] [FROM var]             a table (on a table element:
++ *                                         its rows replaced) from an Array
++ *                                         of Arrays, or of lines with tabs
++ *                                         between columns, or a stem, or
++ *                                         the WITH INPUT lines; HEADER: the
++ *                                         first row is the header
++ *   LIST [FROM var]                       a list (ul), the same way
++ *   CSS [rules]                           CSS rules for the root's panel
++ *                                         (or the page): a value, or the
++ *                                         WITH INPUT lines; the panel's own
++ *                                         look comes first, so a CLASS can
++ *                                         be given a look
++ *   ON event NAME [LATEST] [PREVENT]      the element's event (click, input,
++ *      [STOP]                             change, submit, keydown, ...; ENTER:
++ *                                         Enter in a field) is the event NAME
++ *                                         for WAIT; LATEST keeps only the
++ *                                         newest waiting (mousemove), PREVENT
++ *                                         and STOP: preventDefault and
++ *                                         stopPropagation (a submit always
++ *                                         prevents)
++ *   OFF event                             no more
++ *   WAIT [seconds] [INTO ev]              the next event, a .DomEvent: name,
++ *                                         target (the element's nickname, in
++ *                                         upper case, or .nil), value, key,
++ *                                         x, y, element
++ *                                         and jsEvent (.JSObjects); a
++ *                                         panel's close button is the event
++ *                                         CLOSE.  RC 1 when time is over
++ *
++ * In the panels, a built-in style makes headings, paragraphs, fields,
++ * buttons, tables and lists look right with no CSS at all, light or dark
++ * as the system; class "row" puts what is in an element side by side.
++ *
++ * Events are not callbacks: as with XEDIT's READ or ISPF's DISPLAY, the
++ * program builds, WAITs, looks at the event and acts.  WAIT takes the
++ * events of .js~handler too, and sends them their message (as .js~eventLoop
++ * would) while it waits for its own, so both kinds of handlers coexist.
++ *
++ * RC: 0 when all went well.  Positive, and the ERROR condition, when the
++ * command was right but the outcome is not the expected one: 2 LOCATE found
++ * nothing, UP at the root.  (WAIT's 1, time over, raises nothing.)
++ * Negative, and the FAILURE condition, when the program is wrong: -1 no page
++ * (the page did not grant it: js: {page: true}, or not in a browser); -2 no
++ * root or no current element (NEW, or ROOT PAGE, first); -3 an unknown
++ * command or wrong arguments; -4 a label or reference that names no element;
++ * -5 a JavaScript error.  The reason goes to WITH ERROR or the console.
++ *
++ * In the browser only: the commands work on the page's DOM through the
++ * page realm, which the page that runs ooRexx must grant (js: {page: true}).
++ * Panels are made with a small JavaScript function (resource panel.js
++ * below), built with the page's Function constructor.
++ */
++.CommandHandler~register("DOM", .DomHandler~new)
++
++::requires "cmdhandler.cls"
++::requires "commandwords.cls"
++::requires "js.cls"
++
++
++::class DomHandler public subclass CommandHandler
++
++::method init
++  expose ready doc root current nicks bindings pending panels makePanel
++  ready = .false
++  root = .nil; current = .nil
++  nicks = .directory~new          -- NICKNAME -> element
++  bindings = .array~new           -- .DomBinding for ON
++  pending = .queue~new            -- events of ours dispatched by someone else
++  panels = 0
++  makePanel = .nil
++
++-- the page, once: .false (and a message) if there is none
++::method setup private
++  expose ready doc root current
++  use strict arg context
++  if ready then return .true
++  signal on syntax name noPage
++  doc = .js~page~document
++  signal off syntax
++  ready = .true
++  which = value("ORX_DOM_ROOT", , "ENVIRONMENT")
++  if which == "none" then return .true
++  if which \== "" then root = doc~querySelector(which)
++  if root == .nil then root = doc~body
++  current = root
++  return .true
++noPage:
++  context~error("DOM: there is no page (the page must grant it: js: {page: true})")
++  return .false
++
++::method command
++  expose root current
++  use strict arg command, context
++  if \self~setup(context) then return context~raiseFailure(-1)
++  -- a label: 'ref: CMD ...'
++  label = .nil
++  cmd = command~strip("L")
++  q = cmd~left(1)
++  if q == '"' | q == "'" then do
++    -- the label is the first word if a ":" follows its closing quote
++    k = self~quotedEnd(cmd)
++    if k > 0, cmd~subchar(k + 1) == ":" then do
++      label = cmd~substr(2, k - 2)~changeStr(q || q, q)
++      cmd = cmd~substr(k + 2)
++    end
++  end
++  else do
++    first = cmd~word(1)
++    p = first~lastPos(":")
++    if p > 1 then do
++      label = first~left(p - 1)
++      cmd = first~substr(p + 1) cmd~subword(2)
++    end
++  end
++  words = .CommandWords~new(cmd)
++  if words~error \== .nil then return self~bad(context, words~error)
++  verb = words~take
++  if verb == .nil then return self~bad(context, "a command is needed")
++  verb = verb~upper
++  into = words~takeInto
++  target = .nil
++  if label \== .nil then do
++    if root == .nil then return self~noRoot(context)
++    target = self~find(label, context)
++    if target == "" then return context~raiseFailure(-3)      -- a bad selector
++    if target == .nil then do
++      context~error("DOM: no element" label)
++      return context~raiseFailure(-4)
++    end
++  end
++  signal on syntax name jsError
++  select
++    when verb == "NEW"    then return self~new(words, into, context)
++    when verb == "ROOT"   then return self~setRoot(words, into, context)
++    when verb == "LOCATE" then return self~locate(words, into, context)
++    when verb == "TOP"    then return self~top(words, into, context)
++    when verb == "WAIT"   then return self~wait(words, into, context)
++    when verb == "CSS"    then return self~css(words, into, context)
++    otherwise nop
++  end
++  if target == .nil then target = current
++  if target == .nil then return self~noRoot(context)
++  select
++    when verb == "UP"      then return self~up(words, into, context)
++    when verb == "CLOSE"   then return self~close(target, words, into, context)
++    when verb == "CREATE"  then return self~create(target, words, into, context)
++    when verb == "REMOVE"  then return self~remove(target, words, into, context)
++    when verb == "CLEAR"   then return self~clear(target, words, into, context)
++    when verb == "TEXT"    then return self~property(target, "textContent", words, into, context)
++    when verb == "VALUE"   then return self~value(target, words, into, context)
++    when verb == "ATTR"    then return self~attr(target, words, into, context)
++    when verb == "STYLE"   then return self~style(target, words, into, context)
++    when verb == "CLASS"   then return self~classes(target, words, into, context)
++    when verb == "SHOW"    then return self~flag(target, "hidden", .false, words, into, context)
++    when verb == "HIDE"    then return self~flag(target, "hidden", .true, words, into, context)
++    when verb == "ENABLE"  then return self~flag(target, "disabled", .false, words, into, context)
++    when verb == "DISABLE" then return self~flag(target, "disabled", .true, words, into, context)
++    when verb == "FOCUS"   then return self~focus(target, words, into, context)
++    when verb == "FIELD"   then return self~field(target, words, into, context)
++    when verb == "BUTTON"  then return self~button(target, words, into, context)
++    when verb == "TABLE"   then return self~table(target, words, into, context)
++    when verb == "LIST"    then return self~list(target, words, into, context)
++    when verb == "ON"      then return self~on(target, words, into, context)
++    when verb == "OFF"     then return self~off(target, words, into, context)
++    otherwise return self~bad(context, "unknown command" verb)
++  end
++jsError:
++  reason = condition("O")~message
++  parse var reason "JavaScript error: " js
++  if js \== "" then reason = js
++  context~error("DOM" verb":" reason)
++  return context~raiseFailure(-5)
++
++-- where the quoted word that starts s ends (0: not closed)
++::method quotedEnd private
++  use strict arg s
++  q = s~left(1); j = 2
++  do forever
++    k = s~pos(q, j)
++    if k = 0 then return 0
++    if s~subchar(k + 1) \== q then return k
++    j = k + 2
++  end
++
++-- ---- helpers ---------------------------------------------------------------
++
++::method bad private
++  use strict arg context, why
++  context~error("DOM:" why)
++  return context~raiseFailure(-3)
++
++::method noRoot private
++  use strict arg context
++  context~error("DOM: no root and no current element: NEW, or ROOT PAGE, first")
++  return context~raiseFailure(-2)
++
++-- no more words expected
++::method noMore private
++  use strict arg words, context, usage
++  if words~items = 0 then return .true
++  context~error("DOM: unexpected" words~rest~makeString("L", " ")"; usage:" usage)
++  return .false
++
++-- a value for INTO var, or to the output
++::method give private
++  use strict arg context, into, value
++  if into == .nil then do
++    context~output(value~string)
++    return 0
++  end
++  if into~right(1) == "." then do              -- a stem: lines, as EXECIO
++    if value~isA(.String) then lines = value~makeArray("0a"x)
++    else lines = value~makeArray
++    context~dropVar(into)
++    do i = 1 to lines~items
++      context~setVar(into || i, lines[i])
++    end
++    context~setVar(into || "0", lines~items)
++    return 0
++  end
++  context~setVar(into, value)
++  return 0
++
++-- an element by nickname, or by selector in the root; .nil: none; "": a bad
++-- selector (with a message)
++::method find private
++  expose root nicks
++  use strict arg ref, context
++  el = nicks[ref~upper]
++  if el \== .nil then do
++    if el~isConnected then return el
++    nicks~remove(ref~upper)                     -- it was removed meanwhile
++  end
++  if root == .nil then return .nil
++  signal on syntax name badSelector
++  return root~querySelector(ref)
++badSelector:
++  context~error("DOM: not a nickname, and not a CSS selector:" ref)
++  return ""
++
++-- the nickname of an element, or .nil
++::method nickOf private
++  expose nicks
++  use strict arg el
++  do with index name item e over nicks
++    if e == el then return name
++  end
++  return .nil
++
++-- the root of the element's panel or page: where its CSS goes
++::method styleFor private
++  expose doc
++  use strict arg el
++  node = el~getRootNode
++  if node \== doc then return node~querySelector("style.user")
++  style = doc~getElementById("orx-dom-css")
++  if style == .nil then do
++    style = doc~createElement("style")
++    style~id = "orx-dom-css"
++    doc~head~appendChild(style)
++  end
++  return style
++
++-- the panel (host element) an element is in, or .nil
++::method panelOf private
++  expose doc
++  use strict arg el
++  node = el~getRootNode
++  if node == doc then return .nil
++  if node~hasProperty("host") then return node~host
++  return .nil
++
++-- a value from a word or FROM var: .nil (and a message) when the variable has none
++::method takeValue private
++  use strict arg words, context
++  fromVar = words~isKeyword(1, "FROM")
++  value = words~takeValue(context)
++  if value == .nil & fromVar then context~error("DOM: FROM: the variable has no value")
++  return value
++
++-- ---- root and navigation ---------------------------------------------------
++
++::method new private
++  expose doc root current nicks panels makePanel
++  use strict arg words, into, context
++  title = ""
++  nick = .nil
++  if words~items > 0 & \words~isKeyword(1, "AS") then do
++    title = self~takeValue(words, context)
++    if title == .nil then return context~raiseFailure(-3)
++  end
++  if words~isKeyword(1, "AS") then do
++    words~take
++    nick = words~take
++    if nick == .nil then return self~bad(context, "NEW: AS needs a nickname")
++    nick = nick~upper
++  end
++  if \self~noMore(words, context, "NEW [title] [AS nickname] [INTO el]") then return context~raiseFailure(-3)
++  if makePanel == .nil then do
++    makePanel = .js~page~Function~new("doc", "title", "closeFn", "css", "n", ,
++      .resources["PANEL.JS"]~makeString("L", "0a"x))
++  end
++  binding = .DomBinding~new(self, "CLOSE", nick, .nil, "close")
++  handler = .js~handler(binding, "FIRE")
++  binding~handler = handler
++  panels += 1
++  made = makePanel~invoke(.nil, doc, title, handler, ,
++    .resources["PANEL.CSS"]~makeString("L", "0a"x), .js~num(panels - 1))
++  body = made["body"]
++  binding~element = made["host"]
++  if nick \== .nil then nicks[nick~upper] = body
++  root = body; current = body
++  if into \== .nil then return self~give(context, into, body)
++  return 0
++
++::method setRoot private
++  expose doc root current
++  use strict arg words, into, context
++  ref = words~take
++  if ref == .nil | words~items > 0 | into \== .nil then return self~bad(context, "ROOT PAGE | ref")
++  if ref~upper == "PAGE" & \words~quoted(1) then el = doc~body
++  else do
++    el = self~find(ref, context)
++    if el == "" then return context~raiseFailure(-3)
++    if el == .nil then do
++      context~error("DOM: no element" ref)
++      return context~raiseFailure(-4)
++    end
++  end
++  root = el; current = el
++  return 0
++
++::method locate private
++  expose root current
++  use strict arg words, into, context
++  ref = words~take
++  if ref == .nil | words~items > 0 then return self~bad(context, "LOCATE ref [INTO el]")
++  if root == .nil then return self~noRoot(context)
++  el = self~find(ref, context)
++  if el == "" then return context~raiseFailure(-3)
++  if el == .nil then return context~raiseError(2)
++  current = el
++  if into \== .nil then return self~give(context, into, el)
++  return 0
++
++::method up private
++  expose root current
++  use strict arg words, into, context
++  if words~items > 0 | into \== .nil then return self~bad(context, "UP takes no arguments")
++  if current == root then return context~raiseError(2)
++  current = current~parentElement
++  return 0
++
++::method top private
++  expose root current
++  use strict arg words, into, context
++  if words~items > 0 | into \== .nil then return self~bad(context, "TOP takes no arguments")
++  if root == .nil then return self~noRoot(context)
++  current = root
++  return 0
++
++::method close private
++  expose root current
++  use strict arg target, words, into, context
++  if words~items > 0 | into \== .nil then return self~bad(context, "CLOSE takes no arguments")
++  host = self~panelOf(target)
++  if host == .nil then return self~bad(context, "CLOSE: the element is not in a panel")
++  if root \== .nil then if self~panelOf(root) == host then do
++    root = .nil; current = .nil
++  end
++  host~remove
++  return 0
++
++-- ---- elements ---------------------------------------------------------------
++
++::method create private
++  expose doc nicks
++  use strict arg target, words, into, context
++  nick = words~take; tag = words~take
++  if nick == .nil | tag == .nil then return self~bad(context, "CREATE nickname tag [text] [INTO el]")
++  text = .nil
++  if words~items > 0 then do
++    text = self~takeValue(words, context)
++    if text == .nil then return context~raiseFailure(-3)
++  end
++  if \self~noMore(words, context, "CREATE nickname tag [text] [INTO el]") then return context~raiseFailure(-3)
++  el = doc~createElement(tag)
++  if text \== .nil then el["textContent"] = text
++  target~appendChild(el)
++  if nick \== "-" then nicks[nick~upper] = el
++  if into \== .nil then return self~give(context, into, el)
++  return 0
++
++::method remove private
++  expose root current
++  use strict arg target, words, into, context
++  if words~items > 0 | into \== .nil then return self~bad(context, "REMOVE takes no arguments")
++  if target == root then return self~bad(context, "REMOVE: not the root (CLOSE closes a panel)")
++  if target~contains(current) then current = target~parentElement
++  target~remove
++  return 0
++
++::method clear private
++  expose current
++  use strict arg target, words, into, context
++  if words~items > 0 | into \== .nil then return self~bad(context, "CLEAR takes no arguments")
++  if target \== current & target~contains(current) then current = target
++  target~replaceChildren
++  return 0
++
++-- TEXT: textContent, set or got
++::method property private
++  use strict arg target, name, words, into, context
++  if words~items = 0 then return self~give(context, into, target[name])
++  if into \== .nil then return self~bad(context, "a value, or INTO, not both")
++  value = self~takeValue(words, context)
++  if value == .nil then return context~raiseFailure(-3)
++  if \self~noMore(words, context, "a single value (in quotes if it has blanks)") then return context~raiseFailure(-3)
++  target[name] = value
++  return 0
++
++-- VALUE: a field's value; a checkbox's or radio's is its checked state, 1/0
++::method value private
++  use strict arg target, words, into, context
++  check = .false
++  if \missing(target["type"]) then check = wordPos(target["type"], "checkbox radio") > 0
++  if words~items = 0 then do
++    if check then return self~give(context, into, target["checked"])
++    value = target["value"]
++    if missing(value) then value = ""
++    return self~give(context, into, value)
++  end
++  if into \== .nil then return self~bad(context, "a value, or INTO, not both")
++  value = self~takeValue(words, context)
++  if value == .nil then return context~raiseFailure(-3)
++  if \self~noMore(words, context, "VALUE [value] [INTO var]") then return context~raiseFailure(-3)
++  if check then target["checked"] = .js~bool(value)
++  else target["value"] = value
++  return 0
++
++::method attr private
++  use strict arg target, words, into, context
++  name = words~take
++  if name == .nil then return self~bad(context, "ATTR name [value] [INTO var]")
++  if words~items = 0 then do
++    value = target~getAttribute(name)
++    if value == .nil then value = ""
++    return self~give(context, into, value)
++  end
++  if into \== .nil then return self~bad(context, "a value, or INTO, not both")
++  value = self~takeValue(words, context)
++  if value == .nil then return context~raiseFailure(-3)
++  if \self~noMore(words, context, "ATTR name [value] [INTO var]") then return context~raiseFailure(-3)
++  target~setAttribute(name, value)
++  return 0
++
++::method style private
++  use strict arg target, words, into, context
++  name = words~take
++  if name == .nil then return self~bad(context, "STYLE property [value] [INTO var]")
++  if words~items = 0 then
++    return self~give(context, into, .js~page~getComputedStyle(target)~getPropertyValue(name))
++  if into \== .nil then return self~bad(context, "a value, or INTO, not both")
++  value = self~takeValue(words, context)
++  if value == .nil then return context~raiseFailure(-3)
++  if \self~noMore(words, context, "STYLE property [value] [INTO var]") then return context~raiseFailure(-3)
++  target~style~setProperty(name, value)
++  return 0
++
++::method classes private
++  use strict arg target, words, into, context
++  if words~items = 0 then return self~give(context, into, target["className"])
++  if into \== .nil then return self~bad(context, "CLASS changes, or INTO, not both")
++  list = target~classList
++  do word over words~rest
++    select
++      when word~left(1) == "-" then list~remove(word~substr(2))
++      when word~left(1) == "+" then list~add(word~substr(2))
++      otherwise list~add(word)
++    end
++  end
++  return 0
++
++::method flag private
++  use strict arg target, name, on, words, into, context
++  if words~items > 0 | into \== .nil then return self~bad(context, "no arguments")
++  target[name] = .js~bool(on)
++  return 0
++
++::method focus private
++  use strict arg target, words, into, context
++  if words~items > 0 | into \== .nil then return self~bad(context, "FOCUS takes no arguments")
++  target~focus
++  return 0
++
++-- ---- higher level ----------------------------------------------------------
++
++::method field private
++  expose doc nicks current
++  use strict arg target, words, into, context
++  usage = "FIELD nickname [label] [type] [INTO el]"
++  nick = words~take
++  if nick == .nil then return self~bad(context, usage)
++  label = .nil; type = "TEXT"
++  types = "TEXT PASSWORD NUMBER EMAIL DATE CHECKBOX TEXTAREA"
++  if words~items > 0 then do
++    label = self~takeValue(words, context)
++    if label == .nil then return context~raiseFailure(-3)
++  end
++  if words~items > 0 then do
++    type = words~take~upper
++    if wordPos(type, types) = 0 then return self~bad(context, "FIELD: type one of" types)
++  end
++  if \self~noMore(words, context, usage) then return context~raiseFailure(-3)
++  box = doc~createElement("div")
++  box~className = "field"
++  if type == "TEXTAREA" then input = doc~createElement("textarea")
++  else do
++    input = doc~createElement("input")
++    input~type = type~lower
++  end
++  id = "orx-f-"nick~lower~changeStr(" ", "-")
++  input~id = id
++  if label \== .nil then do
++    lab = doc~createElement("label")
++    lab["textContent"] = label
++    lab~htmlFor = id
++  end
++  if type == "CHECKBOX" then do
++    box~classList~add("check")
++    box~appendChild(input)
++    if label \== .nil then box~appendChild(lab)
++  end
++  else do
++    if label \== .nil then box~appendChild(lab)
++    box~appendChild(input)
++  end
++  target~appendChild(box)
++  nicks[nick~upper] = input
++  if into \== .nil then return self~give(context, into, input)
++  return 0
++
++::method button private
++  expose doc nicks
++  use strict arg target, words, into, context
++  usage = "BUTTON nickname text [NAME] [INTO el]"
++  nick = words~take
++  if nick == .nil | words~items = 0 then return self~bad(context, usage)
++  text = self~takeValue(words, context)
++  if text == .nil then return context~raiseFailure(-3)
++  name = words~take
++  if \self~noMore(words, context, usage) then return context~raiseFailure(-3)
++  el = doc~createElement("button")
++  el~type = "button"
++  el["textContent"] = text
++  target~appendChild(el)
++  if nick \== "-" then nicks[nick~upper] = el
++  if name \== .nil then self~listen(el, "click", name, "")
++  if into \== .nil then return self~give(context, into, el)
++  return 0
++
++-- rows for TABLE / LIST: from FROM var or WITH INPUT; .nil (with a message) if none
++::method rows private
++  use strict arg words, context, cells
++  if words~items > 0 then do
++    if \words~isKeyword(1, "FROM") | words~items < 2 then signal wrong
++    words~take
++    name = words~take
++    data = context~getVar(name)
++    if data == .nil then do
++      context~error("DOM: FROM" name": the variable has no value")
++      return .nil
++    end
++    if words~items > 0 then signal wrong
++  end
++  else if context~isRedirected("Input") then data = context~lines
++  else do
++    context~error("DOM: rows are needed: FROM var, or WITH INPUT")
++    return .nil
++  end
++  if data~isA(.Stem) then do
++    lines = .array~new
++    do i = 1 to data[0]
++      lines~append(data[i])
++    end
++    data = lines
++  end
++  else if data~isA(.String) then data = data~makeArray("0a"x)
++  else data = data~makeArray
++  rows = .array~new
++  do row over data
++    if \cells then rows~append(row~string)
++    else if row~isA(.String) then rows~append(row~makeArray("09"x))
++    else rows~append(row~makeArray)
++  end
++  return rows
++wrong:
++  context~error("DOM: FROM var, or the WITH INPUT lines")
++  return .nil
++
++::method table private
++  expose doc
++  use strict arg target, words, into, context
++  header = .false
++  if words~isKeyword(1, "HEADER") then do
++    words~take; header = .true
++  end
++  rows = self~rows(words, context, .true)
++  if rows == .nil then return context~raiseFailure(-3)
++  if target~tagName == "TABLE" then do
++    table = target
++    table~replaceChildren
++  end
++  else do
++    table = doc~createElement("table")
++    target~appendChild(table)
++  end
++  first = 1
++  if header & rows~items > 0 then do
++    head = table~createTHead~insertRow
++    do cell over rows[1]
++      th = doc~createElement("th")
++      th["textContent"] = cell~string
++      head~appendChild(th)
++    end
++    first = 2
++  end
++  body = table~createTBody
++  do i = first to rows~items
++    tr = body~insertRow
++    do cell over rows[i]
++      td = tr~insertCell
++      td["textContent"] = cell~string
++    end
++  end
++  if into \== .nil then return self~give(context, into, table)
++  return 0
++
++::method list private
++  expose doc
++  use strict arg target, words, into, context
++  rows = self~rows(words, context, .false)
++  if rows == .nil then return context~raiseFailure(-3)
++  if wordPos(target~tagName, "UL OL") > 0 then do
++    list = target
++    list~replaceChildren
++  end
++  else do
++    list = doc~createElement("ul")
++    target~appendChild(list)
++  end
++  do row over rows
++    li = doc~createElement("li")
++    li["textContent"] = row
++    list~appendChild(li)
++  end
++  if into \== .nil then return self~give(context, into, list)
++  return 0
++
++::method css private
++  expose root current
++  use strict arg words, into, context
++  if into \== .nil then return self~bad(context, "CSS [rules]")
++  if root == .nil then return self~noRoot(context)
++  if words~items > 0 then do
++    rules = self~takeValue(words, context)
++    if rules == .nil then return context~raiseFailure(-3)
++    if \self~noMore(words, context, "CSS [rules] (in quotes, or FROM var)") then return context~raiseFailure(-3)
++  end
++  else if context~isRedirected("Input") then rules = context~lines~makeString("L", "0a"x)
++  else return self~bad(context, "CSS: rules are needed (a value, or WITH INPUT)")
++  style = self~styleFor(root)
++  style["textContent"] = style["textContent"] || "0a"x || rules
++  return 0
++
++-- ---- events ----------------------------------------------------------------
++
++::method on private
++  use strict arg target, words, into, context
++  usage = "ON event NAME [LATEST] [PREVENT] [STOP]"
++  type = words~take; name = words~take
++  if type == .nil | name == .nil | into \== .nil then return self~bad(context, usage)
++  options = ""
++  do word over words~rest
++    select case word~upper
++      when "LATEST"  then options ||= " latest"
++      when "PREVENT" then options ||= " preventDefault"
++      when "STOP"    then options ||= " stopPropagation"
++      otherwise return self~bad(context, usage)
++    end
++  end
++  self~listen(target, type~lower, name, options)
++  return 0
++
++-- (a new ON for the same element and event replaces the old one)
++::method listen private
++  expose bindings
++  use strict arg el, type, name, options
++  self~unlisten(el, type)
++  jsType = type
++  if type == "enter" then jsType = "keydown"
++  if type == "submit" then options ||= " preventDefault"
++  binding = .DomBinding~new(self, name~upper, self~nickOf(el), el, type)
++  binding~handler = .js~handler(binding, "FIRE", options)
++  el~addEventListener(jsType, binding~handler)
++  bindings~append(binding)
++
++::method unlisten private
++  expose bindings
++  use strict arg el, type
++  do i = bindings~items to 1 by -1
++    b = bindings[i]
++    if b~type == type, b~element == el then do
++      jsType = type
++      if type == "enter" then jsType = "keydown"
++      el~removeEventListener(jsType, b~handler)
++      b~handler~release
++      bindings~delete(i)
++    end
++  end
++
++::method off private
++  use strict arg target, words, into, context
++  type = words~take
++  if type == .nil | words~items > 0 | into \== .nil then return self~bad(context, "OFF event")
++  self~unlisten(target, type~lower)
++  return 0
++
++-- an event of ours dispatched by someone else's loop: kept for WAIT
++::method queueEvent
++  expose pending
++  use strict arg binding, arguments
++  pending~queue(.array~of(binding, arguments))
++
++::method wait private
++  expose pending
++  use strict arg words, into, context
++  seconds = -1
++  if words~items > 0 then do
++    seconds = words~take
++    if \seconds~dataType("N") then return self~bad(context, "WAIT [seconds] [INTO ev]")
++    if seconds < 0 then return self~bad(context, "WAIT [seconds] [INTO ev]")
++  end
++  if words~items > 0 then return self~bad(context, "WAIT [seconds] [INTO ev]")
++  start = .dateTime~new
++  do forever
++    if pending~items > 0 then do
++      item = pending~pull
++      binding = item[1]; arguments = item[2]
++    end
++    else do
++      if seconds < 0 then e = .js~nextEvent
++      else do
++        left = seconds - (.dateTime~new - start)~totalSeconds
++        if left <= 0 then e = .nil
++        else e = .js~nextEvent(left)
++      end
++      if e == .nil then do
++        if into \== .nil then context~dropVar(into)
++        return 1
++      end
++      binding = e~target
++      arguments = e~arguments
++      if \binding~isA(.DomBinding) then do       -- another kind of handler
++        e~dispatch
++        iterate
++      end
++      if binding~owner \== self then do
++        e~dispatch                               -- another DOM handler's
++        iterate
++      end
++    end
++    jsEvent = .nil
++    if arguments~items > 0 then jsEvent = arguments[1]
++    if binding~type == "enter" then do
++      if missing(jsEvent) then iterate
++      if jsEvent["key"] \== "Enter" then iterate
++    end
++    if binding~type == "close" then self~closed(binding)
++    ev = .DomEvent~new(binding~name, binding~nick, binding~element, jsEvent)
++    if into == .nil then return self~give(context, into, ev~name)
++    return self~give(context, into, ev)
++  end
++
++-- a panel was closed by its close button: forget it
++::method closed private
++  expose root current
++  use strict arg binding
++  host = binding~element
++  if root \== .nil then if self~panelOf(root) == host then do
++    root = .nil; current = .nil
++  end
++  binding~handler~release
++
++-- the panel's look
++::resource panel.css
++:host { all: initial; --bg: #ffffff; --ink: #1d2330; --muted: #5d6577; --line: #d5dae3;
++        --accent: #2b5797; --on-accent: #ffffff; --zebra: #f3f5f9; --field: #ffffff; }
++@media (prefers-color-scheme: dark) {
++  :host { --bg: #1c2028; --ink: #e6e9ef; --muted: #9aa3b5; --line: #3a4150;
++          --accent: #7aa7e8; --on-accent: #0f1420; --zebra: #232833; --field: #14171d; }
++}
++[hidden] { display: none !important; }
++.frame { font: 14px/1.45 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
++         color: var(--ink); background: var(--bg); border: 1px solid var(--line);
++         border-radius: 10px; box-shadow: 0 8px 28px rgba(0, 0, 0, .22);
++         min-width: 240px; max-width: min(640px, 92vw); max-height: 80vh;
++         display: flex; flex-direction: column; overflow: hidden; }
++.bar { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 12px;
++       background: var(--zebra); border-bottom: 1px solid var(--line);
++       cursor: move; user-select: none; touch-action: none; }
++.title { flex: 1; font-weight: 600; font-size: 13px; white-space: nowrap;
++         overflow: hidden; text-overflow: ellipsis; }
++.bar .close { border: 0; background: transparent; color: var(--muted); font-size: 18px;
++              line-height: 1; padding: 2px 6px; border-radius: 4px; cursor: pointer; }
++.bar .close:hover { background: var(--line); color: var(--ink); filter: none; }
++.body { padding: 12px 14px 14px; overflow: auto; display: flex; flex-direction: column;
++        align-items: flex-start; gap: 10px; }
++.body > :is(div, p, table, ul, ol, form, .field, textarea) { align-self: stretch; }
++.body > :is(p, h1, h2, h3, h4, table, ul, ol):empty { display: none; }
++h1, h2, h3, h4 { margin: 0; line-height: 1.25; }
++h1 { font-size: 20px; } h2 { font-size: 17px; } h3 { font-size: 15px; } h4 { font-size: 14px; }
++p { margin: 0; }
++.row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
++.field { display: flex; flex-direction: column; gap: 3px; }
++.field label { font-size: 12px; font-weight: 500; color: var(--muted); }
++.field.check { flex-direction: row; align-items: center; gap: 8px; }
++.field.check label { font-size: 14px; color: var(--ink); }
++input, select, textarea { font: inherit; color: var(--ink); background: var(--field);
++  border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; min-width: 0; }
++input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); }
++textarea { min-height: 4.5em; resize: vertical; }
++:is(input, select, textarea):focus { outline: 2px solid color-mix(in srgb, var(--accent) 40%, transparent);
++  outline-offset: 0; border-color: var(--accent); }
++button { font: inherit; font-weight: 500; color: var(--on-accent); background: var(--accent);
++  border: 1px solid var(--accent); border-radius: 6px; padding: 6px 14px; cursor: pointer; }
++button:hover { filter: brightness(1.08); }
++button:disabled { opacity: .5; cursor: default; filter: none; }
++table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
++th, td { text-align: left; padding: 5px 10px; border-bottom: 1px solid var(--line); }
++th { font-size: 12px; font-weight: 600; letter-spacing: .03em; color: var(--muted); }
++tbody tr:nth-child(even) { background: var(--zebra); }
++ul, ol { margin: 0; padding-left: 20px; }
++li + li { margin-top: 2px; }
++::END
++
++-- the panel: a host element with a Shadow DOM; returns {host, body}
++::resource panel.js
++const host = doc.createElement('div');
++host.className = 'orx-dom-panel';
++host.style.cssText = 'position:fixed;z-index:1000;top:' + (72 + 28 * (n % 8)) + 'px;right:' + (24 + 28 * (n % 8)) + 'px';
++const shadow = host.attachShadow({ mode: 'open' });
++const base = doc.createElement('style'); base.textContent = css;
++const user = doc.createElement('style'); user.className = 'user';
++const frame = doc.createElement('div'); frame.className = 'frame';
++const bar = doc.createElement('div'); bar.className = 'bar';
++const name = doc.createElement('span'); name.className = 'title'; name.textContent = title;
++const x = doc.createElement('button'); x.className = 'close'; x.type = 'button';
++x.title = 'Close'; x.textContent = '×';
++const body = doc.createElement('div'); body.className = 'body';
++bar.append(name, x); frame.append(bar, body); shadow.append(base, user, frame);
++// closed at once, even when the run is over; then the program hears CLOSE
++x.addEventListener('click', () => { host.remove(); closeFn(); });
++// moved by its title bar, kept reachable
++let drag = null;
++const front = () => {
++  for (const p of doc.querySelectorAll('.orx-dom-panel')) p.style.zIndex = 1000;
++  host.style.zIndex = 1001;
++};
++host.addEventListener('pointerdown', front);
++bar.addEventListener('pointerdown', (e) => {
++  if (e.button !== 0 || e.target === x) return;
++  const r = host.getBoundingClientRect();
++  drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
++  host.style.right = 'auto'; host.style.left = r.left + 'px'; host.style.top = r.top + 'px';
++  bar.setPointerCapture(e.pointerId);
++});
++bar.addEventListener('pointermove', (e) => {
++  if (!drag) return;
++  const w = doc.defaultView;
++  host.style.left = Math.max(60 - host.offsetWidth, Math.min(w.innerWidth - 60, e.clientX - drag.dx)) + 'px';
++  host.style.top = Math.max(0, Math.min(w.innerHeight - 30, e.clientY - drag.dy)) + 'px';
++});
++const up = () => { drag = null; };
++bar.addEventListener('pointerup', up); bar.addEventListener('pointercancel', up);
++doc.body.append(host);
++front();
++return { host: host, body: body };
++::END
++
++
++/** What ON (or a panel's close button) set up: the handler's target. */
++::class DomBinding public
++::attribute owner get
++::attribute name get
++::attribute nick get
++::attribute element
++::attribute type get
++::attribute handler
++::method init
++  expose owner name nick element type
++  use strict arg owner, name, nick, element, type
++-- only when someone else's event loop takes the event: WAIT will see it
++::method fire
++  expose owner
++  owner~queueEvent(self, arg(1, "A"))
++
++
++/** An event, as WAIT INTO ev gives it. */
++::class DomEvent public
++::attribute name get                    -- the NAME given to ON (CLOSE: a panel closed)
++::attribute target get                  -- the element's nickname, or .nil
++::attribute element get                 -- the element (a .JSObject)
++::attribute jsEvent get                 -- JavaScript's event (a .JSObject), or .nil
++::method init
++  expose name target element jsEvent
++  use strict arg name, target, element, jsEvent
++::method value                          -- the element's value now (a checkbox: 1/0)
++  expose element
++  if element == .nil then return ""
++  type = element["type"]
++  if \missing(type) then if wordPos(type, "checkbox radio") > 0 then return element["checked"]
++  value = element["value"]
++  if missing(value) then return ""
++  return value
++::method key                            -- the key, for keyboard events
++  expose jsEvent
++  if missing(jsEvent) then return ""
++  key = jsEvent["key"]
++  if missing(key) then return ""
++  return key
++::method x                              -- the pointer, relative to the element
++  expose jsEvent
++  if missing(jsEvent) then return ""
++  x = jsEvent["offsetX"]
++  if missing(x) then return ""
++  return x
++::method y
++  expose jsEvent
++  if missing(jsEvent) then return ""
++  y = jsEvent["offsetY"]
++  if missing(y) then return ""
++  return y
++::method string
++  expose name target
++  if target == .nil then return "a DomEvent ("name")"
++  return "a DomEvent ("name "on" target")"
++
++-- a JavaScript value that is not there: null (.nil) or undefined
++::routine missing
++  use arg v
++  return v == .nil | v == .js~undefined
+diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
+index eb80101..a47a2d9 100644
+--- a/wasm/web/ooRexx.js
++++ b/wasm/web/ooRexx.js
+@@ -99,6 +99,11 @@
+  *                  ooRexx.js) on first use; the program's page objects live
+  *                  until the run ends, and the event handlers it set up
+  *                  (.js~handler) do nothing after it.
++ *   dom            {root} where ADDRESS DOM (dom.cls; needs js.page) starts:
++ *                  a CSS selector of this page ('#app'), null for nowhere
++ *                  (the program must make a panel with NEW, or say ROOT
++ *                  PAGE), or by default the page's body.  The program sees it
++ *                  as the environment variable ORX_DOM_ROOT ('none' for null)
+  */
+ (function (global) {
+   'use strict';
+@@ -125,6 +130,13 @@
+     return e.encode('E' + m.length + ':' + msg + 'N0:');
+   }
+ 
++  // the environment, with ORX_DOM_ROOT for the dom option
++  function domEnv(opts) {
++    const env = Object.assign({}, opts.env || {});
++    if (opts.dom && 'root' in opts.dom) env.ORX_DOM_ROOT = opts.dom.root ? String(opts.dom.root) : 'none';
++    return env;
++  }
++
+   class OoRexx {
+     static async load(base) {
+       base = new URL(base || here.slice(0, here.lastIndexOf('/') + 1) || './', global.location.href).href;
+@@ -199,7 +211,7 @@
+       worker.onerror = (e) => end({ rc: null, files: {}, stopped: false, error: e.message || 'worker error' });
+       worker.postMessage({
+         type: 'run', scriptUrl: this.base + 'rexx.js', wasmModule: this.wasmModule,
+-        data: this.data.slice(0), args: opts.args || [], files, cwd, env: opts.env || {},
++        data: this.data.slice(0), args: opts.args || [], files, cwd, env: domEnv(opts),
+         stdin: opts.stdin === undefined || opts.stdin === null ? null : bytes(opts.stdin),
+         screen: opts.screen || { width: global.innerWidth || 1280, height: global.innerHeight || 800 },
+         js: { worker: !!(opts.js && opts.js.worker), page: !!(opts.js && opts.js.page) },

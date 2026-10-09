@@ -1,0 +1,209 @@
+#!/usr/bin/env rexx
+-- Adapted for ooRexx/WASM: JDOR without BSF4ooRexx or Java (see NOTICE)
+/*
+   Name:    "3-110_animate_composite.rxj"
+   Invoke:  "rexx 3-110_animate_composite.rxj [?]"
+            "rexxj 3-110_animate_composite.rxj [?]" (Windows)
+            "rexxj.sh 3-110_animate_composite.rxj [?]" (Unix)
+
+            ? ... optional argument, if supplied displays processed JDOR commands
+
+   Purpose: Demonstrates the usage of the "composite" command to realize
+            fade-in animation effects as well as moving out bitmaps (images)
+            over the bottom edge, over the left edge and diagonally to the
+            upper right hand corner. The window (frame) to demonstrate the
+            animation effects gets positioned without a frame to the lower
+            right hand of the screen.
+
+   Note:
+
+   Date:    2022-10-30
+
+   Author:  Rony G. Flatscher, WU Vienna
+
+   last change: Revision: $Revision: 951 $ $Author: orexx $ $Date: 2022-08-10 18:06:25 +0200 (Mi., 10 Aug 2022) $
+                (svn hint: use 'propset svn:keywords "Author Date Revision" filename')
+
+   Changed: 2022-11-01 - use new command 'stringBounds' and calculate center for the
+                         concluding string, let that string move in from the right
+            2022-11-02 - adding flashing animation for five seconds
+                       - turn off text aliasing for animated text/string (interpolation
+                         pixel would distort the drawn string)
+            2022-11-27 - change current directory to source directory to allow access to png files
+            2023-05-31 - added optional argument ? to show processed JDOR commands
+                         in canonical form for commands directed to "jdor" handler (not "sdor")
+                       - creates and defines JDOR handler explicitly
+                       - changed "new" to "newImage"
+            2023-06-08 - flashing text shows flashing time left
+            2023-07-18 - make sure that all non-JDOR output is a comment starting with "--"
+
+   license:
+
+    ------------------------ Apache Version 2.0 license -------------------------
+       Copyright (C) 2022-2023 Rony G. Flatscher
+
+       Licensed under the Apache License, Version 2.0 (the "License");
+       you may not use this file except in compliance with the License.
+       You may obtain a copy of the License at
+
+           http://www.apache.org/licenses/LICENSE-2.0
+
+       Unless required by applicable law or agreed to in writing, software
+       distributed under the License is distributed on an "AS IS" BASIS,
+       WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+       See the License for the specific language governing permissions and
+       limitations under the License.
+    -----------------------------------------------------------------------------
+*/
+   -- make sure we change current directory to program's directory
+parse source . . s      -- get full path to this program
+oldDir=directory(filespec('location',s))  -- change current dir to this program's source dir
+
+/* Cf. e.g. <https://docs.oracle.com/javase/tutorial/2d/advanced/compositing.html> */
+
+
+bShowCommands=(arg(1)="?") -- ? supplied as argument, then show "jdor" JDOR commands in canonical form
+-- set default environment to JDOR
+if bShowCommands then
+   -- redirect output:
+   address jdor with output using (.stdout)
+else
+   address jdor
+
+   -- now we can use JDOR commands
+w=400                   -- width
+h=400                   -- height
+center=w/2 h/2          -- center of image
+newImage w h            -- create new bitmap
+
+winFrame .false         -- hide frame
+winScreenSize           -- get current screen size
+parse var rc width height  -- parse dimension
+winMoveTo (width-w) (height-h)   -- move to screen's lower right hand corner
+winShow                 -- show frame
+winAlwaysOnTop .true    -- show it always on top of all other windows
+
+b4r_x = 110             -- position of bsf4oorexx logo
+   -- define filenames, locations and sizes of three bitmaps
+locations=.array~of( "bsf4oorexx_256.png" b4r_x b4r_x                 50 , -
+                     "oorexx4ooo_256.png" (w-b4r_x)  (w-b4r_x)        50, -
+                     "oorexx_256.png" trunc((w-75)/2) trunc((h-75)/2) 75)
+   /* note: output that starts with "--" will be treated as comment if feeded to jdor.rxj */
+say "--> fade in ..."
+do loc over locations   -- load and draw bitmaps
+   say "--> processing:" pp(loc)
+   parse var loc name x y size
+   loadImage name name  -- load image from file use filename as nick name
+   moveTo x y           -- move to desired location
+   composite src_over 0.025   -- composite set to transparent (alpha to 0.01)
+   do i=1 to 100        -- repeatedly drawing adds current alpha to existing picture (fade in)
+      drawImage name size size   -- draw image with desired size
+      sleep 0.01        -- sleep causes animation effect
+   end
+   composite src_over      -- reset composite (defaulting alpha to 1.0)
+   drawImage name size size   -- draw image with alpha 1.0
+end
+
+   /* note: output that starts with "--" will be treated as comment if feeded to jdor.rxj */
+say "--> Moving out ..."
+do counter c loc over locations
+   parse var loc name x y size
+   say "--> #" c": moving out - name:" name "x:" x "y:" y "size:" size
+   moveTo x y
+   loop
+      winUpdate .false     -- do not update window (frame)
+      composite clear      -- use CLEAR composite (to remove image)
+      drawImage name size size   -- draw image with given size, clears it
+      composite src_over   -- re-establish writing src over destination
+      select case c        -- determine how we move out
+         when 1 then y=y+1 -- bsf4oorexx_256.png: move down
+         when 2 then x=x-1 -- oorexx4ooo_256.png: move left
+         otherwise         -- oorexx_256.png: move diagonally right and up
+             x=x+1
+             y=y-1
+      end
+      moveTo x y           -- go to next position
+      drawImage name size size   -- draw at new position
+      winUpdate .true      -- update window (frame)
+
+      if x>w | (x+size)<0 then leave
+      if y>w | (y+size)<0 then leave
+      sleep 0.01           -- sleep causes animation effect
+   end
+end
+
+-- get bounds of string, draw it at the center, but let it move in
+color blue              -- change color
+font f2 "Serif bolditalic 19" -- for final flashing, alternate definition of a font: embedd style and size
+fontSize 18             -- change font size
+fontStyle Italic        -- change font style
+font f1 "Serif"         -- create and use the font
+str="We are done, goodbye! (flashing 5 seconds)"  -- string to show
+flashTime=5
+str1="We are done, goodbye! (flashing"
+str2="seconds)"
+str=str1 flashTime str2
+stringBounds str        -- current font and current graphic context
+   /* note: output that starts with "--" will be treated as comment if feeded to jdor.rxj */
+say "-->                            str:" pp(str)
+say "--> 'stringBounds str' returned rc:" pp(rc) "(in pixels)"
+parse var rc x1 y1 width1 height1   -- get fields
+x2=(w-width1)/2         -- horizontal center position
+y2=(h-y1)/2             -- vertical center position
+x=w+1                   -- move one pixel outside of the image
+moveTo x y2             -- position
+say "--> moving in from the right ..."
+render textAliasOff     -- otherwise a blue trail gets created from the interpolation pixels
+loop while x>x2
+   winUpdate .false     -- do not update window (frame)
+   composite clear      -- use CLEAR composite (to remove from image)
+   drawString str       -- draw the string
+   x+=-1                -- move one pixel to the left
+   composite src_over   -- re-establish writing src over destination
+   moveTo x y2          -- go to next position
+   drawString str       -- draw the string
+   winUpdate .true      -- update window (frame)
+   sleep 0.01           -- sleep causes animation effect
+end
+
+-- flash for 5 seconds
+   /* note: output that starts with "--" will be treated as comment if feeded to jdor.rxj */
+say "--> flashing for 5 seconds ..."
+dt0=.dateTime~new
+bErase=.true
+bBold =.false
+do while (.dateTime~new - dt0)~seconds < 5
+   if bErase then       -- erase string/text?
+   do
+      composite clear
+      drawString str
+      composite src_over
+   end
+   else                 -- draw string/text
+   do
+      if bBold then font f1   -- now show in f1 (Serif italic 18)
+               else font f2   -- now show in f2 (Serif bolditalic 19)
+      bBold=\bBold      -- invert boolean value for next round
+
+str=str1 flashTime str2
+
+      stringBounds str  -- uses current font and current graphic context
+      parse var rc x1 y1 width1 height1   -- get fields
+      x2=(w-width1)/2   -- horizontal center position
+      y2=(h-y1)/2       -- vertical center position
+      moveTo x2 y2
+      drawString str
+   end
+   bErase=\bErase       -- invert boolean value
+   flashTime-=0.3
+   sleep 0.3            -- cause animation effect
+end
+sleep 0.3
+say "--> we are done."
+
+call directory oldDir   -- change current directory back to original directory
+
+::requires "jdor.cls"   -- set up the JDOR environment
+
+::routine pp       -- as in BSF4ooRexx: the value in brackets
+  return "[" || arg(1)~string || "]"

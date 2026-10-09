@@ -1,0 +1,133 @@
+#!/usr/bin/env rexx
+-- Adapted for ooRexx/WASM: JDOR without BSF4ooRexx or Java (see NOTICE)
+/*
+   Name:    "1-200_JDOR_area_cag.rxj"
+
+   Invoke:  "rexx 1-200_JDOR_area_cag.rxj [?]"
+            "rexxj 1-200_JDOR_area_cag.rxj [?]" (Windows)
+            "rexxj.sh 1-200_JDOR_area_cag.rxj [?]" (Unix)
+
+            ? ... optional argument, if supplied displays processed JDOR commands
+
+   Purpose: demonstrate Java2D "constructive area geometry (CAG)", cf.
+            <https://docs.oracle.com/javase/tutorial/2d/advanced/complexshapes.html>
+
+   Date:    2023-06-07
+
+   Author:  Rony G. Flatscher, WU Vienna
+
+   Changes: ---
+
+   last change: Revision: $Revision: 951 $ $Author: orexx $ $Date: 2022-08-10 18:06:25 +0200 (Mi., 10 Aug 2022) $
+                (svn hint: use 'propset svn:keywords "Author Date Revision" filename')
+
+   license:
+
+    ------------------------ Apache Version 2.0 license -------------------------
+       Copyright (C) 2023 Rony G. Flatscher
+
+       Licensed under the Apache License, Version 2.0 (the "License");
+       you may not use this file except in compliance with the License.
+       You may obtain a copy of the License at
+
+           http://www.apache.org/licenses/LICENSE-2.0
+
+       Unless required by applicable law or agreed to in writing, software
+       distributed under the License is distributed on an "AS IS" BASIS,
+       WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+       See the License for the specific language governing permissions and
+       limitations under the License.
+    -----------------------------------------------------------------------------
+*/
+
+say "-- JDOR version:" jdorVersion()
+
+pkgLocal=.context~package~local  -- get this package's local environment (looked up first)
+   -- create array save in pkgLocal with index "errorArray", can from then on referred
+   -- to in this package via the environment symbol ".errorArray" (note the dot!)
+pkgLocal~errorArray=.array~new   -- create array, save in pkgLocal
+
+bShowCommands=(arg(1)="?") -- ? supplied as argument, then show "jdor" JDOR commands in canonical form
+
+   -- set default environment to JDOR
+if bShowCommands then   -- set default environment to JDOR
+do
+      -- redirect output, show extended error messages if any
+   address jdor with error append using (.errorArray) output using (.output)
+   say "--> JDOR commands directed at the 'jdor' handler will get displayed ..."
+end
+else
+   address jdor with error append using (.errorArray)
+
+   -- JDOR commands can be processed from no on
+newImage 265 260     -- create new bitmap
+winShow              -- show frame
+winTitle "Area Demo #1" -- set title
+winAlwaysOnTop .true -- allows us to click into the command line window without losing sight
+
+   -- each circle is 50 pixels wide, their halves overlap
+shape c1 ellipse 10 25 50 50  -- leftCircle, x=10
+shape ac1 area c1             -- create area
+shape c2 ellipse 35 25 50 50  -- rightCircle, x=10+(width=50/2)
+shape ac2 area c2             -- create area
+
+stroke strNormal 2            -- normal stroke 2px wide
+color  colDashed 0 0 0 128    -- black, 50% transparent (128/256)
+stroke strDashed 2 0 0 1 "(2,2)" 0  -- dashed stroke
+color colFill 255 255 0 100   -- define yellow color fill, 39% transparency (100/256)
+   -- loop over Area CAG operations
+sleepTime=1
+do counter c op over 'add', 'intersect', 'subtract', 'exclusiveOr'
+   call cagOperation op, c, ac1, ac2
+   sleep sleepTime
+end
+
+if .errorArray~items>0 then   -- did any errors occur?
+do
+   say
+   say "-- (stderr) errArr~items (errors):" pp(.errorArray~items)
+   say .errorArray            -- shows string representation
+end
+
+say
+say "press enter to end.";parse pull
+exit
+
+   -- draw the areas, carry out operation, show result
+cagOperation: procedure -- expose outArr errArr -- expose arrays for JDOR
+  use arg operation, quadrant, ar1, ar2
+   -- operate on the area
+  shape copyAr1 area ar1   -- create a copy of the target area
+  command="area"operation  -- define command
+  say "-- command:" command "(shown in quadrant" "Q"quadrant")"
+  command copyAr1 ar2      -- carry out operation, changes area
+  select                   -- display results
+     when operation="add"         then operation=operation "(union)"
+     when operation="exclusiveOr" then operation=operation "(XOR)"
+     otherwise nop
+  end
+   -- left upper origin of the quadrants
+  quadrants = (20,20), (130,20), (20,150), (130,150)
+  q=quadrants[quadrant] -- get quadrant
+  parse value q[1] q[2] with x y -- get position for text
+  transform reset       -- reset transforms
+  translate x y         -- move origin
+  color black
+  drawString "Q"quadrant operation":"  -- display quadrant and name of operation
+  color colFill         -- fill the new area
+  fillShape copyAr1
+
+  color  colDashed      -- superimpose the outline of the original circles
+  stroke strDashed
+  drawShape ar1
+  drawShape ar2
+
+  color black           -- superimpose the outline of the new area
+  stroke    strNormal
+  drawShape copyAr1
+  return
+
+::requires "jdor.cls"   -- set up the JDOR environment
+
+::routine pp       -- as in BSF4ooRexx: the value in brackets
+  return "[" || arg(1)~string || "]"

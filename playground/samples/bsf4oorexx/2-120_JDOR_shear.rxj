@@ -1,0 +1,148 @@
+#!/usr/bin/env rexx
+-- Adapted for ooRexx/WASM: JDOR without BSF4ooRexx or Java (see NOTICE)
+/*
+   Name:    "2-120_JDOR_shear.rxj"
+   Invoke:  "rexx 2-120_JDOR_shear.rxj [?]"
+            "rexxj 2-120_JDOR_shear.rxj [?]" (Windows)
+            "rexxj.sh 2-120_JDOR_shear.rxj [?]" (Unix)
+
+            ? ... optional argument, if supplied displays processed JDOR commands
+
+   Purpose: Demonstrates the use of the JDOR commands to create arrowed axes with
+            ticks (every 0.5cm and 1.0cm) arrows and a rectangle (one by two centimeters).
+            The same drawing gets created at a different location demonstrating the effect
+            of shear. This sample can be used to compare the Rexx commands directly with
+            a Java program (http://www.java2s.com/Code/Java/2D-Graphics-GUI/TransformShear.htm)
+            that achieves the same drawing by using the <em>Java2D</em> APIs
+            directly.
+
+   Date:    2022-10-30
+
+   Author:  Rony G. Flatscher, WU Vienna
+
+   Changes: 2023-05-31 - added optional argument ? to show processed JDOR commands
+                         in canonical form
+                       - changed "new" to "newImage"
+
+   last change: Revision: $Revision: 951 $ $Author: orexx $ $Date: 2022-08-10 18:06:25 +0200 (Mi., 10 Aug 2022) $
+                (svn hint: use 'propset svn:keywords "Author Date Revision" filename')
+
+   license:
+
+    ------------------------ Apache Version 2.0 license -------------------------
+       Copyright (C) 2022-2023 Rony G. Flatscher
+
+       Licensed under the Apache License, Version 2.0 (the "License");
+       you may not use this file except in compliance with the License.
+       You may obtain a copy of the License at
+
+           http://www.apache.org/licenses/LICENSE-2.0
+
+       Unless required by applicable law or agreed to in writing, software
+       distributed under the License is distributed on an "AS IS" BASIS,
+       WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+       See the License for the specific language governing permissions and
+       limitations under the License.
+    -----------------------------------------------------------------------------
+*/
+
+
+bShowCommands=(arg(1)="?") -- ? supplied as argument, then show JDOR commands in canonical form
+-- set default environment to JDOR
+if bShowCommands then
+   address jdor with output using (.stdout)  -- redirect output
+else
+   address jdor
+
+-- address jdor with error using (.error) -- show error/failures in detail (for debugging)
+
+pkgLocal=.context~package~local     -- get package's local environment
+   -- add PIXEL.PER.CM entry to it, thereafter can be retrieved via the
+   -- environment symbol .PIXEL.PER.CM from any place in this package
+pkgLocal~dpcm = 72 / 2.54   -- there are 72 dots per inch, an inch is 2.54cm -> 28.3464567 dpcm (dots per cm)
+
+newImage 450 350        -- create image
+winShow                 -- show image in a window (a JFrame)
+winTitle "Shear Sample (a Transform)"
+
+call drawFigure         -- draw figure
+
+translate  150 0        -- move current origin 150 pixels to the right
+shear    (-.5) 0        -- apply shearing
+stroke str1 1 CAP_BUTT JOIN_BEVEL 0 "(3,1)" 0   -- change line for drawing
+color blue              -- change color
+call drawFigure         -- draw the same figure as above
+
+if \bShowCommands then say "sleep 5 ..."
+sleep 5
+exit
+
+drawFigure: procedure   -- moves origin, draws axes with right and down arrow, draws rectangle
+  lineLength  = 54
+  arrowLength = 4
+  tickSize    = 4
+
+  translate 75 75
+  call drawAxes lineLength
+  call drawArrows arrowLength, lineLength
+  call drawTickMarks .5, tickSize/2, lineLength -- half-centimeter tick marks
+  call drawTickMarks 1 , tickSize, lineLength   -- Full-centimeter tick marks
+  call drawRect 1, 1, 2, 1    -- in cm: x, y, width, height
+  return
+
+drawAxes: procedure
+  use strict arg lineLength=54
+   -- x-axis
+  moveTo   (-lineLength)   0
+  drawLine   lineLength    0
+   -- y-axis
+  moveTo     0           (-lineLength)
+  drawLine   0             lineLength
+  return
+
+drawArrows: procedure
+  use strict arg arrowLength=4, lineLength=54
+   -- arrows
+  arr_endpoint = lineLength-arrowLength   -- left and right hand y-location of arrow ends
+   -- x-axis, right arrow
+  moveTo    arr_endpoint (-arrowLength)   -- upper endpoint
+  drawLine  lineLength     0
+  moveTo    arr_endpoint   arrowLength    -- lower endpoint
+  drawLine  lineLength     0
+   -- y-axis, down arrow
+  moveTo   (-arrowLength)  arr_endpoint   -- left endpoint
+  drawLine   0             lineLength
+  moveTo     arrowLength   arr_endpoint   -- right endpoint
+  drawLine   0             lineLength
+  return
+
+drawTickMarks: procedure
+  use strict arg tickStart, tickSize=4, lineLength=54
+
+  do i = tickStart while i < lineLength/.dpcm
+     tick = i * .dpcm
+     -- x-axis
+     moveTo     tick      (-tickSize)
+     drawLine   tick        tickSize
+     moveTo   (-tick)     (-tickSize)
+     drawLine (-tick)       tickSize
+     -- y-axis
+     moveTo   (-tickSize)   tick       -- y-axis
+     drawLine   tickSize    tick
+     moveTo   (-tickSize) (-tick)
+     drawLine   tickSize  (-tick)
+  end
+  return
+
+drawRect: procedure
+  use strict arg x=1, y=1, w=2, h=1 -- arguments are cm values
+   -- calculate needed dots per cm (dpcm)
+  x=x*.dpcm       -- calculate dots (pixels)
+  y=y*.dpcm       -- calculate dots (pixels)
+  w=w*.dpcm       -- calculate dots (pixels)
+  h=h*.dpcm       -- calculate dots (pixels)
+  moveTo x y
+  drawRect w h
+  return
+
+::requires "jdor.cls"   -- set up the JDOR environment

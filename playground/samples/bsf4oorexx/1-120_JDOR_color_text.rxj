@@ -1,0 +1,77 @@
+#!/usr/bin/env rexx
+-- Adapted for ooRexx/WASM: JDOR without BSF4ooRexx or Java (see NOTICE)
+/*
+   Name:    "1-120_JDOR_color_text.rxj"
+   Invoke:  "rexx 1-120_JDOR_color_text.rxj [?]"
+            "rexxj 1-120_JDOR_color_text.rxj [?]"
+            "rexxj.sh 1-120_JDOR_color_text.rxj [?]"
+
+            ? ... optional argument, if supplied displays processed JDOR commands
+
+   Purpose:  Demonstrates how to use JDOR commands to draw a cross, a string (text) and
+             superimpose a filled rectangle on it using different colors.
+
+   Date:    2022-10-03
+
+   Author:  Rony G. Flatscher, WU Vienna
+
+   Changes: 2022-10-31 - changed "goto" to "moveTo"
+            2023-05-30 - added optional argument ? to show processed JDOR commands
+                         in canonical form
+                       - changed "new" to "newImage"
+            2023-06-08 - creates and defines JDOR handler explicitly
+
+   last change: Revision: $Revision: 951 $ $Author: orexx $ $Date: 2022-08-10 18:06:25 +0200 (Mi., 10 Aug 2022) $
+                (svn hint: use 'propset svn:keywords "Author Date Revision" filename')
+
+   license:
+
+    ------------------------ Apache Version 2.0 license -------------------------
+       Copyright (C) 2022-2023 Rony G. Flatscher
+
+       Licensed under the Apache License, Version 2.0 (the "License");
+       you may not use this file except in compliance with the License.
+       You may obtain a copy of the License at
+
+           http://www.apache.org/licenses/LICENSE-2.0
+
+       Unless required by applicable law or agreed to in writing, software
+       distributed under the License is distributed on an "AS IS" BASIS,
+       WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+       See the License for the specific language governing permissions and
+       limitations under the License.
+    -----------------------------------------------------------------------------
+*/
+
+
+bShowCommands=(arg(1)="?") -- ? supplied as argument, then show JDOR commands in canonical form
+-- set default environment to JDOR
+if bShowCommands then
+   address jdor with output using (.stdout)  -- redirect output
+else
+   address jdor
+
+   -- now use JDOR commands
+newImage 300 500        -- create new bitmap
+winShow                 -- show frame
+   -- draw two lines forming a big X
+drawLine 300 500        -- currX=0, currY=0
+moveTo 300 0            -- currX=300, currY=0
+color red
+drawLine 0 500
+   -- draw a rectangle at the center of the bitmap
+moveTo (300-50)/2 (500-50)/2
+color green
+fillRect 50 50
+
+stroke str3 3           -- set line stroke to 3 points
+color blue
+drawRect 50 50
+   -- draw a test at the lower half of the bitmap
+moveTo 50 450
+color somePurple 127 46 111
+drawString "Hello, world via JDOR ..."
+if \bShowCommands then say "'sleep 3' ..."
+sleep 3                 -- sleep for three seconds
+
+::requires "jdor.cls"   -- set up the JDOR environment

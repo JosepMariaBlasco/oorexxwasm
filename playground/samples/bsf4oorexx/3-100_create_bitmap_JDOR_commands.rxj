@@ -1,0 +1,253 @@
+#!/usr/bin/env rexx
+-- Adapted for ooRexx/WASM: JDOR without BSF4ooRexx or Java (see NOTICE)
+/*
+   Name:    "3-100_create_bitmap_JDOR.rxj"
+
+   Invoke:  "rexx 3-100_create_bitmap_JDOR.rxj [?]"
+            "rexxj 3-100_create_bitmap_JDOR.rxj [?]" (Windows)
+            "rexxj.sh 3-100_create_bitmap_JDOR.rxj [?]" (Unix)
+
+            ? ... optional argument, if supplied displays processed JDOR commands
+
+   Purpose: Demonstrate the new JDOR Rexx command handler to achieve the same
+            graphic as the one in "samples/3-100_create_bitmap_JDOR.rxj":
+
+               Demonstrate how to create a bitmap (an image) with Java's Graphics2D and
+               draw images (bsf4oorexx_256.png, oorexx4ooo_256.png, oorexx_256.png) in
+               original and 50% size, how to draw lines, strings (text), polygons and
+               some more... The resulting bitmap gets saved in the user's home directory
+               under the name "3-100_create_bitmap.png" and shown using the appropraite
+               operating system's command.
+
+   Date:    2022-10-03
+
+   Author:  Rony G. Flatscher, Wien University
+
+   Changes: 2022-10-31 - changed "goto" to "moveTo"
+            2022-11-27 - change current directory to source directory to allow access to png files
+            2023-05-31 - added optional argument ? to show processed JDOR commands
+                         in canonical form for commands directed to "jdor" handler (not "sdor")
+                       - creates and defines JDOR handler explicitly
+                       - changed "new" to "newImage"
+
+
+   last change: Revision: $Revision: 951 $ $Author: orexx $ $Date: 2022-08-10 18:06:25 +0200 (Mi., 10 Aug 2022) $
+                (svn hint: use 'propset svn:keywords "Author Date Revision" filename')
+
+   license:
+
+    ------------------------ Apache Version 2.0 license -------------------------
+       Copyright (C) 2022-2023 Rony G. Flatscher
+
+       Licensed under the Apache License, Version 2.0 (the "License");
+       you may not use this file except in compliance with the License.
+       You may obtain a copy of the License at
+
+           http://www.apache.org/licenses/LICENSE-2.0
+
+       Unless required by applicable law or agreed to in writing, software
+       distributed under the License is distributed on an "AS IS" BASIS,
+       WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+       See the License for the specific language governing permissions and
+       limitations under the License.
+    -----------------------------------------------------------------------------
+
+*/
+   -- make sure we change current directory to program's directory
+parse source . . s      -- get full path to this program
+oldDir=directory(filespec('location',s))  -- change current dir to this program's source dir
+
+
+bShowCommands=(arg(1)="?") -- ? supplied as argument, then show "jdor" JDOR commands in canonical form
+arrError=.array~new     -- array to receive extended error messages if any
+
+if bShowCommands then   -- set default environment to JDOR
+do
+      -- redirect output, show extended error messages if any
+   address jdor with output using (.stdout) -- error append using (arrError)
+   say "--> JDOR commands directed at the 'jdor' handler will get displayed ..."
+end
+else
+   address jdor with error append using (arrError)
+
+-- the following code is equivilant to "3-100_create_bitmap.rxj" sample
+width =800
+height=800
+newImage width height   -- create image 800x800
+pushGC                  -- save GC state (transform, translate, shear, scale, colors ...)
+
+stroke defStroke 1      -- define stroke 1 pixel thick, save with nickname "defStroke"
+stroke stroke3   3      -- define stroke 3 pixel thick, save with nickname "stroke3"
+stroke stroke5   5      -- define stroke 5 pixel thick, save with nickname "stroke5"
+stroke stroke15 15      -- define stroke 15 pixel thick, save with nickname "stroke15"
+
+arrDash=.array~of(1,5,10,5)
+stroke dashedStroke 2 0 0 1 "arrDash" 0   -- note: the Rexx variable name "arrDash" must be quoted
+
+borderWidth=5
+
+   /* cf. e.g. <https://www.w3schools.com/colors/colors_names.asp> as of 2022-07-29 */
+color teal          0 128 128       -- R,G,B no alpha, hence not transparent, set and save with nickname "teal"
+
+color saddlebrown 139  69  19 127   -- R,G,B,alpha=127 (50 % transparency), set and save with nickname "saddleBrown"
+fillRect width height
+
+stroke stroke5
+drawRect width-1 height-1
+stroke defStroke
+
+-------------------------------------------------------------------------------
+   -- 256x256 bitmaps
+images=.array~of("oorexx_256.png", "bsf4oorexx_256.png", "oorexx4ooo_256.png")
+
+   -- left upper corner, center, right lower corner
+   -- define array of x,y arrays to position the logos
+positions=.array~of( (0+borderWidth,0+borderWidth), ((width-256)/2, (height-256)/2), (height-256-borderWidth, width-256-borderWidth) )
+color white             -- set color
+
+do counter c i over positions
+   tmpX=i[1]
+   tmpY=i[2]
+   moveTo tmpX tmpY
+   fileName      = images[c]
+   imageFromFile="img_"c
+   loadImage imageFromFile fileName
+
+   drawImage imageFromFile
+   moveTo tmpX tmpY+10
+   drawString fileName
+      -- drawing at 50% of size either on the right or left of the original sized picture
+   if c=3 then tmpX -= 256
+          else tmpX += 256+128
+   moveTo tmpX tmpY
+   drawImage imageFromFile tmpX+128 tmpY+128 0 0 256 256
+end
+sleep 0.5
+
+-------------------------------------------------------------------------------
+   -- draw a string (text) using the current (default) font
+color green
+text="Hello, world, it is:" .dateTime~new
+moveTo (0+borderWidth) (height/2-20)
+drawString text
+   -- draw a thick line underneath
+stroke stroke5
+moveTo (0+borderWidth) (height/2-10)
+drawLine 260 (height/2-10)
+sleep 0.5
+
+-------------------------------------------------------------------------------
+   -- demonstrate using logical fonts
+-- cf. e.g. <https://docs.oracle.com/javase/8/docs/api/constant-values.html#java.awt.Font.DIALOG>
+xPos   = 10
+yStart = 675
+size   = 18
+color white
+do counter c fontName over "Dialog", "DialogInput", "Serif", "SansSerif", "Monospaced"
+    if c//2 then  -- switch styles
+    do
+       fontStyle 1+2    -- bold+italic
+       hint="(bold+italic)"
+    end
+    else
+    do
+       fontStyle 1      -- bold
+       hint="(bold)"
+    end
+    fontSize size
+    font "font"c fontName
+    moveTo xPos (yStart+(size*c)+5)
+    text=c"." fontName hint"," size "points"
+    drawString text
+end
+sleep 0.5
+
+-------------------------------------------------------------------------------
+say "--> line" .line": popGC + pushGC ..."
+popGC    -- reset GC to initial configuration
+pushGC   -- save GC
+
+   -- draw a line from upper right hand corner down: coordinates must be integers!
+color  teal
+stroke dashedStroke
+moveTo (width-borderWidth) (0+borderWidth)
+drawLine (width-format(width/17,,0))  200
+
+   -- move 0,0 co-ordinate relative to current position (i.e. to center)
+translate (width/2) (height/2)
+
+   -- draw a circle of yellow strings by rotating in 15° steps
+color yellow
+do counter c i=1 to 360/15    -- 24 steps!
+   rotate 15                  -- rotate by 15°
+   text="--> Hello, world, it is:" .dateTime~new "<-- #" c "("c*15"°) "
+   moveTo 0 0
+   drawString text
+end
+
+   -- change color, change thickness of line
+stroke stroke15
+color  cyan
+
+   -- move 0,0 co-ordinate relative to current position (from center to the left and up)
+translate (-400) (-100)
+
+   -- draw an ellipse (if rectangle is a square, then a circle gets drawn)
+color  magenta
+stroke dashedStroke
+moveTo 0 50
+drawOval 275 75
+sleep 0.5
+
+-------------------------------------------------------------------------------
+popGC    -- reset GC to initial graphics configuration
+pushGC   -- save GC
+
+   -- reset all transformation changes (will also reset 0,0 back to top left)
+stroke stroke3
+color  cyan
+r = 200     -- radius
+s = r*2
+x = borderWidth+width/2-r
+y = borderWidth+height/2-r
+moveTo x y
+drawOval s s
+sleep 0.5
+
+   -- change to arbitrary RGB color with alpha (transparency)
+color someColor 255 153 0 200       -- R,G,B,alpha=200 (transparency)
+
+   -- demo drawPolygon (one could use it for drawing e.g. a triangle)
+stroke stroke15                -- set stroke
+color someColor  0 0 255 100        -- R,G,B,alpha=100 (transparency)
+translate (width/2+40) 110
+   -- define polygon points, coordinates must be arrays of primitive Java int (integer values)
+say "--> draw polygon ..."
+arrX = .array~of(150, 250, 325, 100)
+arrY = .array~of(150, 100, 125, 300)
+drawPolygon "arrX" "arrY" arrX~items   -- note: the Rexx variable names must be quoted
+sleep 0.5
+
+-------------------------------------------------------------------------------
+if arrError~items>0 then say "-->" arrError
+
+   -- save file in user's home directory
+fileName = value("HOME", , "ENVIRONMENT") || .file~separator || "3-100_create_bitmap_JDOR_commands.png"
+saveImage fileName
+
+   -- show the bitmap just created: no operating system here to open it with,
+   -- so a second JDOR environment loads the saved file into a window of its own
+call addJdorHandler "SHOW"           -- set up a second JDOR environment, SHOW
+address show "loadImage bitmap" fileName  -- RC: width height
+parse var rc w h
+address show "newImage" w h
+address show "drawImage bitmap"
+address show "winTitle" fileName
+address show "winShow"
+
+call directory oldDir   -- change current directory back to original directory
+
+::requires "jdor.cls"   -- set up the JDOR environment
+
+::routine quote         -- enquote path in double-quotes (to cater for paths that may have blanks)
+  return '"' || arg(1) || '"'

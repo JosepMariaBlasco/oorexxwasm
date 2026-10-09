@@ -1,0 +1,635 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
+Date: Sun, 4 Oct 2026 12:06:20 +0200
+Subject: [PATCH 4/5] WebAssembly port, Node: real TCP/UDP sockets and name
+ resolution
+
+The Node command-line build (wasm/build-node.sh, now with NODERAWSOCKETS)
+gives rxsock real host sockets: listening sockets, UDP, blocking
+accept/recv/recvfrom with SO_RCVTIMEO, socket options
+(wasm/node-sockets-pre.js), and real name resolution through the host
+(orxNodeResolve in wasm/emscripten-dns-proxy.js).  The MEMFS build keeps
+the WebSocket transport.  qualify-node-cli.sh checks TCP between processes
+and threads, SO_RCVTIMEO, interoperation with a non-Rexx peer, UDP and
+name resolution.
+---
+ CMakeLists.txt                 |   2 +
+ extensions/rxsock/rxsockfn.cpp | 186 +++++++++++++++++++++++++++++++--
+ wasm/README.md                 |  40 ++++---
+ wasm/build-node.sh             |  10 +-
+ wasm/emscripten-dns-proxy.js   |  51 +++++++++
+ wasm/node-sockets-pre.js       |  97 +++++++++++++++++
+ wasm/tests/qualify-node-cli.sh |  90 ++++++++++++++++
+ 7 files changed, 448 insertions(+), 28 deletions(-)
+ create mode 100644 wasm/node-sockets-pre.js
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 52e3ccb..3942aae 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -1152,6 +1152,8 @@ if (EMSCRIPTEN)
+       -sNODERAWFS=1
+       # passwd entry of the current user (see SysProcess.cpp)
+       -Wl,--wrap=getpwnam,--wrap=getpwuid
++      # rxsock (whole-archive librexx) imports orxNodeResolve
++      "SHELL:--js-library ${CMAKE_CURRENT_SOURCE_DIR}/wasm/emscripten-dns-proxy.js"
+       -sEXIT_RUNTIME=1
+       -sSTACK_SIZE=8388608
+       -sINITIAL_MEMORY=67108864
+diff --git a/extensions/rxsock/rxsockfn.cpp b/extensions/rxsock/rxsockfn.cpp
+index fd47f6b..247ac33 100644
+--- a/extensions/rxsock/rxsockfn.cpp
++++ b/extensions/rxsock/rxsockfn.cpp
+@@ -80,6 +80,153 @@
+ // stays free to deliver WebSocket events.  So a plain sleep is enough to wait
+ // for readiness: no Asyncify needed.
+ static inline void wasmSocketYield() { usleep(1000); }
++
++// Emscripten's socket syscalls never block: accept/recv/recvfrom on a
++// blocking socket report EAGAIN when nothing is there yet.  Restore blocking
++// semantics: call this after such an EAGAIN; it returns true when the caller
++// should retry, false when it should give up with errno set: non-blocking
++// socket (EAGAIN stays), pending socket error (SO_ERROR), or the socket's
++// SO_RCVTIMEO elapsed (EAGAIN, as natively).  deadline starts at -1.
++static bool wasmBlockingRetry(int sock, double &deadline)
++{
++    if (errno != EAGAIN && errno != EWOULDBLOCK)
++    {
++        return false;
++    }
++    int socketFlags = fcntl(sock, F_GETFL, 0);
++    if (socketFlags >= 0 && (socketFlags & O_NONBLOCK) != 0)
++    {
++        return false;
++    }
++    int socketError = 0;
++    socklen_t errorLength = sizeof(socketError);
++    if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &socketError, &errorLength) == 0 && socketError != 0)
++    {
++        errno = socketError;
++        return false;
++    }
++    double now = emscripten_get_now();
++    if (deadline < 0)
++    {
++        deadline = 0;                  // no timeout
++        struct timeval tv = { 0, 0 };
++        socklen_t tvLength = sizeof(tv);
++        if (getsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, &tvLength) == 0 && (tv.tv_sec != 0 || tv.tv_usec != 0))
++        {
++            deadline = now + (double)tv.tv_sec * 1000.0 + (double)tv.tv_usec / 1000.0;
++        }
++    }
++    else if (deadline > 0 && now >= deadline)
++    {
++        errno = EAGAIN;
++        return false;
++    }
++    wasmSocketYield();
++    return true;
++}
++
++// Name resolution.  Emscripten's resolver is a fake (synthetic 172.29.x.y
++// addresses that only its WebSocket emulation understands, lookups never
++// fail, no reverse names, host name "emscripten").  With real sockets under
++// Node, orxNodeResolve (wasm/emscripten-dns-proxy.js) asks the host instead;
++// elsewhere it returns -2 and the libc functions are used.  Results live in
++// static storage, like the libc functions they replace.
++extern "C" int orxNodeResolve(int mode, const char *arg, char *out, int outLen);
++
++#define WASM_MAX_ADDRS 16
++static char            wasmHostText[1024];
++static char           *wasmHostAliases[1];
++static struct in_addr  wasmHostAddrs[WASM_MAX_ADDRS];
++static char           *wasmHostAddrList[WASM_MAX_ADDRS + 1];
++static struct hostent  wasmHostEnt;
++
++// builds wasmHostEnt from orxNodeResolve's "name\naddr\naddr..." text
++static struct hostent *wasmHostEntFromText()
++{
++    char *next = strchr(wasmHostText, '\n');
++    int count = 0;
++    while (next != NULL && count < WASM_MAX_ADDRS)
++    {
++        *next++ = '\0';
++        char *addr = next;
++        next = strchr(addr, '\n');
++        if (next != NULL)
++        {
++            *next = '\0';
++        }
++        if (inet_aton(addr, &wasmHostAddrs[count]))
++        {
++            wasmHostAddrList[count] = (char *)&wasmHostAddrs[count];
++            count++;
++        }
++        if (next != NULL)
++        {
++            *next = '\n';              // restore the separator for the loop
++        }
++    }
++    if (count == 0)
++    {
++        h_errno = HOST_NOT_FOUND;
++        return NULL;
++    }
++    wasmHostAddrList[count] = NULL;
++    wasmHostAliases[0] = NULL;
++    wasmHostEnt.h_name = wasmHostText;
++    wasmHostEnt.h_aliases = wasmHostAliases;
++    wasmHostEnt.h_addrtype = AF_INET;
++    wasmHostEnt.h_length = sizeof(struct in_addr);
++    wasmHostEnt.h_addr_list = wasmHostAddrList;
++    return &wasmHostEnt;
++}
++
++static struct hostent *wasmGetHostByName(const char *name)
++{
++    int rc = orxNodeResolve(0, name, wasmHostText, sizeof(wasmHostText));
++    if (rc == -2)
++    {
++        return gethostbyname(name);
++    }
++    if (rc < 0)
++    {
++        h_errno = HOST_NOT_FOUND;
++        return NULL;
++    }
++    return wasmHostEntFromText();
++}
++
++static struct hostent *wasmGetHostByAddr(const void *addr, socklen_t len, int type)
++{
++    if (type != AF_INET || len != sizeof(struct in_addr))
++    {
++        return gethostbyaddr(addr, len, type);
++    }
++    char addrText[INET_ADDRSTRLEN];
++    inet_ntop(AF_INET, addr, addrText, sizeof(addrText));
++    int rc = orxNodeResolve(1, addrText, wasmHostText, sizeof(wasmHostText));
++    if (rc == -2)
++    {
++        return gethostbyaddr(addr, len, type);
++    }
++    if (rc < 0)
++    {
++        h_errno = HOST_NOT_FOUND;
++        return NULL;
++    }
++    return wasmHostEntFromText();
++}
++
++static int wasmGetHostName(char *name, size_t len)
++{
++    if (orxNodeResolve(2, NULL, name, (int)len) < 0)
++    {
++        return gethostname(name, len);
++    }
++    return 0;
++}
++
++#define gethostbyname(name)            wasmGetHostByName(name)
++#define gethostbyaddr(addr, len, type) wasmGetHostByAddr(addr, len, type)
++#define gethostname(name, len)         wasmGetHostName(name, len)
+ #endif
+ 
+ #if defined( HAVE_SYS_SELECT_H )
+@@ -153,6 +300,14 @@ RexxRoutine2(int, SockAccept, int, sock, OPTIONAL_RexxObjectPtr, stemSource)
+     nameLen = sizeof(addr);
+     // (int) cast avoids C4244 on Windows 64-bit
+     int rc = (int)accept(sock, (struct sockaddr *)&addr, &nameLen);
++#if defined(__EMSCRIPTEN__)
++    double deadline = -1;
++    while (rc < 0 && wasmBlockingRetry(sock, deadline))
++    {
++        nameLen = sizeof(addr);
++        rc = (int)accept(sock, (struct sockaddr *)&addr, &nameLen);
++    }
++#endif
+ 
+     // set the errno variables
+     setErrno(context, rc >= 0);
+@@ -398,6 +553,16 @@ RexxRoutine2(int, SockGetHostByName, CSTRING, name, RexxObjectPtr, stemSource)
+ RexxRoutine0(RexxStringObject, SockGetHostId)
+ {
+     in_addr ia;
++#if defined(__EMSCRIPTEN__)
++    // getifaddrs() is not available: ask Node for the interface addresses
++    char wasmAddr[INET_ADDRSTRLEN + 1];
++    int wasmRc = orxNodeResolve(3, NULL, wasmAddr, sizeof(wasmAddr));
++    if (wasmRc != -2)
++    {
++        setErrno(context, wasmRc >= 0);
++        return context->String(wasmRc >= 0 ? wasmAddr : "0.0.0.0");
++    }
++#endif
+ #ifdef WIN32
+     char     pszBuff[256];                   // hostnames should be 255 chars or less
+     PHOSTENT pHostEnt;                       // ptr to hostent structure
+@@ -790,18 +955,9 @@ RexxRoutine4(int, SockRecv, int, sock, CSTRING, var, int, dataLen, OPTIONAL_CSTR
+      *---------------------------------------------------------------*/
+     rc = recv(sock, pBuffer, dataLen, flags);
+ #if defined(__EMSCRIPTEN__)
+-    int socketFlags = fcntl(sock, F_GETFL, 0);
+-    bool blockingSocket = socketFlags < 0 || (socketFlags & O_NONBLOCK) == 0;
+-    while (rc < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && blockingSocket)
++    double deadline = -1;
++    while (rc < 0 && wasmBlockingRetry(sock, deadline))
+     {
+-        int socketError = 0;
+-        socklen_t errorLength = sizeof(socketError);
+-        if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &socketError, &errorLength) == 0 && socketError != 0)
+-        {
+-            errno = socketError;
+-            break;
+-        }
+-        wasmSocketYield();
+         rc = recv(sock, pBuffer, dataLen, flags);
+     }
+ #endif
+@@ -897,6 +1053,14 @@ RexxRoutine5(int, SockRecvFrom, int, sock, CSTRING, var, int, dataLen, RexxObjec
+      * call function
+      *---------------------------------------------------------------*/
+     int rc = recvfrom(sock,pBuffer,dataLen,flags,(struct sockaddr *)&addr,&addr_size);
++#if defined(__EMSCRIPTEN__)
++    double deadline = -1;
++    while (rc < 0 && wasmBlockingRetry(sock, deadline))
++    {
++        addr_size = sizeof(addr);
++        rc = recvfrom(sock,pBuffer,dataLen,flags,(struct sockaddr *)&addr,&addr_size);
++    }
++#endif
+ 
+     // set the errno information
+     setErrno(context, rc >= 0);
+diff --git a/wasm/README.md b/wasm/README.md
+index 68af31d..f80cd62 100644
+--- a/wasm/README.md
++++ b/wasm/README.md
+@@ -6,7 +6,8 @@ This development port compiles the ooRexx interpreter and API statically to
+ WebAssembly, builds `rexx.img` with the WASM `rexximage` executable, embeds the
+ image into the runtime MEMFS, and embeds the stock RxSock package into the
+ interpreter.  RxSock keeps its Rexx API; Emscripten SOCKFS supplies a WebSocket
+-transport for stream sockets.
++transport for stream sockets in the browser, while the Node command-line build
++(below) uses real TCP/UDP sockets.
+ 
+ ## WASM platform policy
+ 
+@@ -49,9 +50,11 @@ transport for stream sockets.
+ * `rexx.img`, `socket.cls`, `streamsocket.cls` and `rxregexp.cls` preloaded
+   into MEMFS.
+ 
+-Blocking `SockConnect`, `SockRecv`, and timed `SockSelect` preserve the native
+-RxSock contract by polling Emscripten readiness with zero-time syscalls and
+-sleeping between attempts (socket syscalls are proxied to the main thread).
++Blocking `SockConnect`, `SockAccept`, `SockRecv`, `SockRecvFrom` and timed
++`SockSelect` preserve the native RxSock contract by polling Emscripten
++readiness with zero-time syscalls and sleeping between attempts (socket
++syscalls are proxied to the main thread); `SO_RCVTIMEO` ends a blocking
++accept/recv with `EWOULDBLOCK` as natively.
+ Nonblocking sockets preserve `EINPROGRESS` and readiness/SO_ERROR completion
+ semantics. `wasm/emscripten-dns-proxy.js` makes Emscripten's fake-DNS lookup
+ run on the main thread too, so host names resolve consistently.
+@@ -96,10 +99,11 @@ connection refusal, DNS/localhost, and the unchanged `.StreamSocket` wrapper.
+ 
+ `wasm/build-node.sh [BUILD_DIR]` relinks the runtime (no recompilation) into
+ `BUILD_DIR/bin-node` as a Node-only command-line ooRexx (`-sNODERAWFS=1
+--sENVIRONMENT=node`, `wasm/node-pre.js`): it sees the host file system and
+-the host environment variables, and ADDRESS commands run as host processes
+-(`child_process.spawnSync` on the interpreter thread, so concurrent Rexx
+-threads can run commands; ADDRESS ... WITH redirection is supported).
++-sNODERAWSOCKETS=1 -sENVIRONMENT=node`, `wasm/node-pre.js`): it sees the host
++file system and the host environment variables, and ADDRESS commands run as
++host processes (`child_process.spawnSync` on the interpreter thread, so
++concurrent Rexx threads can run commands; ADDRESS ... WITH redirection is
++supported).
+ `bin-node/rexx` and `bin-node/rexxc` are launchers; `rexxc` is a multi-call
+ entry of the same `rexx.js` (`wasm/rexxc-main.cpp`).  Error numbers seen by
+ Rexx programs (RC of CD, stream `ERROR:n`, SysMkDir, ...) are the Linux ones,
+@@ -113,6 +117,16 @@ server in-process (not shared), which is also the fallback when the daemon
+ cannot be reached; `ORX_WASM_RXAPI_DEBUG=1` traces the transport.
+ `bin-node/rxqueue` and `bin-node/rxsubcom` are multi-call entries as well.
+ 
++Sockets are real host sockets (NODERAWSOCKETS: TCP and UDP over
++`node:net`/`node:dgram`), so RxSock talks to any TCP peer and listening
++sockets work (bind/listen/accept, servers in other processes or threads).
++`wasm/node-sockets-pre.js` completes the backend where RxSock needs it
++(`SO_RCVTIMEO`/`SO_SNDTIMEO` and options Node cannot apply are remembered and
++reported back).  Host names are resolved by the host (`dns.lookup`, so
++`/etc/hosts` and the system resolver; reverse names with `getnameinfo`), the
++host name and interface address come from `node:os`
++(`orxNodeResolve` in `wasm/emscripten-dns-proxy.js`, used by RxSock).
++
+     ./wasm/build-node.sh /tmp/oorexx-wasm-build
+     ./wasm/tests/qualify-node-cli.sh /tmp/oorexx-wasm-build/bin-node
+ 
+@@ -130,11 +144,11 @@ browser; see the limits below).
+ 
+ ## Known limitations / deliberate non-claims
+ 
+-* Listening sockets are not supported (browser: Emscripten SOCKFS; Node: the
+-  client-only `ws` shim makes `listen()` fail with EOPNOTSUPP).
+-* UDP/datagram semantics are not qualified.
+-* Native TCP servers need a WebSocket-facing endpoint/proxy; a real WebSocket
+-  server can be addressed directly.
++* WebSocket transport (browser, and the MEMFS build under Node): listening
++  sockets are not supported (the client-only `ws` shim makes `listen()` fail
++  with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
++  endpoint/proxy; a real WebSocket server can be addressed directly.
++* UDP/datagram semantics are qualified only in the Node command-line build.
+ * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).
+ * Maximum recursion depth is set by the JS engine's native stack (internal
+   CALL / internal function calls / method calls): Node about 7,100 / 5,400 /
+diff --git a/wasm/build-node.sh b/wasm/build-node.sh
+index e693ea1..9aca691 100755
+--- a/wasm/build-node.sh
++++ b/wasm/build-node.sh
+@@ -37,8 +37,10 @@
+ #/*----------------------------------------------------------------------------*/
+ # Relink the WASM runtime (no recompilation of the interpreter) as a
+ # Node-only command-line ooRexx: the host file system (NODERAWFS), the host
+-# environment variables, external commands as host processes and the
+-# RexxAPI daemon shared by all WASM processes.
++# environment variables, external commands as host processes, the RexxAPI
++# daemon shared by all WASM processes, and real TCP/UDP sockets
++# (NODERAWSOCKETS: node:net/node:dgram instead of the WebSocket emulation of
++# the MEMFS build).
+ #
+ # Usage: wasm/build-node.sh [BUILD_DIR=build-wasm] [OUTDIR=BUILD_DIR/bin-node]
+ #   (BUILD_DIR: a build made by wasm/build-wasm.sh; EM_CONFIG from it)
+@@ -54,8 +56,8 @@ export EM_CONFIG="$BUILD/.emscripten"
+ cmd=$(cat "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
+ cmd=$(sed -E 's/--preload-file [^ ]+//g; s/-sENVIRONMENT=[^ ]+//; s/-sFORCE_FILESYSTEM=1//' <<<"$cmd")
+ cmd=${cmd//-o bin\/rexx.js/-o $OUT\/rexx.js}
+-(cd "$BUILD" && eval "$cmd" -sNODERAWFS=1 -sENVIRONMENT=node \
+-   --pre-js "$SRC/wasm/node-pre.js" ${EXTRA_LDFLAGS:-})
++(cd "$BUILD" && eval "$cmd" -sNODERAWFS=1 -sNODERAWSOCKETS=1 -sENVIRONMENT=node \
++   --pre-js "$SRC/wasm/node-pre.js" --pre-js "$SRC/wasm/node-sockets-pre.js" ${EXTRA_LDFLAGS:-})
+ cp "$BUILD/bin/rexx.img" "$OUT/"
+ # rexxtry, as native installs have it next to rexx (rexx rexxtry)
+ cp "$SRC/samples/rexxtry.rex" "$OUT/"
+diff --git a/wasm/emscripten-dns-proxy.js b/wasm/emscripten-dns-proxy.js
+index fe09488..6d38c01 100644
+--- a/wasm/emscripten-dns-proxy.js
++++ b/wasm/emscripten-dns-proxy.js
+@@ -54,4 +54,55 @@ addToLibrary({
+     var nameString = UTF8ToString(name);
+     return inetPton4(DNS.lookup_name(nameString));
+   },
++
++  /*
++   * Real name resolution for the Node build with real sockets
++   * (-sNODERAWSOCKETS, see wasm/node-sockets-pre.js): Emscripten's fake DNS
++   * would hand out 172.29.x.y addresses that node:net cannot use, never fails
++   * and knows no reverse names.  Used by rxsock instead of gethostbyname,
++   * gethostbyaddr and gethostname (wasmGetHostByName etc. in rxsockfn.cpp).
++   *   mode 0: arg = host name   -> "name\naddr\naddr..." (IPv4, dns.lookup:
++   *                                /etc/hosts + resolver, like getaddrinfo)
++   *   mode 1: arg = IPv4 string -> "name\naddr"  (dns.lookupService: getnameinfo)
++   *   mode 2: (no arg)          -> "hostname"    (os.hostname)
++   *   mode 3: (no arg)          -> "addr"        first non-loopback IPv4
++   *                                interface address (SockGetHostId)
++   * Returns the length written to out (NUL-terminated, truncated to outLen),
++   * -1 if the name/address is unknown, -2 if not available here (browser,
++   * WebSocket sockets): the caller then uses the libc function.
++   * Proxied to the main thread and asynchronous there (__async): the calling
++   * pthread blocks until the promise settles, the main event loop keeps
++   * running.  Only called from pthreads (the interpreter runs on one).
++   */
++  orxNodeResolve__deps: ['$UTF8ToString', '$stringToUTF8'],
++  orxNodeResolve__proxy: 'sync',
++  orxNodeResolve__async: true,
++  orxNodeResolve: (mode, arg, out, outLen) => {
++    if (!ENVIRONMENT_IS_NODE || typeof nodeSockOps == 'undefined') return Promise.resolve(-2);
++    var req = process.getBuiltinModule || require;
++    var dns = req('dns');
++    var put = (text) => { stringToUTF8(text, out, outLen); return Math.min(text.length, outLen - 1); };
++    if (mode == 2) return Promise.resolve(put(req('os').hostname()));
++    if (mode == 3) {
++      var ifs = req('os').networkInterfaces();
++      for (var n in ifs) for (var i of ifs[n]) {
++        if (i.family == 'IPv4' && !i.internal) return Promise.resolve(put(i.address));
++      }
++      return Promise.resolve(-1);
++    }
++    var name = UTF8ToString(arg);
++    return new Promise((resolve) => {
++      if (mode == 0) {
++        dns.lookup(name, { family: 4, all: true }, (err, addrs) => {
++          if (err || !addrs.length) resolve(-1);
++          else resolve(put([name].concat(addrs.map((a) => a.address)).join('\n')));
++        });
++      } else {
++        dns.lookupService(name, 0, (err, host) => {
++          if (err || !host) resolve(-1);
++          else resolve(put(host + '\n' + name));
++        });
++      }
++    });
++  },
+ });
+diff --git a/wasm/node-sockets-pre.js b/wasm/node-sockets-pre.js
+new file mode 100644
+index 0000000..741715c
+--- /dev/null
++++ b/wasm/node-sockets-pre.js
+@@ -0,0 +1,97 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++// --pre-js for the Node command-line build linked with -sNODERAWSOCKETS (real
++// TCP/UDP through node:net/node:dgram instead of WebSocket emulation).
++// Completes Emscripten 6.0.9's backend where ooRexx needs more:
++//  - SO_RCVTIMEO / SO_SNDTIMEO: the backend accepts and drops them, and
++//    getsockopt fails with ENOPROTOOPT.  Store them per socket; rxsock's
++//    blocking loops (wasmBlockingRetry) honour SO_RCVTIMEO like the kernel.
++//    wasm32 musl uses the 64-bit-time options 66/67 (struct timeval =
++//    {int64 tv_sec, int32 tv_usec, 4 bytes padding}); the old 20/21 take
++//    {long sec, long usec}.
++//  - SOL_SOCKET options Node cannot apply (SO_DEBUG, SO_DONTROUTE,
++//    SO_OOBINLINE, SO_RCVLOWAT, SO_SNDLOWAT) and SO_REUSEADDR (libuv forces
++//    it on at bind; the backend always reports 1): remember the value set and
++//    report it back with the Linux defaults, so programs see what they set.
++Module['preRun'] = (Module['preRun'] || []).concat([function() {
++  if (typeof nodeSockOps == 'undefined') return;
++  var setsockopt = nodeSockOps.setsockopt, getsockopt = nodeSockOps.getsockopt;
++  var SOL_SOCKET = 1;
++  var TIMEO = { 20: ['rcvtimeo', 8], 21: ['sndtimeo', 8], 66: ['rcvtimeo', 16], 67: ['sndtimeo', 16] };
++  // optname: [default, boolean]
++  var STORED = { 1: [0, 1], 2: [0, 1], 5: [0, 1], 10: [0, 1], 18: [1, 0], 19: [1, 0] };
++  nodeSockOps.setsockopt = function(sock, level, optname, optval, optlen) {
++    var st = level === SOL_SOCKET && STORED[optname];
++    if (st) {
++      if (optlen < 4) return -28;                        // EINVAL
++      var rc = setsockopt.apply(this, arguments);
++      if (rc) return rc;
++      var val = HEAP32[optval >> 2];
++      sock.opts ||= {};
++      (sock.opts.stored ||= {})[optname] = st[1] ? (val ? 1 : 0) : val;
++      return 0;
++    }
++    var t = level === SOL_SOCKET && TIMEO[optname];
++    if (!t) return setsockopt.apply(this, arguments);
++    if (optlen < t[1]) return -28;                       // EINVAL
++    var sec, usec;
++    if (t[1] == 16) { sec = Number(HEAP64[optval >> 3]); usec = HEAP32[(optval >> 2) + 2]; }
++    else { sec = HEAP32[optval >> 2]; usec = HEAP32[(optval >> 2) + 1]; }
++    if (sec < 0 || usec < 0 || usec >= 1000000) return -33;   // EDOM, as Linux
++    sock.opts ||= {};
++    sock.opts[t[0]] = [sec, usec];
++    return 0;
++  };
++  nodeSockOps.getsockopt = function(sock, level, optname, optval, optlen) {
++    var st = level === SOL_SOCKET && STORED[optname];
++    if (st) {
++      if (HEAP32[optlen >> 2] < 4) return -28;           // EINVAL
++      var stored = sock.opts && sock.opts.stored;
++      HEAP32[optval >> 2] = stored && optname in stored ? stored[optname] : st[0];
++      HEAP32[optlen >> 2] = 4;
++      return 0;
++    }
++    var t = level === SOL_SOCKET && TIMEO[optname];
++    if (!t) return getsockopt.apply(this, arguments);
++    if (HEAP32[optlen >> 2] < t[1]) return -28;          // EINVAL
++    var v = (sock.opts && sock.opts[t[0]]) || [0, 0];
++    if (t[1] == 16) { HEAP64[optval >> 3] = BigInt(v[0]); HEAP32[(optval >> 2) + 2] = v[1]; HEAP32[(optval >> 2) + 3] = 0; }
++    else { HEAP32[optval >> 2] = v[0]; HEAP32[(optval >> 2) + 1] = v[1]; }
++    HEAP32[optlen >> 2] = t[1];
++    return 0;
++  };
++}]);
+diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
+index 82124b9..e1c1cd8 100755
+--- a/wasm/tests/qualify-node-cli.sh
++++ b/wasm/tests/qualify-node-cli.sh
+@@ -109,6 +109,96 @@ check "rxapi daemon: session queue parent -> child" '^child got=parent$' -- "$X
+ check "in-process RexxAPI (ORX_WASM_RXAPI=inprocess)" '^2$' -- \
+   "ORX_WASM_RXAPI=inprocess $X -e 'push 1; queue 2; say queued()'"
+ 
++# --- real TCP/UDP sockets, name resolution
++cat > "$T/server.rex" <<'EOF'
++-- echo server: accepts N connections on 127.0.0.1:port, echoes one message each
++parse arg port n
++s = .socket~new; s~setOption('SO_REUSEADDR', 1)
++if s~bind(.inetaddress~new('127.0.0.1', port)) < 0 then do; say 'bind failed' s~errno; exit 1; end
++if s~listen(5) < 0 then do; say 'listen failed' s~errno; exit 1; end
++say 'listening'
++do n
++  cs = s~accept
++  if cs == .nil then do; say 'accept failed' s~errno; exit 1; end
++  cs~send(cs~recv(65536)); cs~close
++end
++s~close
++::requires 'socket.cls'
++EOF
++cat > "$T/client.rex" <<'EOF'
++parse arg host port msg
++c = .socket~new
++if c~connect(.inetaddress~new(host, port)) < 0 then do; say 'connect failed' c~errno; exit 1; end
++c~send(msg); say 'echo='c~recv(65536); c~close
++::requires 'socket.cls'
++EOF
++cat > "$T/threads.rex" <<'EOF'
++-- server thread and client in one process; 256 KiB echo
++srv = .socket~new; srv~setOption('SO_REUSEADDR', 1)
++srv~bind(.inetaddress~new('127.0.0.1', arg(1))); srv~listen(1)
++.echoer~new(srv)
++c = .socket~new; c~connect(.inetaddress~new('127.0.0.1', arg(1)))
++big = xrange()~copies(1024); c~send(big)
++got = .mutablebuffer~new
++do while got~length < big~length
++  d = c~recv(65536); if d == .nil | d == '' then leave; got~append(d)
++end
++say 'same=' || (got~string == big) 'len=' || got~length
++::class echoer
++::method init
++  use arg srv; reply
++  cs = srv~accept; total = 0
++  do while total < 262144; d = cs~recv(65536); if d == .nil | d == '' then leave; cs~send(d); total += d~length; end
++  cs~close; srv~close
++::requires 'socket.cls'
++EOF
++cat > "$T/timeout.rex" <<'EOF'
++s = .socket~new; s~setOption('SO_REUSEADDR', 1)
++say 'set='s~setOption('SO_RCVTIMEO', 300) 'get='s~getOption('SO_RCVTIMEO')
++s~bind(.inetaddress~new('127.0.0.1', arg(1))); s~listen(1)
++call time 'R'; cs = s~accept
++say 'accept='cs 'errno='s~errno 'elapsed='format(time('E'),,1)
++r.0 = 1; r.1 = s~string
++say 'select='SockSelect('r.', , , 0.2)
++::requires 'socket.cls'
++EOF
++cat > "$T/udp.rex" <<'EOF'
++-- UDP: receive one datagram on port, send it back upper-cased (or send+receive)
++parse arg mode port
++u = .socket~new(, 'SOCK_DGRAM')
++if mode = 'serve' then do
++  u~bind(.inetaddress~new('127.0.0.1', port)); say 'bound'
++  from = .inetaddress~new('0.0.0.0', 0); d = u~recvfrom(100, from)
++  a.!family = 'AF_INET'; a.!addr = from~address; a.!port = from~port
++  call SockSendTo u~string, d~upper, 'a.!'
++end
++else do
++  a.!family = 'AF_INET'; a.!addr = '127.0.0.1'; a.!port = port
++  call SockSendTo u~string, 'hello udp', 'a.!'
++  say 'reply='u~recvfrom(100, .inetaddress~new('0.0.0.0', 0))
++end
++u~close
++::requires 'socket.cls'
++EOF
++cat > "$T/dns.rex" <<'EOF'
++say 'localhost='SockGetHostByName('localhost', 'h.') h.addr
++say 'invalid='SockGetHostByName('no-such-host.invalid', 'x.')
++say 'reverse='SockGetHostByAddr('127.0.0.1', 'r.') r.name
++say 'hostname='.socket~gethostname
++say 'hostid='.socket~gethostid
++::requires 'socket.cls'
++EOF
++check "sockets: server and client in separate processes" '^echo=ping$' -- \
++  "$X server.rex 50110 1 & sleep 1.5; $X client.rex 127.0.0.1 50110 ping; wait"
++check "sockets: localhost, server thread, 256 KiB echo" '^same=1 len=262144$' -- "$X threads.rex 50111"
++check "sockets: SO_RCVTIMEO ends a blocking accept" '^set=0 get=300$' '^accept=The NIL object errno=EWOULDBLOCK elapsed=0\.[3-5]$' '^select=0$' -- \
++  "$X timeout.rex 50112"
++check "sockets: interop with a Python TCP client" '^py got b.pong.$' -- \
++  "$X server.rex 50113 1 & sleep 1.5; python3 -c \"import socket; c=socket.create_connection(('127.0.0.1',50113)); c.sendall(b'pong'); print('py got', c.recv(100))\"; wait"
++check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
++  "$X udp.rex serve 50114 & sleep 1.5; $X udp.rex send 50114; wait"
++check "name resolution (host resolver)" '^localhost=1 127\.0\.0\.1$' '^invalid=0$' '^reverse=1 ' "^hostname=$(hostname)\$" '^hostid=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' -- \
++  "$X dns.rex"
+ 
+ echo
+ if (( ${#FAILED[@]} )); then

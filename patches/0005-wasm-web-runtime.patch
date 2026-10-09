@@ -1,0 +1,1197 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
+Date: Sun, 4 Oct 2026 11:46:41 +0200
+Subject: [PATCH 5/5] WebAssembly port: browser runtime for web pages
+
+wasm/build-web.sh relinks the build into a modular browser runtime
+(createOoRexx) with a small page API, wasm/web/ooRexx.js:
+OoRexx.load() and run({args, files, cwd, env, stdin, onOut, onErr,
+onInput}) -> {write, close, stop, done}.
+
+- one Web Worker per run hosts the Emscripten runtime
+  (wasm/web/ooRexx-worker.js), the interpreter's pthreads are nested
+  workers; stop = terminate the worker; the compiled module and rexx.data
+  are fetched once;
+- interactive stdin (wasm/web-stdin.cpp, --wrap=read): fd 0 is served on
+  the calling pthread from a ring in shared memory with a futex wait;
+  LINES()/CHARS() work on it;
+- raw stdout/stderr, input files and cwd, files collected after the run;
+- onOut/onErr say what each piece is ('plain', 'trace', 'error' message)
+  and onInput whether the read is interactive trace's: a weak hook in
+  Activity.cpp (orx_wasm_mark) marks it per thread, and each write to
+  fd 1/2 (--wrap=write, one at a time) or read of fd 0 publishes the
+  thread's mark for the page, so threads writing at once keep their kinds;
+- the portable extension classes preloaded in /usr/lib/ooRexx;
+- Atomics.waitAsync hidden in the runtime's workers: WebKit sometimes loses
+  its wakeups, and a run whose system call proxied to the runtime's thread
+  is never answered hangs (~5-10% of runs); Emscripten then uses postMessage;
+- Date.now() with the resolution of performance.now(), so that MEMFS stamps
+  files with the interpreter's (sub-millisecond) clock;
+- .RexxInfo~libraryPath is /usr/lib/ooRexx/, where the classes are
+  preloaded; .RexxInfo~executable stays .nil (the executable, rexx.wasm,
+  comes from a URL, not from the program's file system);
+- test page wasm/tests/web-api.html, and wasm/tests/web-api.py: assertions
+  over the API in headless Chromium.
+---
+ common/platform/unix/SysProcess.cpp  |   9 ++
+ interpreter/concurrency/Activity.cpp |  54 +++++++
+ wasm/README.md                       |  54 +++++++
+ wasm/build-web.sh                    |  83 +++++++++++
+ wasm/tests/web-api.html              |  67 +++++++++
+ wasm/tests/web-api.py                | 150 ++++++++++++++++++++
+ wasm/web-pre.js                      | 205 +++++++++++++++++++++++++++
+ wasm/web-stdin.cpp                   | 157 ++++++++++++++++++++
+ wasm/web/ooRexx-worker.js            | 111 +++++++++++++++
+ wasm/web/ooRexx.js                   | 150 ++++++++++++++++++++
+ 10 files changed, 1040 insertions(+)
+ create mode 100755 wasm/build-web.sh
+ create mode 100644 wasm/tests/web-api.html
+ create mode 100755 wasm/tests/web-api.py
+ create mode 100644 wasm/web-pre.js
+ create mode 100644 wasm/web-stdin.cpp
+ create mode 100644 wasm/web/ooRexx-worker.js
+ create mode 100644 wasm/web/ooRexx.js
+
+diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
+index 01c7232..a6c467e 100644
+--- a/common/platform/unix/SysProcess.cpp
++++ b/common/platform/unix/SysProcess.cpp
+@@ -653,6 +653,15 @@ const char* SysProcess::getLibraryLocation()
+             free(resolved);
+         }
+     }
++    // The browser build (wasm/build-web.sh) cannot see rexx.js: the executable
++    // (rexx.wasm and rexx.js) was loaded from a URL, or the browser's cache,
++    // not from the program's file system, so there is no File to give for it
++    // (.RexxInfo~executable stays .nil).  Its library is the directory it
++    // preloads the extension classes into, which is in that file system.
++    if (libraryLocation == NULL && access("/usr/lib/ooRexx/", F_OK) == 0)
++    {
++        libraryLocation = "/usr/lib/ooRexx/";
++    }
+     return libraryLocation;
+ #elif defined(HAVE_DLADDR)
+     Dl_info dlInfo;
+diff --git a/interpreter/concurrency/Activity.cpp b/interpreter/concurrency/Activity.cpp
+index 8848967..3b1f460 100644
+--- a/interpreter/concurrency/Activity.cpp
++++ b/interpreter/concurrency/Activity.cpp
+@@ -85,6 +85,52 @@
+ #include <atomic>
+ #include <unordered_map>
+ 
++#ifdef __EMSCRIPTEN__
++// The WebAssembly browser build (wasm/web-stdin.cpp) defines this hook to tell
++// the page what goes to it: trace lines, error messages, reads of .debugInput.
++// Weak: the other builds do not have it.
++extern "C" int orx_wasm_mark(int which, int value) __attribute__((weak));
++
++/**
++ * While alive, marks what the interpreter is doing for the browser build:
++ * which = 0, the kind of output (1 trace, 2 error message; an error message
++ * keeps its kind through the trace output that writes it); which = 1, a read
++ * of interactive debug input.
++ */
++class WasmMark
++{
++  public:
++    WasmMark(int which, int value)
++    {
++        if (orx_wasm_mark != nullptr)
++        {
++            slot = which;
++            previous = orx_wasm_mark(which, -1);
++            if (!(which == 0 && value == 1 && previous == 2))
++            {
++                orx_wasm_mark(which, value);
++            }
++        }
++    }
++    ~WasmMark()
++    {
++        if (slot >= 0)
++        {
++            orx_wasm_mark(slot, previous);
++        }
++    }
++  private:
++    int slot = -1;
++    int previous = 0;
++};
++#else
++class WasmMark
++{
++  public:
++    WasmMark(int, int) { }
++};
++#endif
++
+ 
+ const size_t ACT_STACK_SIZE = 20;
+ 
+@@ -1440,6 +1486,9 @@ void Activity::display(DirectoryClass *exobj)
+         }
+     }
+ 
++    // what follows is the error message (the page tells it from trace)
++    WasmMark errorMark(0, 2);
++
+     // get the error code, and format a message header
+     RexxString *rc = (RexxString *)exobj->get(GlobalNames::RC);
+     wholenumber_t errorCode = Interpreter::messageNumber(rc);
+@@ -1497,6 +1546,8 @@ void Activity::display(DirectoryClass *exobj)
+  */
+ void Activity::displayDebug(DirectoryClass *exobj)
+ {
++    WasmMark errorMark(0, 2);
++
+     // get the leading part to indicate this is a debug error, then compose the full
+     // message
+     RexxString *text = Interpreter::getMessageText(Message_Translations_debug_error);
+@@ -3260,6 +3311,8 @@ SecurityManager* Activity::getInstanceSecurityManager()
+  */
+ void Activity::traceOutput(RexxActivation *activation, RexxString *line, StringTable *traceObject)
+ {
++    WasmMark traceMark(0, 1);
++
+     if (callTraceExit(activation, line))
+     {
+         // if in profiling mode we only let collect the traceObjects,
+@@ -3330,6 +3383,7 @@ void Activity::sayOutput(RexxActivation *activation, RexxString *line)
+ RexxString* Activity::traceInput(RexxActivation *activation)
+ {
+     RexxString *value;
++    WasmMark debugMark(1, 1);
+ 
+     if (callDebugInputExit(activation, value))
+     {
+diff --git a/wasm/README.md b/wasm/README.md
+index f80cd62..728f384 100644
+--- a/wasm/README.md
++++ b/wasm/README.md
+@@ -142,6 +142,60 @@ threads, SysSleep, RxSock and `.StreamSocket` over WebSocket, external data
+ queue, rxregexp, rxmath, deep recursion (Error 11, at a depth set by the
+ browser; see the limits below).
+ 
++## Browser build for pages (`wasm/build-web.sh`)
++
++`wasm/build-web.sh [BUILD_DIR]` relinks the runtime (no recompilation) into
++`BUILD_DIR/bin-web` for use from a web page:
++
++* modular (`createOoRexx` factory), hosted in a dedicated Web Worker
++  (`web/ooRexx-worker.js`): one fresh interpreter per run, the page never
++  blocks, and terminating the worker stops the run and all its threads;
++* interactive standard input: `read()` of fd 0 is wrapped
++  (`-Wl,--wrap=read`, `web-stdin.cpp`) and served on the calling pthread from
++  a ring in shared memory that the main runtime thread fills when the page
++  sends input (`web-pre.js`); `LINES()`/`CHARS()` see what is buffered;
++* standard output and error as raw bytes, so a `CHAROUT` prompt shows before
++  the program waits;
++* what the interpreter writes is marked for the page: trace lines (an error's
++  traceback included) and error messages, wherever `.traceOutput` sends them,
++  and whether a read is interactive trace's (`.debugInput`).  `Activity.cpp`
++  calls a weak hook, `orx_wasm_mark()`, defined only by this build
++  (`web-stdin.cpp`); the marks live in the shared stdin ring, where
++  `web-pre.js` reads them as the bytes are written or the input is requested;
++* the portable extension classes preloaded in `/usr/lib/ooRexx` (`REXX_PATH`);
++* `Atomics.waitAsync` hidden (`web-pre.js`): WebKit sometimes loses its
++  wakeups, and Emscripten uses it to tell a thread that work was proxied to
++  it (the interpreter's system calls go to the runtime's thread, where MEMFS
++  lives), which left ~5-10% of runs hanging; without it Emscripten notifies
++  by postMessage;
++* `Date.now()` with the resolution of `performance.now()` (`web-pre.js`), so
++  that MEMFS stamps files with the interpreter's clock (a file written now no
++  longer looks older than the moment it was written at); MEMFS still reads
++  file times back in whole milliseconds (its `stat()` goes through a JS Date);
++* `.RexxInfo~libraryPath` is `/usr/lib/ooRexx/`, the directory of the
++  preloaded classes; `.RexxInfo~executable` is .nil: the executable
++  (`rexx.wasm`, `rexx.js`) was loaded from a URL, or the browser's cache,
++  not from the program's file system, so there is no File to give for it.
++
++The page API is `web/ooRexx.js`:
++
++```js
++const rexx = await OoRexx.load();       // compiles rexx.wasm, fetches rexx.data once
++const run = rexx.run({ args: ['prog.rex'], files: {'/home/rexx/prog.rex': src},
++                       onOut, onErr, onInput });
++run.write('line\n'); run.close();       // interactive stdin; or stdin: '...' up front
++run.stop();
++const { rc, files, stopped, ms } = await run.done;
++// onOut(text, kind), onErr(text, kind): kind is 'trace', 'error' (an error
++// message) or 'plain'; onInput({debug}): debug when .debugInput is reading
++```
++
++`wasm/tests/web-api.html` is a minimal page over it. The page must be cross-origin
++isolated (see above).  `wasm/tests/web-api.py BIN_WEB` runs assertions over the
++API in headless Chromium (Python Playwright): output, interactive and fixed
++stdin, EOF, stop, threads, files in and out, extension classes, rexxtry,
++trace and error marks, debug input.
++
+ ## Known limitations / deliberate non-claims
+ 
+ * WebSocket transport (browser, and the MEMFS build under Node): listening
+diff --git a/wasm/build-web.sh b/wasm/build-web.sh
+new file mode 100755
+index 0000000..62f7ae3
+--- /dev/null
++++ b/wasm/build-web.sh
+@@ -0,0 +1,83 @@
++#!/usr/bin/env bash
++#/*----------------------------------------------------------------------------*/
++#/*                                                                            */
++#/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++#/*                                                                            */
++#/* This program and the accompanying materials are made available under       */
++#/* the terms of the Common Public License v1.0 which accompanies this         */
++#/* distribution. A copy is also available at the following address:           */
++#/* https://www.oorexx.org/license.html                                        */
++#/*                                                                            */
++#/* Redistribution and use in source and binary forms, with or                 */
++#/* without modification, are permitted provided that the following            */
++#/* conditions are met:                                                        */
++#/*                                                                            */
++#/* Redistributions of source code must retain the above copyright             */
++#/* notice, this list of conditions and the following disclaimer.              */
++#/* Redistributions in binary form must reproduce the above copyright          */
++#/* notice, this list of conditions and the following disclaimer in            */
++#/* the documentation and/or other materials provided with the distribution.   */
++#/*                                                                            */
++#/* Neither the name of Rexx Language Association nor the names                */
++#/* of its contributors may be used to endorse or promote products             */
++#/* derived from this software without specific prior written permission.      */
++#/*                                                                            */
++#/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++#/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++#/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++#/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++#/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++#/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++#/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++#/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++#/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++#/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++#/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++#/*                                                                            */
++#/*----------------------------------------------------------------------------*/
++# Relink the WASM runtime for the browser (no recompilation of the
++# interpreter): a modular build (createOoRexx factory) meant to run inside a
++# Web Worker (web/ooRexx-worker.js), with interactive standard input
++# (web-stdin.cpp + web-pre.js) and every portable extension class preloaded
++# into /usr/lib/ooRexx (REXX_PATH).  The page API is web/ooRexx.js.
++#
++# Usage: wasm/build-web.sh [BUILD_DIR=build-wasm] [OUTDIR=BUILD_DIR/bin-web]
++#   (BUILD_DIR: a build made by wasm/build-wasm.sh; EM_CONFIG from it)
++# Output: OUTDIR/{rexx.js,rexx.wasm,rexx.data,ooRexx.js,ooRexx-worker.js}
++set -euo pipefail
++SRC=$(cd "$(dirname "$0")/.." && pwd)
++BUILD=$(cd "${1:-$SRC/build-wasm}" && pwd)
++OUT=${2:-$BUILD/bin-web}; mkdir -p "$OUT"; OUT=$(cd "$OUT" && pwd)
++export EM_CONFIG="$BUILD/.emscripten"
++EMXX=$(sed -E 's/ .*//' "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
++
++# the interactive stdin (read() of fd 0 served from a ring in shared memory)
++"$EMXX" -O3 -pthread -c "$SRC/wasm/web-stdin.cpp" -o "$BUILD/web-stdin.o"
++
++# the portable extension classes (not ncurses: no native library here)
++PRELOAD=()
++for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp.cls \
++           rxftp/rxftp.cls rxregexp/rxregexp.cls json/json.cls yaml/yaml.cls \
++           csvStream/csvStream.cls dateparser/dateparser.cls; do
++  PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
++done
++
++# Emscripten's default list plus mainScriptUrlOrBlob: the pthreads must load
++# rexx.js, not the worker script that hosts the runtime
++INCOMING="[ENVIRONMENT,arguments,canvas,dynamicLibraries,elementPointerLock,instantiateWasm,\
++locateFile,monitorRunDependencies,noExitRuntime,noInitialRun,onAbort,onExit,onRuntimeInitialized,\
++postRun,preInit,preRun,print,printErr,setStatus,statusMessage,stderr,stdin,stdout,thisProgram,\
++wasm,websocket,mainScriptUrlOrBlob]"
++
++cmd=$(cat "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
++cmd=$(sed -E 's/--preload-file [^ ]+//g; s/-sENVIRONMENT=[^ ]+//' <<<"$cmd")
++cmd=${cmd//-o bin\/rexx.js/-o $OUT\/rexx.js}
++(cd "$BUILD" && eval "$cmd" "$BUILD/web-stdin.o" \
++   -Wl,--wrap=read,--wrap=write \
++   -sENVIRONMENT=web,worker -sMODULARIZE=1 -sEXPORT_NAME=createOoRexx \
++   "-sINCOMING_MODULE_JS_API=$INCOMING" \
++   --pre-js "$SRC/wasm/web-pre.js" \
++   --preload-file "$BUILD/bin/rexx.img@/rexx.img" \
++   "${PRELOAD[@]}" ${EXTRA_LDFLAGS:-})
++cp "$SRC/wasm/web/ooRexx.js" "$SRC/wasm/web/ooRexx-worker.js" "$OUT/"
++ls -l "$OUT" | awk 'NR>1{print $5, $9}'
+diff --git a/wasm/tests/web-api.html b/wasm/tests/web-api.html
+new file mode 100644
+index 0000000..e3fc7a7
+--- /dev/null
++++ b/wasm/tests/web-api.html
+@@ -0,0 +1,67 @@
++<!doctype html><meta charset="utf-8"><title>ooRexx/WASM web API test</title>
++<!--
++/*============================================================================*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*============================================================================*/
++-->
++<pre id="log"></pre>
++<script src="ooRexx.js"></script>
++<script>
++// window.rexxRun(source, {stdin, inputs, stopAfterMs, args, files}) -> result
++// (trace: the output marked as trace, errmsg: marked as an error message,
++// debug: one flag per input request, true when .debugInput asked)
++// inputs: lines typed one per input request (interactive stdin); then EOF
++let rexx = null;
++window.rexxReady = OoRexx.load().then((r) => { rexx = r; return true; }, (e) => String(e));
++window.rexxRun = async (source, o = {}) => {
++  let out = '', err = '', asks = 0, trace = '', errmsg = '';
++  const debug = [];
++  const mark = (t, kind) => { if (kind === 'trace') trace += t; else if (kind === 'error') errmsg += t; };
++  const inputs = (o.inputs || []).slice();
++  const files = Object.assign({ '/home/rexx/prog.rex': source }, o.files || {});
++  const run = rexx.run({
++    args: ['prog.rex'].concat(o.args || []), files, stdin: o.stdin,
++    onOut: (t, kind) => { out += t; mark(t, kind); }, onErr: (t, kind) => { err += t; mark(t, kind); },
++    onInput: (info) => { asks++; debug.push(!!(info && info.debug));
++      if (inputs.length) run.write(inputs.shift() + '\n'); else run.close(); },
++  });
++  if (o.stopAfterMs) setTimeout(() => run.stop(), o.stopAfterMs);
++  const r = await run.done;
++  const files2 = {};
++  for (const [p, b] of Object.entries(r.files)) files2[p] = new TextDecoder().decode(b);
++  return { out, err, asks, trace, errmsg, debug, rc: r.rc, stopped: r.stopped, error: r.error, ms: Math.round(r.ms), files: files2 };
++};
++</script>
+diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
+new file mode 100755
+index 0000000..6467a39
+--- /dev/null
++++ b/wasm/tests/web-api.py
+@@ -0,0 +1,150 @@
++#/*----------------------------------------------------------------------------*/
++#/*                                                                            */
++#/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++#/*                                                                            */
++#/* This program and the accompanying materials are made available under       */
++#/* the terms of the Common Public License v1.0 which accompanies this         */
++#/* distribution. A copy is also available at the following address:           */
++#/* https://www.oorexx.org/license.html                                        */
++#/*                                                                            */
++#/* Redistribution and use in source and binary forms, with or                 */
++#/* without modification, are permitted provided that the following            */
++#/* conditions are met:                                                        */
++#/*                                                                            */
++#/* Redistributions of source code must retain the above copyright             */
++#/* notice, this list of conditions and the following disclaimer.              */
++#/* Redistributions in binary form must reproduce the above copyright          */
++#/* notice, this list of conditions and the following disclaimer in            */
++#/* the documentation and/or other materials provided with the distribution.   */
++#/*                                                                            */
++#/* Neither the name of Rexx Language Association nor the names                */
++#/* of its contributors may be used to endorse or promote products             */
++#/* derived from this software without specific prior written permission.      */
++#/*                                                                            */
++#/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++#/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++#/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++#/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++#/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++#/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++#/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++#/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++#/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++#/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++#/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++#/*                                                                            */
++#/*----------------------------------------------------------------------------*/
++"""Assertions over the browser API of the web build (wasm/build-web.sh).
++
++Usage: python3 wasm/tests/web-api.py BIN_WEB
++  BIN_WEB: the output directory of wasm/build-web.sh
++Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP
++on 127.0.0.1:8001 and runs the cases in headless Chromium.  Needs Python
++Playwright with Chromium.  Exit status 1 on any failure.
++"""
++import json, os, shutil, subprocess, sys, time
++from playwright.sync_api import sync_playwright
++
++if len(sys.argv) != 2:
++    sys.exit("usage: web-api.py BIN_WEB")
++BIN = sys.argv[1]
++SRC = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
++shutil.copy(f"{SRC}/wasm/tests/web-api.html", BIN)
++srv = subprocess.Popen([sys.executable, "-c", f"""
++import os, sys
++from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
++os.chdir({BIN!r})
++class H(SimpleHTTPRequestHandler):
++    def end_headers(self):
++        self.send_header('Cross-Origin-Opener-Policy','same-origin')
++        self.send_header('Cross-Origin-Embedder-Policy','require-corp')
++        self.send_header('Cache-Control','no-store')
++        super().end_headers()
++    def log_message(self, *a): pass
++ThreadingHTTPServer(('127.0.0.1',8001),H).serve_forever()
++"""])
++import atexit; atexit.register(srv.terminate)
++time.sleep(0.7)
++
++CASES = [
++  ("say", 'say "hello"', {}, lambda r: r["out"] == "hello\n" and r["rc"] == 0),
++  ("rc", 'exit 3', {}, lambda r: r["rc"] == 3),
++  ("utf8", 'say "añø€"', {}, lambda r: r["out"] == "añø€\n"),
++  ("stderr", 'call lineout "STDERR", "oops"', {}, lambda r: r["err"] == "oops\n"),
++  ("syntax error", 'say 1 +', {}, lambda r: "Error 35" in r["err"] and r["rc"] != 0),
++  ("fixed stdin", 'do while lines() > 0; parse pull l; say "<"l">"; end',
++     {"stdin": "a\nb\nc\n"}, lambda r: r["out"] == "<a>\n<b>\n<c>\n"),
++  ("interactive pull", 'call charout , "Name? "; parse pull n; say "Hi" n"!"; pull x; say "x=" x',
++     {"inputs": ["Ana", "two"]}, lambda r: r["out"] == "Name? Hi Ana!\nx= TWO\n" and r["asks"] == 2),
++  ("eof", 'l = linein(); say "eof=" lines() "["l"]"; say "done"', {"inputs": []},
++     lambda r: r["out"].endswith("done\n") and r["asks"] >= 1),
++  # transient stream: CHARS() is 1 while data is waiting (as native ooRexx)
++  ("chars()", 'say chars(); parse pull .; say chars()', {"stdin": "abc\n"}, lambda r: r["out"] == "1\n0\n"),
++  ("stop loop", 'do forever; nop; end', {"stopAfterMs": 1500},
++     lambda r: r["stopped"] and r["rc"] is None),
++  ("start threads", 'do i = 1 to 3; o = .x~new; o~start("go", i); end; call syssleep 0.5\n'
++                    '::class x; ::method go; use arg i; say "t" i',
++     {}, lambda r: sorted(r["out"].split("\n")[:3]) == ["t 1", "t 2", "t 3"]),
++  ("files out", 'call lineout "out.txt", "data"; call lineout "out.txt"', {},
++     lambda r: r["files"].get("/home/rexx/out.txt") == "data\n"),
++  ("files in", 'say linein("in.txt")', {"files": {"/home/rexx/in.txt": "from page\n"}},
++     lambda r: r["out"] == "from page\n"),
++  ("requires json", 'j = .json~new; say j~toJSON(.array~of(1,2))\n::requires "json.cls"', {},
++     lambda r: "[1,2]" in r["out"].replace(" ", "")),
++  ("requires rxregexp", 'm = .RegularExpression~new("a+b"); say m~match("aaab")\n::requires "rxregexp.cls"',
++     {}, lambda r: r["out"] == "1\n"),
++  ("rexxtry", 'call "/home/rexx/rexxtry.rex"',
++     {"files": {"/home/rexx/rexxtry.rex": open(f"{SRC}/samples/rexxtry.rex").read()},
++      "inputs": ["say 6*7", "x = 'abc'; say reverse(x)", "exit"]},
++     lambda r: "42\n" in r["out"] and "cba\n" in r["out"] and r["asks"] == 3),
++  ("args", 'parse arg a; say "["a"]"', {"args": ["x", "y"]}, lambda r: r["out"] == "[x y]\n"),
++  ("trace ?", 'trace ?r; a = 1; b = 2; say a + b', {"inputs": ["", "", "", ""]},
++     lambda r: r["out"].endswith("3\n") and r["asks"] >= 2),
++  # what the interpreter writes is marked: trace lines, error messages
++  ("trace marked", 'call lineout "STDERR", "plain"; trace r; a = 1 + 2; trace off', {},
++     lambda r: "*-* a = 1 + 2" in r["trace"] and ">>>" in r["trace"] and "plain" not in r["trace"]
++               and "plain\n" in r["err"] and r["errmsg"] == ""),
++  ("error marked", 'x = 1\ncall nosuchroutine', {},
++     lambda r: "Error 43 running" in r["errmsg"] and "Error 43.1:" in r["errmsg"]
++               and "*-* call nosuchroutine" in r["trace"] and "Error" not in r["trace"]),
++  ("trace to stdout", '.traceOutput~destination(.output); trace r; a = 1', {},
++     lambda r: "*-* a = 1" in r["out"] and "*-* a = 1" in r["trace"] and r["err"] == ""),
++  # interactive trace reads .debugInput, PULL reads .input: each request says which
++  ("debug input", 'trace ?r; a = 1; pull x; say "x=[" || x || "]"', {"inputs": [""] * 8},
++     lambda r: "x=[]" in r["out"] and True in r["debug"] and False in r["debug"]),
++  # the marks are per thread: several threads tracing and writing at once
++  ("marks per thread", '.traceObject~option = "s"; c = .c~new\n'
++                       'do i = 1 to 4; .w~new~start("run", i, c); end; c~wait(4); say "total" c~n\n'
++                       '::class w; ::method run; use arg n, c\n'
++                       '  do step = 1 to 3; call SysSleep 0.01 * n; say "  worker" n "step" step; end; c~add\n'
++                       '::class c; ::attribute n get; ::method init; expose n; n = 0\n'
++                       '::method add; expose n; n += 1\n'
++                       '::method wait; expose n; use arg k; guard on when n >= k\n'
++                       '::options trace r', {},
++     lambda r: r["out"].count("  worker") == 12 and "total 4\n" in r["out"] and "*-*" in r["err"]
++               and r["err"] == r["trace"] and r["errmsg"] == ""),
++]
++
++fails = 0; ran = 0
++with sync_playwright() as p:
++    b = p.chromium.launch(args=["--no-sandbox"])
++    pg = b.new_page()
++    pg.goto("http://127.0.0.1:8001/web-api.html")
++    ready = pg.evaluate("window.rexxReady")
++    if ready is not True:
++        print("FAIL load:", ready); sys.exit(1)
++    only = os.environ.get("ONLY")
++    for name, src, opts, check in CASES:
++        if only and only not in name: continue
++        try:
++            r = pg.evaluate("([s, o]) => window.rexxRun(s, o)", [src, opts])
++        except Exception as e:
++            r = {"exception": str(e)}
++        try: ok = check(r)
++        except Exception: ok = False
++        fails += not ok; ran += 1
++        print(("ok  " if ok else "FAIL"), f"{name:20}", json.dumps(r, ensure_ascii=False)[:300] if not ok or os.environ.get("SHOW") else f"{r.get('ms')} ms")
++    b.close()
++srv.terminate()
++print(f"== {ran - fails} passed, {fails} failed")
++sys.exit(1 if fails else 0)
+diff --git a/wasm/web-pre.js b/wasm/web-pre.js
+new file mode 100644
+index 0000000..b6c9029
+--- /dev/null
++++ b/wasm/web-pre.js
+@@ -0,0 +1,205 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*
++ * ooRexx/WASM browser build (wasm/build-web.sh): runs on the main runtime
++ * thread, which wasm/web/ooRexx-worker.js puts in a dedicated Web Worker.
++ *
++ *  - standard output and error as raw bytes (Module.orxOut / Module.orxErr,
++ *    batched per task), not as lines: a prompt written with CHAROUT must
++ *    show before the program waits for input.  Each batch says what the
++ *    interpreter was writing ('plain', 'trace' or 'error' for an error
++ *    message), as marked by its orx_wasm_mark hook (wasm/web-stdin.cpp);
++ *  - the producer side of the standard input ring of wasm/web-stdin.cpp:
++ *    Module.orxStdinWrite(bytes), Module.orxStdinClose(); the program asking
++ *    for input calls Module.orxStdinWanted(debug) (set by the worker), debug
++ *    being true when the read is interactive trace's (.debugInput);
++ *  - ioctl(0, FIONREAD) answers the bytes the program can read without
++ *    waiting, so LINES() and CHARS() on STDIN work;
++ *  - REXX_PATH points at the preloaded extension classes;
++ *  - Atomics.waitAsync is hidden (see below).
++ */
++
++// WebKit (Safari 26) sometimes loses an Atomics.waitAsync wakeup.  Emscripten
++// uses waitAsync to tell a thread that work was proxied to it, above all the
++// interpreter thread's system calls to the main runtime thread (MEMFS lives
++// there): a lost wakeup leaves the run hanging for good, in ~5-10% of runs
++// (2000 proxied stat() calls from a pthread: 10/100 runs hang in WebKit, none
++// in Chromium or Firefox).  Without waitAsync, Emscripten notifies by
++// postMessage, as for browsers that lack it; no measurable cost elsewhere.
++// Top level, so that it runs in the runtime's worker and in every pthread
++// before Emscripten checks for waitAsync.
++try { Atomics.waitAsync = undefined; } catch (e) {}
++
++// MEMFS stamps files with Date.now(), whole milliseconds, while the
++// interpreter's clock has sub-millisecond resolution (TimeSupport.cpp): a file
++// written now would look older than the time it was written at, and
++// fractional times set on a file would be cut.  The same wall clock with the
++// resolution of performance.now() keeps them in step, as native file systems
++// do.  Top level, for the runtime's worker (MEMFS lives there) and pthreads.
++try {
++  if (typeof performance !== 'undefined' && performance.timeOrigin)
++    Date.now = function() { return performance.timeOrigin + performance.now(); };
++} catch (e) {}
++
++Module['preRun'] = (Module['preRun'] || []).concat([function() {
++  // ---- output -------------------------------------------------------------
++  var KINDS = ['plain', 'trace', 'error'];
++  function kindNow() {                      // what the interpreter is writing (web-stdin.cpp)
++    return KINDS[Atomics.load(HEAP32, (ring + 24) >> 2)] || 'plain';
++  }
++  function batcher(sink) {
++    var buf = [], scheduled = false, kind = 'plain';
++    function flush() {
++      scheduled = false;
++      if (buf.length === 0) return;
++      var bytes = new Uint8Array(buf);
++      buf = [];
++      if (Module[sink]) Module[sink](bytes, kind);
++    }
++    return {
++      put: function(b) {
++        var k = kindNow();
++        if (k !== kind) { flush(); kind = k; }
++        buf.push(b & 255);
++        if (buf.length >= 65536) flush();
++        else if (!scheduled) { scheduled = true; setTimeout(flush, 0); }
++      },
++      flush: flush
++    };
++  }
++  var out = batcher('orxOut'), err = batcher('orxErr');
++  Module['orxFlush'] = function() { out.flush(); err.flush(); };
++  TTY.default_tty_ops.put_char = function(tty, val) { if (val !== null) out.put(val); };
++  TTY.default_tty_ops.fsync = function(tty) { out.flush(); };
++  TTY.default_tty1_ops.put_char = function(tty, val) { if (val !== null) err.put(val); };
++  TTY.default_tty1_ops.fsync = function(tty) { err.flush(); };
++
++  // ---- standard input ring (layout: wasm/web-stdin.cpp) --------------------
++  var ring = _orx_wasm_stdin_ring(), size = _orx_wasm_stdin_ring_size();
++  var SEQ = ring >> 2, EOF = (ring + 4) >> 2, WAITING = (ring + 8) >> 2,
++      HEAD = (ring + 12) >> 2, TAIL = (ring + 16) >> 2, ACTIVE = (ring + 20) >> 2,
++      DATA = ring + 32;
++  var pending = [], closed = false;        // bytes the ring could not take yet
++
++  function pump() {
++    var head = Atomics.load(HEAPU32, HEAD), tail = Atomics.load(HEAPU32, TAIL);
++    var room = size - ((head - tail) >>> 0), moved = 0;
++    while (pending.length && room > 0) {
++      var chunk = pending[0], n = Math.min(chunk.length, room);
++      for (var i = 0; i < n; i++) HEAPU8[DATA + ((head + i) >>> 0) % size] = chunk[i];
++      head = (head + n) >>> 0;
++      room -= n; moved += n;
++      if (n === chunk.length) pending.shift(); else pending[0] = chunk.subarray(n);
++    }
++    if (moved) Atomics.store(HEAPU32, HEAD, head);
++    if (closed && pending.length === 0) Atomics.store(HEAP32, EOF, 1);
++    if (moved || closed) { Atomics.add(HEAP32, SEQ, 1); Atomics.notify(HEAP32, SEQ); }
++  }
++  Module['orxStdinWrite'] = function(bytes) {
++    if (closed || !bytes.length) return;
++    pending.push(bytes);
++    pump();
++  };
++  Module['orxStdinClose'] = function() { closed = true; pump(); };
++  Module['orxStdinAvailable'] = function() {
++    var n = (Atomics.load(HEAPU32, HEAD) - Atomics.load(HEAPU32, TAIL)) >>> 0;
++    for (var i = 0; i < pending.length; i++) n += pending[i].length;
++    return n;
++  };
++  var wanted = Module['orxStdinWanted'];
++  Module['orxStdinWanted'] = function() {
++    pump();                                 // the ring may have room again
++    if (Atomics.load(HEAP32, WAITING) && Atomics.load(HEAPU32, HEAD) === Atomics.load(HEAPU32, TAIL) &&
++        !Atomics.load(HEAP32, EOF)) {
++      out.flush(); err.flush();
++      if (wanted) wanted(Atomics.load(HEAP32, (ring + 28) >> 2) === 1);
++    }
++  };
++  Atomics.store(HEAP32, ACTIVE, 1);
++
++  // LINES()/CHARS() on STDIN: SysFile::hasData() asks ioctl(FIONREAD)
++  // (arg is on a pthread stack, possibly above the memory this thread last
++  // saw: refresh the views if another thread grew the memory)
++  var FIONREAD = 0x541B, origIoctl = FS.ioctl;
++  FS.ioctl = function(stream, cmd, arg) {
++    if (cmd === FIONREAD && stream.fd === 0) {
++      if (HEAP8.buffer !== wasmMemory.buffer) updateMemoryViews();
++      HEAP32[arg >> 2] = Module['orxStdinAvailable']();
++      return 0;
++    }
++    return origIoctl(stream, cmd, arg);
++  };
++
++  ENV['REXX_PATH'] = '/usr/lib/ooRexx';     // the preloaded extension classes
++  ENV['HOME'] = '/home/rexx';
++  if (Module['orxEnv']) for (var k in Module['orxEnv']) ENV[k] = Module['orxEnv'][k];
++
++  // ---- files ----------------------------------------------------------------
++  // Module.orxFiles: {path: Uint8Array} written before the program starts;
++  // Module.orxCwd: the working directory (created if needed).
++  function mkdirs(dir) {
++    var parts = dir.split('/').filter(Boolean), p = '';
++    for (var i = 0; i < parts.length; i++) {
++      p += '/' + parts[i];
++      try { FS.mkdir(p); } catch (e) { /* exists */ }
++    }
++  }
++  var files = Module['orxFiles'] || {};
++  for (var path in files) {
++    mkdirs(path.slice(0, path.lastIndexOf('/')));
++    FS.writeFile(path, files[path]);
++  }
++  if (Module['orxCwd']) { mkdirs(Module['orxCwd']); FS.chdir(Module['orxCwd']); }
++
++  // Module.orxCollect(dir): {path: Uint8Array} of the regular files under dir
++  Module['orxCollect'] = function(dir) {
++    var found = {};
++    (function walk(d) {
++      var names;
++      try { names = FS.readdir(d); } catch (e) { return; }
++      for (var i = 0; i < names.length; i++) {
++        if (names[i] === '.' || names[i] === '..') continue;
++        var p = d + '/' + names[i], st = FS.stat(p);
++        if (FS.isDir(st.mode)) walk(p);
++        else if (FS.isFile(st.mode)) found[p] = FS.readFile(p);
++      }
++    })(dir.replace(/\/$/, ''));
++    return found;
++  };
++
++  if (Module['orxReady']) Module['orxReady']();
++}]);
+diff --git a/wasm/web-stdin.cpp b/wasm/web-stdin.cpp
+new file mode 100644
+index 0000000..0167faa
+--- /dev/null
++++ b/wasm/web-stdin.cpp
+@@ -0,0 +1,157 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:          */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*
++ * Interactive standard input for the browser build (wasm/build-web.sh).
++ *
++ * In the browser the interpreter runs on a pthread (PROXY_TO_PTHREAD) and the
++ * Emscripten file system lives on the main runtime thread, where blocking is
++ * not allowed: a read() of the TTY there cannot wait for the user.  So the
++ * web link wraps read() (-Wl,--wrap=read) and serves fd 0 here, on the
++ * calling thread: bytes come from a small ring in the shared linear memory,
++ * filled by the main runtime thread (wasm/web-pre.js) when the page supplies
++ * input, and the reader waits on a futex.  When the ring is empty the reader
++ * tells the main runtime thread that input is wanted, which forwards the
++ * request to the page.  Every other descriptor goes to the real read().
++ *
++ * The page side is single producer (the main runtime thread), the consumer
++ * side is serialized by a mutex (two Rexx threads may read STDIN).
++ */
++
++#include <emscripten.h>
++#include <emscripten/threading.h>
++#include <pthread.h>
++#include <stdint.h>
++#include <string.h>
++#include <unistd.h>
++
++#define ORX_STDIN_RING_SIZE 65536
++
++extern "C"
++{
++
++// Shared with wasm/web-pre.js: keep the layout in sync (offsets in bytes).
++typedef struct
++{
++    volatile int32_t  seq;      //  0: bumped by the producer on every change
++    volatile int32_t  eof;      //  4: producer: no more input after the ring
++    volatile int32_t  waiting;  //  8: consumer: blocked for input
++    volatile uint32_t head;     // 12: producer write position (mod size)
++    volatile uint32_t tail;     // 16: consumer read position (mod size)
++    volatile int32_t  active;   // 20: producer: the page serves stdin
++    volatile int32_t  kind;     // 24: during a write to fd 1/2, the writer's mark (0 plain, 1 trace, 2 error)
++    volatile int32_t  debug;    // 28: the reader's mark: the read in progress is .debugInput's
++    char data[ORX_STDIN_RING_SIZE];  // 32
++} OrxStdinRing;
++
++static OrxStdinRing orxStdinRing;
++static pthread_mutex_t orxStdinLock = PTHREAD_MUTEX_INITIALIZER;
++
++EMSCRIPTEN_KEEPALIVE void *orx_wasm_stdin_ring(void)
++{
++    return &orxStdinRing;
++}
++
++EMSCRIPTEN_KEEPALIVE int orx_wasm_stdin_ring_size(void)
++{
++    return ORX_STDIN_RING_SIZE;
++}
++
++// The interpreter's hook (weak in interpreter/concurrency/Activity.cpp): marks
++// what the calling thread is doing (which 0: writing 1 trace, 2 an error
++// message, 0 other output; which 1: the read in progress is .debugInput's).
++// The marks are the thread's own (several Rexx threads write at once); each
++// write to standard output or error, and each read of standard input,
++// publishes the writer's or reader's mark in the ring for the page, which
++// reads it while the bytes are written or the input is requested.  A value
++// < 0 only queries.  Returns the previous value.
++static __thread int32_t threadKind = 0, threadDebug = 0;
++
++int orx_wasm_mark(int which, int value)
++{
++    int32_t *slot = which == 0 ? &threadKind : &threadDebug;
++    int32_t previous = *slot;
++    if (value >= 0)
++    {
++        *slot = value;
++    }
++    return previous;
++}
++
++// Writes to standard output and error, one at a time, each with its thread's
++// mark in the ring (the write is proxied, synchronously, to the main runtime
++// thread, where web-pre.js reads the mark as the bytes arrive).
++static pthread_mutex_t orxOutLock = PTHREAD_MUTEX_INITIALIZER;
++ssize_t __real_write(int fd, const void *buf, size_t count);
++
++ssize_t __wrap_write(int fd, const void *buf, size_t count)
++{
++    if (fd != 1 && fd != 2)
++    {
++        return __real_write(fd, buf, count);
++    }
++    pthread_mutex_lock(&orxOutLock);
++    __atomic_store_n(&orxStdinRing.kind, threadKind, __ATOMIC_SEQ_CST);
++    ssize_t written = __real_write(fd, buf, count);
++    __atomic_store_n(&orxStdinRing.kind, 0, __ATOMIC_SEQ_CST);
++    pthread_mutex_unlock(&orxOutLock);
++    return written;
++}
++
++ssize_t __real_read(int fd, void *buf, size_t count);
++
++ssize_t __wrap_read(int fd, void *buf, size_t count)
++{
++    if (fd != 0 || !__atomic_load_n(&orxStdinRing.active, __ATOMIC_SEQ_CST))
++    {
++        return __real_read(fd, buf, count);
++    }
++    if (count == 0)
++    {
++        return 0;
++    }
++
++    pthread_mutex_lock(&orxStdinLock);
++    __atomic_store_n(&orxStdinRing.debug, threadDebug, __ATOMIC_SEQ_CST);   // for the page's request
++    ssize_t got = 0;
++    for (;;)
++    {
++        int32_t seq = __atomic_load_n(&orxStdinRing.seq, __ATOMIC_SEQ_CST);
++        uint32_t head = __atomic_load_n(&orxStdinRing.head, __ATOMIC_SEQ_CST);
++        uint32_t tail = orxStdinRing.tail;
++        if (head != tail)
++        {
++            // like a terminal in canonical mode: return what is there
++            while (tail != head && (size_t)got < count)
++            {
++                ((char *)buf)[got++] = orxStdinRing.data[tail % ORX_STDIN_RING_SIZE];
++                tail++;
++            }
++            __atomic_store_n(&orxStdinRing.tail, tail, __ATOMIC_SEQ_CST);
++            break;
++        }
++        if (__atomic_load_n(&orxStdinRing.eof, __ATOMIC_SEQ_CST))
++        {
++            break;          // end of file: got == 0
++        }
++        // empty: ask the page for input (asynchronously: the main runtime
++        // thread may be busy serving our own proxied calls) and wait
++        if (!__atomic_exchange_n(&orxStdinRing.waiting, 1, __ATOMIC_SEQ_CST))
++        {
++            MAIN_THREAD_ASYNC_EM_ASM({ if (Module['orxStdinWanted']) Module['orxStdinWanted'](); });
++        }
++        emscripten_futex_wait((void *)&orxStdinRing.seq, seq, 1000.0);
++    }
++    __atomic_store_n(&orxStdinRing.waiting, 0, __ATOMIC_SEQ_CST);
++    pthread_mutex_unlock(&orxStdinLock);
++    return got;
++}
++
++}
+diff --git a/wasm/web/ooRexx-worker.js b/wasm/web/ooRexx-worker.js
+new file mode 100644
+index 0000000..732e019
+--- /dev/null
++++ b/wasm/web/ooRexx-worker.js
+@@ -0,0 +1,111 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*
++ * ooRexx/WASM: the Web Worker that hosts one run of the interpreter (see
++ * ooRexx.js).  The Emscripten main runtime thread lives here, the
++ * interpreter on its pthreads (nested workers); terminating this worker
++ * stops everything.  The page never blocks.
++ *
++ * page -> worker: {type:'run', scriptUrl, wasmModule, data, args, files, cwd,
++ *                  env, stdin}   (stdin: null = interactive, else Uint8Array
++ *                  followed by end of file)
++ *                 {type:'stdin', bytes}   {type:'eof'}
++ * worker -> page: {type:'out'|'err', bytes, kind}   {type:'input', debug}
++ *                 (kind: 'plain' | 'trace' | 'error'; debug: a read of
++ *                 .debugInput, i.e. interactive trace)
++ *                 {type:'exit', rc, files}   {type:'error', message}
++ */
++'use strict';
++let M = null, queued = [], cwd = '/';
++
++function post(msg, transfer) { self.postMessage(msg, transfer || []); }
++
++function feed(msg) {
++  if (!M || !M.orxStdinWrite) { queued.push(msg); return; }
++  if (msg.type === 'stdin') M.orxStdinWrite(msg.bytes);
++  else M.orxStdinClose();
++}
++
++function finish(rc) {
++  let files = {};
++  try { if (M && M.orxFlush) M.orxFlush(); } catch (e) {}
++  try { files = M.orxCollect(cwd); } catch (e) {}
++  const transfer = Object.values(files).map((b) => b.buffer);
++  post({ type: 'exit', rc, files }, transfer);
++}
++
++self.onmessage = (ev) => {
++  const msg = ev.data;
++  if (msg.type === 'stdin' || msg.type === 'eof') { feed(msg); return; }
++  if (msg.type !== 'run' || M) return;
++  cwd = msg.cwd || '/';
++  importScripts(msg.scriptUrl);
++  const base = msg.scriptUrl.slice(0, msg.scriptUrl.lastIndexOf('/') + 1);
++  const textBytes = (s) => new TextEncoder().encode(s + '\n');
++  const cfg = {
++    arguments: msg.args || [],
++    orxFiles: msg.files || {},
++    orxCwd: cwd,
++    orxEnv: msg.env || {},
++    mainScriptUrlOrBlob: msg.scriptUrl,
++    locateFile: (p) => base + p,
++    instantiateWasm(imports, receive) {
++      WebAssembly.instantiate(msg.wasmModule, imports).then((inst) => receive(inst, msg.wasmModule),
++        (e) => post({ type: 'error', message: 'instantiate: ' + e }));
++      return {};
++    },
++    getPreloadedPackage: () => msg.data,
++    orxOut: (b, kind) => post({ type: 'out', bytes: b, kind }, [b.buffer]),
++    orxErr: (b, kind) => post({ type: 'err', bytes: b, kind }, [b.buffer]),
++    orxStdinWanted: (debug) => post({ type: 'input', debug: !!debug }),
++    print: (s) => post({ type: 'err', bytes: textBytes(s) }),
++    printErr: (s) => post({ type: 'err', bytes: textBytes(s) }),
++    orxReady: () => {
++      // called by wasm/web-pre.js once the stdin ring is ready
++      const q = queued; queued = [];
++      if (msg.stdin) { M.orxStdinWrite(msg.stdin); M.orxStdinClose(); }
++      for (const m of q) feed(m);
++    },
++    onExit: (rc) => finish(rc),
++    onAbort: (what) => post({ type: 'error', message: 'abort: ' + what }),
++  };
++  M = cfg;
++  createOoRexx(cfg).catch((e) => {
++    if (e && e.name === 'ExitStatus') return;
++    post({ type: 'error', message: String(e && e.stack || e) });
++  });
++};
+diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
+new file mode 100644
+index 0000000..3d1ae66
+--- /dev/null
++++ b/wasm/web/ooRexx.js
+@@ -0,0 +1,150 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*
++ * ooRexx/WASM in the browser: the page-side API.
++ *
++ *   <script src="ooRexx.js"></script>
++ *   const rexx = await OoRexx.load();            // fetch + compile once
++ *   const run = rexx.run({
++ *     args: ['prog.rex'], files: {'/home/rexx/prog.rex': source},
++ *     onOut: (text) => ..., onErr: (text) => ..., onInput: () => ...,
++ *   });
++ *   run.write('a line\n'); run.close();           // interactive stdin
++ *   run.stop();                                    // terminate the run
++ *   const {rc, files, stopped, ms} = await run.done;
++ *
++ * Each run gets a fresh interpreter in its own Web Worker (ooRexx-worker.js),
++ * so runs are isolated and stop() always works, even in an endless loop.
++ * The wasm module is compiled once and the preloaded file package (rexx.img
++ * and the extension classes) fetched once, then handed to every run.
++ *
++ * Needs a cross-origin isolated page (COOP: same-origin, COEP: require-corp)
++ * for SharedArrayBuffer: the interpreter uses threads.
++ *
++ * run() options:
++ *   args   program arguments, as on the command line (default [])
++ *   files  {path: string | Uint8Array} written before the run (strings as UTF-8)
++ *   cwd    working directory (default '/home/rexx'); the files under it are
++ *          returned in done.files
++ *   env    environment variables
++ *   stdin  undefined: interactive (write/close, onInput when the program
++ *          waits); a string or Uint8Array: the whole standard input
++ *   onOut, onErr   (text, kind) => void, decoded as UTF-8 as it arrives;
++ *                  kind is what the interpreter was writing: 'trace' (trace
++ *                  lines, and the traceback of an error), 'error' (an error
++ *                  message) or 'plain' (anything else).  Trace and error
++ *                  messages go where .traceOutput sends them: .error, so
++ *                  onErr, unless the program redirects it.
++ *   onInput        ({debug}) => void, the program is waiting for standard
++ *                  input; debug is true when it is interactive trace reading
++ *                  (.debugInput) rather than the program
++ */
++(function (global) {
++  'use strict';
++  const here = (global.document && document.currentScript && document.currentScript.src) || '';
++
++  class OoRexx {
++    static async load(base) {
++      base = new URL(base || here.slice(0, here.lastIndexOf('/') + 1) || './', global.location.href).href;
++      if (!global.crossOriginIsolated) {
++        throw new Error('ooRexx/WASM needs a cross-origin isolated page ' +
++          '(Cross-Origin-Opener-Policy: same-origin, Cross-Origin-Embedder-Policy: require-corp)');
++      }
++      const wasmP = WebAssembly.compileStreaming(fetch(base + 'rexx.wasm'));
++      const dataP = fetch(base + 'rexx.data').then((r) => {
++        if (!r.ok) throw new Error('rexx.data: HTTP ' + r.status);
++        return r.arrayBuffer();
++      });
++      const [wasmModule, data] = await Promise.all([wasmP, dataP]);
++      return new OoRexx(base, wasmModule, data);
++    }
++
++    constructor(base, wasmModule, data) {
++      this.base = base;
++      this.wasmModule = wasmModule;
++      this.data = data;
++    }
++
++    run(opts = {}) {
++      const enc = new TextEncoder();
++      const bytes = (v) => (typeof v === 'string' ? enc.encode(v) : v);
++      const cwd = opts.cwd || '/home/rexx';
++      const files = {};
++      for (const [p, v] of Object.entries(opts.files || {})) files[p] = bytes(v);
++      const outDec = new TextDecoder('utf-8'), errDec = new TextDecoder('utf-8');
++      const worker = new Worker(this.base + 'ooRexx-worker.js', { name: 'ooRexx-host' });
++      const t0 = performance.now();
++      let settle, finished = false;
++      const done = new Promise((resolve) => { settle = resolve; });
++      const end = (result) => {
++        if (finished) return;
++        finished = true;
++        const tailOut = outDec.decode(), tailErr = errDec.decode();
++        if (tailOut && opts.onOut) opts.onOut(tailOut);
++        if (tailErr && opts.onErr) opts.onErr(tailErr);
++        worker.terminate();
++        result.ms = performance.now() - t0;
++        settle(result);
++      };
++      worker.onmessage = (ev) => {
++        const m = ev.data;
++        switch (m.type) {
++          case 'out': if (opts.onOut) opts.onOut(outDec.decode(m.bytes, { stream: true }), m.kind || 'plain'); break;
++          case 'err': if (opts.onErr) opts.onErr(errDec.decode(m.bytes, { stream: true }), m.kind || 'plain'); break;
++          case 'input': if (opts.onInput) opts.onInput({ debug: !!m.debug }); break;
++          case 'exit': end({ rc: m.rc, files: m.files, stopped: false }); break;
++          case 'error': end({ rc: null, files: {}, stopped: false, error: m.message }); break;
++        }
++      };
++      worker.onerror = (e) => end({ rc: null, files: {}, stopped: false, error: e.message || 'worker error' });
++      worker.postMessage({
++        type: 'run', scriptUrl: this.base + 'rexx.js', wasmModule: this.wasmModule,
++        data: this.data.slice(0), args: opts.args || [], files, cwd, env: opts.env || {},
++        stdin: opts.stdin === undefined || opts.stdin === null ? null : bytes(opts.stdin),
++      });
++      return {
++        done,
++        write(text) { if (!finished) worker.postMessage({ type: 'stdin', bytes: bytes(text) }); },
++        close() { if (!finished) worker.postMessage({ type: 'eof' }); },
++        stop() { end({ rc: null, files: {}, stopped: true }); },
++        get running() { return !finished; },
++      };
++    }
++  }
++
++  global.OoRexx = OoRexx;
++})(typeof self !== 'undefined' ? self : this);

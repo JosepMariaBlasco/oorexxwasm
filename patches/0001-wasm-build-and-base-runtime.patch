@@ -1,0 +1,2080 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
+Date: Sun, 4 Oct 2026 11:46:20 +0200
+Subject: [PATCH 1/5] WebAssembly port: build and base runtime
+
+Build ooRexx for WebAssembly with Emscripten 6.0.9 (wasm/build-wasm.sh,
+cmake/wasm-emscripten-6.0.9-cache.cmake).  Everything is under
+if (EMSCRIPTEN) / #if defined(__EMSCRIPTEN__); native builds are unchanged.
+
+- static librexx (linked --whole-archive so the _rexx_init() constructor
+  that creates the interpreter locks is kept) and librexxapi;
+- the interpreter runs on a pthread (PROXY_TO_PTHREAD, pool of 4 workers),
+  no Asyncify, native WebAssembly exceptions in the standardized encoding
+  (exnref: Chrome 137, Firefox 131, Safari 18.4, Node 22);
+- deep recursion ends in Error 11: Activity::checkStackSpace() also probes
+  the JS engine's native stack every few activation levels (and the
+  expression parser every few nesting levels), with a call that recurses
+  through wasm frames, calibrated on each thread to a quarter of its stack;
+- the wall clock with sub-millisecond resolution (performance.timeOrigin +
+  performance.now(); Emscripten's gettimeofday is Date.now(), whole ms);
+- the API server (queues, registrations, macrospace) linked in and reached
+  in-process (SysLoopbackConnection);
+- rxsock, rxregexp, rxmath, hostemu and rxunixsys embedded in the
+  interpreter (PackageManager::embeddedPackages; no dlopen);
+- getpwnam()/getpwuid() wrapped to return the user the process runs as
+  (Emscripten has no passwd database): the host user under Node, the
+  synthetic user "wasm" in the browser;
+- rxsock over Emscripten's WebSocket socket emulation, with blocking
+  connect/recv/select semantics restored by polling;
+- wasm/tests/qualify-node.sh: Node qualification with assertions.
+
+Based on Tom Dyer's (Alchemy) dev1 WebAssembly port, contributed under the
+Common Public License 1.0.
+---
+ CMakeLists.txt                                | 161 ++++++++++++++++--
+ api/oorexxapi.h                               |   7 +
+ cmake/wasm-emscripten-6.0.9-cache.cmake       |  84 +++++++++
+ common/platform/unix/SysProcess.cpp           |  75 ++++++++
+ extensions/rxsock/rxsockfn.cpp                | 108 ++++++++++++
+ interpreter/concurrency/Activity.cpp          |  93 ++++++++++
+ interpreter/concurrency/Activity.hpp          |   6 +
+ interpreter/package/PackageManager.cpp        |  74 ++++++++
+ interpreter/package/PackageManager.hpp        |   9 +
+ interpreter/parser/LanguageParser.cpp         |  15 ++
+ interpreter/parser/LanguageParser.hpp         |   3 +
+ interpreter/platform/unix/SystemCommands.cpp  |  13 ++
+ interpreter/platform/unix/TimeSupport.cpp     |  38 +++++
+ rexxapi/client/LocalMacroSpaceManager.cpp     |   8 +-
+ .../platform/unix/SysLocalAPIManager.cpp      |  11 ++
+ .../platform/unix/SysLoopbackConnection.cpp   | 138 +++++++++++++++
+ .../platform/unix/SysLoopbackConnection.hpp   |  47 +++++
+ rexxapi/server/APIServer.cpp                  |  41 +++++
+ rexxapi/server/APIServer.hpp                  |   3 +
+ wasm/README.md                                | 117 +++++++++++++
+ wasm/build-wasm.sh                            |  79 +++++++++
+ wasm/emscripten-dns-proxy.js                  |  57 +++++++
+ wasm/node-ws-compat/index.js                  |  73 ++++++++
+ wasm/tests/browser-index.html                 |  76 +++++++++
+ wasm/tests/http_isolated.py                   |  48 ++++++
+ wasm/tests/qualify-node.sh                    | 100 +++++++++++
+ wasm/tests/ws_echo.py                         |  46 +++++
+ 27 files changed, 1510 insertions(+), 20 deletions(-)
+ create mode 100644 cmake/wasm-emscripten-6.0.9-cache.cmake
+ create mode 100644 rexxapi/common/platform/unix/SysLoopbackConnection.cpp
+ create mode 100644 rexxapi/common/platform/unix/SysLoopbackConnection.hpp
+ create mode 100644 wasm/README.md
+ create mode 100755 wasm/build-wasm.sh
+ create mode 100644 wasm/emscripten-dns-proxy.js
+ create mode 100644 wasm/node-ws-compat/index.js
+ create mode 100644 wasm/tests/browser-index.html
+ create mode 100755 wasm/tests/http_isolated.py
+ create mode 100755 wasm/tests/qualify-node.sh
+ create mode 100755 wasm/tests/ws_echo.py
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 84d7946..3806165 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -183,7 +183,12 @@ if (WIN32)
+    set (ORX_IMAGE_OUTPUT_LOCATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
+ else ()
+    set (ORX_PLATFORM_DIR platform/unix)
+-   set (ORX_IMAGE_OUTPUT_LOCATION ${CMAKE_LIBRARY_OUTPUT_DIRECTORY})
++   if (EMSCRIPTEN)
++      # The WASM runtime embeds the image from the executable output directory.
++      set (ORX_IMAGE_OUTPUT_LOCATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
++   else ()
++      set (ORX_IMAGE_OUTPUT_LOCATION ${CMAKE_LIBRARY_OUTPUT_DIRECTORY})
++   endif ()
+ endif ()
+ # Set path to look for include files
+ include_directories(BEFORE api api/${ORX_PLATFORM_DIR})
+@@ -435,10 +440,12 @@ if (NOT WIN32) # Unix header files, libraries, and functions
+   check_include_file(sys/signal.h HAVE_SYS_SIGNAL_H)
+   check_include_file(sys/xattr.h  HAVE_SYS_XATTR_H)
+   check_include_file(wordexp.h    HAVE_WORDEXP_H)
+-  set (CURSES_NEED_NCURSES TRUE)
+-  include(FindCurses) # sets CURSES_HAVE_NCURSES_H and CURSES_HAVE_NCURSES_NCURSES_H
+-  message(STATUS "CURSES_HAVE_NCURSES_H is ${CURSES_HAVE_NCURSES_H}")
+-  message(STATUS "CURSES_HAVE_NCURSES_NCURSES_H is ${CURSES_HAVE_NCURSES_NCURSES_H}")
++  if (NOT EMSCRIPTEN)
++    set (CURSES_NEED_NCURSES TRUE)
++    include(FindCurses) # sets CURSES_HAVE_NCURSES_H and CURSES_HAVE_NCURSES_NCURSES_H
++    message(STATUS "CURSES_HAVE_NCURSES_H is ${CURSES_HAVE_NCURSES_H}")
++    message(STATUS "CURSES_HAVE_NCURSES_NCURSES_H is ${CURSES_HAVE_NCURSES_NCURSES_H}")
++  endif ()
+ 
+   message(STATUS "-- determine available libraries --")
+   set(CMAKE_REQUIRED_LIBRARIES ${CMAKE_DL_LIBS})
+@@ -674,9 +681,25 @@ else ()
+             ${build_rexxapi_common_platform_dir}/SysCSStream.cpp)
+ endif ()
+ # Library definition
+-add_library(rexxapi SHARED
+-            ${common_rexxapi_sources}
+-            ${platform_rexxapi_sources})
++if (EMSCRIPTEN)
++  # No rxapi daemon in a WASM process: the API server (queues, registrations,
++  # macrospace) is linked in and reached through SysLoopbackConnection.
++  add_library(rexxapi STATIC
++              ${common_rexxapi_sources}
++              ${platform_rexxapi_sources}
++              ${build_rexxapi_common_platform_dir}/SysLoopbackConnection.cpp
++              ${build_rexxapi_server_dir}/APIServer.cpp
++              ${build_rexxapi_server_dir}/APIServerInstance.cpp
++              ${build_rexxapi_server_dir}/APIServerThread.cpp
++              ${build_rexxapi_server_dir}/MacroSpaceManager.cpp
++              ${build_rexxapi_server_dir}/QueueManager.cpp
++              ${build_rexxapi_server_dir}/RegistrationManager.cpp)
++  target_include_directories(rexxapi PRIVATE ${build_rexxapi_server_dir})
++else ()
++  add_library(rexxapi SHARED
++              ${common_rexxapi_sources}
++              ${platform_rexxapi_sources})
++endif ()
+ # Include file definition
+ target_include_directories(rexxapi PUBLIC
+             ${build_rexxapi_client_dir}
+@@ -951,9 +974,32 @@ else ()
+ endif ()
+ 
+ # Library definition
+-add_library(rexx SHARED
+-            ${common_interpreter_sources}
+-            ${platform_interpreter_sources})
++if (EMSCRIPTEN)
++  # Browser/Node WASM builds statically embed the native extension packages
++  # (see PackageManager::embeddedPackages).  Emscripten's pthread +
++  # side-module combination is intentionally avoided here.
++  set (wasm_embedded_package_sources
++              ${build_extensions_rxsock_dir}/rxsock.cpp
++              ${build_extensions_rxsock_dir}/rxsockfn.cpp
++              ${build_extensions_rxregexp_dir}/automaton.cpp
++              ${build_extensions_rxregexp_dir}/dblqueue.cpp
++              ${build_extensions_rxregexp_dir}/rxregexp.cpp
++              ${build_extensions_rxmath_dir}/rxmath.cpp
++              ${build_extensions_hostemu_platform_dir}/hostemu.cpp
++              ${build_extensions_hostemu_dir}/cmdparse.cpp
++              ${build_extensions_platform_dir}/rxunixsys/rxunixsys.cpp)
++  set_source_files_properties(${wasm_embedded_package_sources}
++              PROPERTIES COMPILE_DEFINITIONS ORX_EMBEDDED_PACKAGE)
++  add_library(rexx STATIC
++              ${common_interpreter_sources}
++              ${platform_interpreter_sources}
++              ${wasm_embedded_package_sources})
++  target_include_directories(rexx PRIVATE ${build_extensions_hostemu_dir})
++else ()
++  add_library(rexx SHARED
++              ${common_interpreter_sources}
++              ${platform_interpreter_sources})
++endif ()
+ 
+ set (core_platform_classes ${build_interpreter_platform_dir}/PlatformObjects.orx)
+ # Include file definition
+@@ -992,6 +1038,20 @@ if (CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+         endif ()
+     endif ()
+ endif ()
++if (EMSCRIPTEN)
++  # native WebAssembly exceptions, the standardized ones (exnref): the legacy
++  # encoding is deprecated (Firefox warns).  WebKit's wasm interpreter before
++  # 26.6 does not catch an exception thrown by a call_indirect that ends a
++  # try body (either encoding); with exnref the compiler produces that shape
++  # far less often (4 sites instead of 52), so a Rexx error raised in cold
++  # code, e.g. on a new thread, no longer kills the run there.
++  # Needs Chrome 137, Firefox 131, Safari 18.4, Node 22.
++  # Every object with exceptions must use the same encoding (wasm/build-web.sh
++  # compiles web-jdor.cpp with it too): Chromium rejects a module that mixes.
++  set(ORX_WASM_EH -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0)
++  target_compile_options(rexx PRIVATE -pthread ${ORX_WASM_EH})
++  target_compile_options(rexxapi PRIVATE -pthread ${ORX_WASM_EH})
++endif ()
+ install(TARGETS rexx RUNTIME DESTINATION ${INSTALL_LIB_DIR} COMPONENT Core
+                      LIBRARY DESTINATION ${INSTALL_LIB_DIR} COMPONENT Core
+                      ARCHIVE DESTINATION ${INSTALL_INCLUDE_DIR} COMPONENT DevLib)
+@@ -1030,7 +1090,16 @@ target_include_directories(rexx_exe PUBLIC
+             ${build_api_platform_dir}
+             ${build_messages_dir})
+ # Extra link library definitions
+-target_link_libraries(rexx_exe rexx rexxapi ${CMAKE_REQUIRED_LIBRARIES})
++if (EMSCRIPTEN)
++  # librexx is a static archive in the WASM build.  Nothing references
++  # SystemInitialization.cpp, so without --whole-archive the linker drops it
++  # together with the _rexx_init() constructor that creates the kernel and
++  # resource locks; every SysMutex then stays uncreated, request() returns
++  # false without locking, and the interpreter runs threads unsynchronized.
++  target_link_libraries(rexx_exe "$<LINK_LIBRARY:WHOLE_ARCHIVE,rexx>" rexxapi ${CMAKE_REQUIRED_LIBRARIES})
++else ()
++  target_link_libraries(rexx_exe rexx rexxapi ${CMAKE_REQUIRED_LIBRARIES})
++endif ()
+ # Merge in extra manifestinformation on Windows
+ if (WIN32)
+ add_custom_command(TARGET rexx_exe POST_BUILD
+@@ -1059,7 +1128,24 @@ target_include_directories(rexximage PUBLIC
+             ${build_api_dir}
+             ${build_api_platform_dir})
+ # Extra link library definitions
+-target_link_libraries(rexximage rexx rexxapi ${CMAKE_REQUIRED_LIBRARIES})
++if (EMSCRIPTEN)
++  # see rexx_exe: keep the _rexx_init() constructor
++  target_link_libraries(rexximage "$<LINK_LIBRARY:WHOLE_ARCHIVE,rexx>" rexxapi ${CMAKE_REQUIRED_LIBRARIES})
++else ()
++  target_link_libraries(rexximage rexx rexxapi ${CMAKE_REQUIRED_LIBRARIES})
++endif ()
++if (EMSCRIPTEN)
++  target_compile_options(rexximage PRIVATE -pthread ${ORX_WASM_EH})
++  target_link_options(rexximage PRIVATE
++      -pthread ${ORX_WASM_EH}
++      -sNODERAWFS=1
++      # passwd entry of the current user (see SysProcess.cpp)
++      -Wl,--wrap=getpwnam,--wrap=getpwuid
++      -sEXIT_RUNTIME=1
++      -sSTACK_SIZE=8388608
++      -sINITIAL_MEMORY=67108864
++      -sALLOW_MEMORY_GROWTH=1)
++endif ()
+ 
+ # handy macro for copying files from the source into the build directory.
+ macro (copy_build_file name source)
+@@ -1104,12 +1190,48 @@ if (WIN32)
+ endif ()
+ 
+ # Build the rexx.img file
+-add_custom_command(OUTPUT ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img
+-           COMMAND $<TARGET_FILE:rexximage> ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img
+-           DEPENDS rexximage rxapi ${image_class_files} ${platform_rexx_img_depends}
+-           WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
++if (EMSCRIPTEN)
++  add_custom_command(OUTPUT ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img
++             COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} $<TARGET_FILE:rexximage> ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img
++             DEPENDS rexximage ${image_class_files} ${platform_rexx_img_depends}
++             WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
++else ()
++  add_custom_command(OUTPUT ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img
++             COMMAND $<TARGET_FILE:rexximage> ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img
++             DEPENDS rexximage rxapi ${image_class_files} ${platform_rexx_img_depends}
++             WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
++endif ()
+ 
+ add_custom_target(rexx_img ALL DEPENDS ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img)
++if (EMSCRIPTEN)
++  # The normal runtime uses MEMFS and carries its image with it.  The
++  # interpreter runs on a pthread (PROXY_TO_PTHREAD) so the JS main thread
++  # stays free to start workers and deliver WebSocket events; blocking is
++  # legal on the worker, so Asyncify is not needed.
++  add_dependencies(rexx_exe rexx_img)
++  target_compile_options(rexx_exe PRIVATE -pthread ${ORX_WASM_EH})
++  target_link_options(rexx_exe PRIVATE
++      -pthread ${ORX_WASM_EH}
++      -sPROXY_TO_PTHREAD=1
++      # passwd entry of the current user (see SysProcess.cpp)
++      -Wl,--wrap=getpwnam,--wrap=getpwuid
++      # pre-start workers: the proxied main thread takes one, the rest make
++      # the first START/REPLY/.Alarm threads start in ~1 ms instead of ~50 ms
++      # (each new worker loads the whole module); timing-sensitive tests
++      # (GUARD, TRACE of REPLY) depend on it
++      -sPTHREAD_POOL_SIZE=4
++      "SHELL:--js-library ${CMAKE_CURRENT_SOURCE_DIR}/wasm/emscripten-dns-proxy.js"
++      -sFORCE_FILESYSTEM=1
++      -sEXIT_RUNTIME=1
++      -sSTACK_SIZE=8388608
++      -sINITIAL_MEMORY=67108864
++      -sALLOW_MEMORY_GROWTH=1
++      -sENVIRONMENT=node,web,worker
++      "SHELL:--preload-file ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img@/rexx.img"
++      "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/${build_extensions_rxsock_dir}/socket.cls@/socket.cls"
++      "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/${build_extensions_rxsock_dir}/streamsocket.cls@/streamsocket.cls"
++      "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/${build_extensions_rxregexp_dir}/rxregexp.cls@/rxregexp.cls")
++endif ()
+ install(PROGRAMS ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img COMPONENT Core DESTINATION ${INSTALL_LIB_DIR} PERMISSIONS OWNER_EXECUTE GROUP_EXECUTE WORLD_EXECUTE OWNER_WRITE OWNER_READ GROUP_READ WORLD_READ)
+ 
+ #################### rxapi (executable) #########################
+@@ -1309,6 +1431,8 @@ set_target_properties(rxmath PROPERTIES SOVERSION ${ORX_API_LEVEL})
+ create_install_symlink(rxmath)
+ 
+ #################### librxsock.so ################
++# WASM embeds RxSock into librexx; native platforms keep the shared package.
++if (NOT EMSCRIPTEN)
+ # additional source files required by specific platforms
+ if (WIN32)
+    set (platform_rxsock_sources ${build_platform_dir}/verinfo.rc)
+@@ -1324,6 +1448,7 @@ install(TARGETS rxsock RUNTIME COMPONENT Core DESTINATION ${INSTALL_LIB_DIR}
+                        LIBRARY DESTINATION ${INSTALL_LIB_DIR} COMPONENT Core)
+ set_target_properties(rxsock PROPERTIES SOVERSION ${ORX_API_LEVEL})
+ create_install_symlink(rxsock)
++endif ()
+ 
+ 
+ #################### librxregexp.so ################
+@@ -1390,7 +1515,7 @@ install(TARGETS rxunixsys RUNTIME DESTINATION ${INSTALL_LIB_DIR}
+ endif ()
+ 
+ #################### liborxncurses.so ################
+-if (NOT WIN32)
++if (NOT WIN32 AND NOT EMSCRIPTEN)
+    # need to copy this to the binary dir
+    copy_build_file(ncurses.cls ${build_extensions_orxncurses_dir})
+    # Sources for liborxncurses.so
+diff --git a/api/oorexxapi.h b/api/oorexxapi.h
+index f5e2df2..997f682 100644
+--- a/api/oorexxapi.h
++++ b/api/oorexxapi.h
+@@ -250,10 +250,17 @@ typedef struct _RexxMethodEntry
+ 
+ #define STANDARD_PACKAGE_HEADER sizeof(RexxPackageEntry), REXX_PACKAGE_API_NO,
+ 
++#if defined(ORX_EMBEDDED_PACKAGE)
++// The package is linked into the interpreter itself (WebAssembly build) and is
++// registered through PackageManager's embedded package table, so it must not
++// export the RexxGetPackage() loading stub (several such packages would clash).
++#define OOREXX_GET_PACKAGE(name)
++#else
+ #define OOREXX_GET_PACKAGE(name) \
+     BEGIN_EXTERN_C()\
+     REXXEXPORT RexxPackageEntry *RexxGetPackage(void) { return &name##_package_entry; }\
+     END_EXTERN_C()
++#endif
+ 
+ 
+ typedef void (RexxEntry *RexxPackageLoader)(RexxThreadContext *);
+diff --git a/cmake/wasm-emscripten-6.0.9-cache.cmake b/cmake/wasm-emscripten-6.0.9-cache.cmake
+new file mode 100644
+index 0000000..4c24522
+--- /dev/null
++++ b/cmake/wasm-emscripten-6.0.9-cache.cmake
+@@ -0,0 +1,84 @@
++#/*----------------------------------------------------------------------------*/
++#/*                                                                            */
++#/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++#/*                                                                            */
++#/* This program and the accompanying materials are made available under       */
++#/* the terms of the Common Public License v1.0 which accompanies this         */
++#/* distribution. A copy is also available at the following address:           */
++#/* https://www.oorexx.org/license.html                                        */
++#/*                                                                            */
++#/* Redistribution and use in source and binary forms, with or                 */
++#/* without modification, are permitted provided that the following            */
++#/* conditions are met:                                                        */
++#/*                                                                            */
++#/* Redistributions of source code must retain the above copyright             */
++#/* notice, this list of conditions and the following disclaimer.              */
++#/* Redistributions in binary form must reproduce the above copyright          */
++#/* notice, this list of conditions and the following disclaimer in            */
++#/* the documentation and/or other materials provided with the distribution.   */
++#/*                                                                            */
++#/* Neither the name of Rexx Language Association nor the names                */
++#/* of its contributors may be used to endorse or promote products             */
++#/* derived from this software without specific prior written permission.      */
++#/*                                                                            */
++#/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++#/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++#/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++#/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++#/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++#/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++#/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++#/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++#/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++#/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++#/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++#/*                                                                            */
++#/*----------------------------------------------------------------------------*/
++set(HAVE_MALLOC_H 1 CACHE INTERNAL "")
++set(HAVE_STDINT_H 1 CACHE INTERNAL "")
++set(HAVE_XLOCALE_H 1 CACHE INTERNAL "")
++set(HAVE_FEATURES_H 1 CACHE INTERNAL "")
++set(HAVE_IFADDRS_H 1 CACHE INTERNAL "")
++set(HAVE_NL_TYPES_H 1 CACHE INTERNAL "")
++set(HAVE_PTHREAD_NP_H 0 CACHE INTERNAL "")
++set(HAVE_STRINGS_H 1 CACHE INTERNAL "")
++set(HAVE_SYS_FILIO_H 0 CACHE INTERNAL "")
++set(HAVE_SYS_LDR_H 0 CACHE INTERNAL "")
++set(HAVE_SYS_RESOURCE_H 1 CACHE INTERNAL "")
++set(HAVE_SYS_SELECT_H 1 CACHE INTERNAL "")
++set(HAVE_SYS_SEM_H 1 CACHE INTERNAL "")
++# <sys/signal.h> exists only as a redirect that warns ("redirecting incorrect
++# #include <sys/signal.h> to <signal.h>"); <signal.h> is what is included
++set(HAVE_SYS_SIGNAL_H 0 CACHE INTERNAL "")
++set(HAVE_SYS_XATTR_H 0 CACHE INTERNAL "")
++set(HAVE_WORDEXP_H 0 CACHE INTERNAL "")
++set(HAVE_LIBRT 0 CACHE INTERNAL "")
++set(HAVE_LIBPTHREAD 0 CACHE INTERNAL "")
++set(HAVE_LIBCRYPT 0 CACHE INTERNAL "")
++set(HAVE_LIBSOCKET 0 CACHE INTERNAL "")
++set(HAVE_LIBNSL 0 CACHE INTERNAL "")
++set(HAVE_LIBRESOLV 0 CACHE INTERNAL "")
++set(HAVE_CATOPEN 1 CACHE INTERNAL "")
++set(HAVE_CRYPT 0 CACHE INTERNAL "")
++set(HAVE_DLADDR 0 CACHE INTERNAL "")
++set(HAVE_EUIDACCESS 0 CACHE INTERNAL "")
++set(HAVE_GETIFADDRS 1 CACHE INTERNAL "")
++set(HAVE_NANOSLEEP 1 CACHE INTERNAL "")
++set(HAVE_NSLEEP 0 CACHE INTERNAL "")
++set(HAVE_PTHREAD_MUTEX_TIMEDLOCK 1 CACHE INTERNAL "")
++set(HAVE_PTHREAD_GETATTR_NP 1 CACHE INTERNAL "")
++set(HAVE_PTHREAD_ATTR_GET_NP 0 CACHE INTERNAL "")
++set(HAVE_PTHREAD_STACKSEG_NP 0 CACHE INTERNAL "")
++set(HAVE_PTHREAD_GET_STACKSIZE_NP 0 CACHE INTERNAL "")
++set(HAVE_WORDEXP 0 CACHE INTERNAL "")
++set(HAVE_PC_CASE_SENSITIVE 0 CACHE INTERNAL "")
++set(HAVE_FNM_CASEFOLD 1 CACHE INTERNAL "")
++set(HAVE_KDMKTONE 0 CACHE INTERNAL "")
++set(HAVE_FS_CASEFOLD_FL 0 CACHE INTERNAL "")
++set(HAVE_NSGETEXECUTABLEPATH 0 CACHE INTERNAL "")
++set(HAVE_GETEXECNAME 0 CACHE INTERNAL "")
++set(HAVE_KERN_PROC_PATHNAME 0 CACHE INTERNAL "")
++set(HAVE_KERN_PROC_ARGV 0 CACHE INTERNAL "")
++set(HAVE_STAT_ST_MTIM 1 CACHE INTERNAL "")
++set(HAVE_STAT_ST_MTIMESPEC 0 CACHE INTERNAL "")
++set(HAVE_PRAGMA_GCC_STRINGOPOVERFLOW 0 CACHE INTERNAL "")
+diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
+index 69b1869..485a701 100644
+--- a/common/platform/unix/SysProcess.cpp
++++ b/common/platform/unix/SysProcess.cpp
+@@ -179,6 +179,81 @@ void SysProcess::getUserID(char *buffer)
+     buffer[MAX_USERID_LENGTH-1] = '\0';
+ }
+ 
++#if defined(__EMSCRIPTEN__)
++#include <emscripten.h>
++
++/*
++ * WASM: Emscripten's libc has no passwd database (getpwnam()/getpwuid() always
++ * fail), so USERID(), "cd ~user" and the like would find no user.  The link
++ * wraps both functions (-Wl,--wrap=getpwnam,--wrap=getpwuid) to provide the one
++ * user the process runs as: under Node the host user (os.userInfo()), in the
++ * browser the synthetic user "wasm" with $HOME as its home directory.
++ */
++EM_JS(int, wasmUserInfo, (char *buf, int size), {
++    if (typeof process !== 'object' || !process.versions || !process.versions.node ||
++        typeof require !== 'function')
++    {
++        return 0;
++    }
++    try
++    {
++        var u = require('os').userInfo();
++        var text = u.username + '\n' + u.homedir + '\n' + (u.shell || '/bin/sh');
++        if (lengthBytesUTF8(text) >= size) return 0;
++        stringToUTF8(text, buf, size);
++        return 1;
++    }
++    catch (e)
++    {
++        return 0;
++    }
++});
++
++static struct passwd *wasmCurrentUser()
++{
++    static char text[1024];
++    static struct passwd entry;
++    if (!wasmUserInfo(text, sizeof(text)))
++    {
++        const char *home = getenv("HOME");
++        snprintf(text, sizeof(text), "wasm\n%s\n/bin/sh", home != NULL ? home : "/");
++    }
++    char *dir = strchr(text, '\n');
++    *dir++ = '\0';
++    char *shell = strchr(dir, '\n');
++    *shell++ = '\0';
++    entry.pw_name = text;
++    entry.pw_passwd = (char *)"x";
++    entry.pw_uid = geteuid();
++    entry.pw_gid = getegid();
++    entry.pw_gecos = text;
++    entry.pw_dir = dir;
++    entry.pw_shell = shell;
++    return &entry;
++}
++
++extern "C" struct passwd *__wrap_getpwuid(uid_t uid)
++{
++    if (uid != geteuid())
++    {
++        errno = ENOENT;
++        return NULL;
++    }
++    return wasmCurrentUser();
++}
++
++extern "C" struct passwd *__wrap_getpwnam(const char *name)
++{
++    struct passwd *entry = wasmCurrentUser();
++    if (name == NULL || strcmp(name, entry->pw_name) != 0)
++    {
++        errno = ENOENT;
++        return NULL;
++    }
++    return entry;
++}
++#endif
++
+ 
+ /**
+  * Determine the location of the running program. This returns the path
+diff --git a/extensions/rxsock/rxsockfn.cpp b/extensions/rxsock/rxsockfn.cpp
+index f2539df..fd47f6b 100644
+--- a/extensions/rxsock/rxsockfn.cpp
++++ b/extensions/rxsock/rxsockfn.cpp
+@@ -72,6 +72,15 @@
+ #include <sys/ioctl.h>
+ #include <sys/time.h>
+ #include <unistd.h>
++#if defined(__EMSCRIPTEN__)
++#include <fcntl.h>
++#include <emscripten.h>
++// The interpreter runs on a worker thread (-sPROXY_TO_PTHREAD), where blocking
++// is legal; socket syscalls are proxied to the main thread, whose event loop
++// stays free to deliver WebSocket events.  So a plain sleep is enough to wait
++// for readiness: no Asyncify needed.
++static inline void wasmSocketYield() { usleep(1000); }
++#endif
+ 
+ #if defined( HAVE_SYS_SELECT_H )
+ #include <sys/select.h>
+@@ -246,6 +255,57 @@ RexxRoutine2(int, SockConnect, int, sock, RexxObjectPtr, stemSource)
+      * call function
+      *---------------------------------------------------------------*/
+     int rc = connect(sock,(struct sockaddr *)&addr, sizeof(addr));
++#if defined(__EMSCRIPTEN__)
++    if (rc == 0)
++    {
++        int socketFlags = fcntl(sock, F_GETFL, 0);
++        if (socketFlags >= 0 && (socketFlags & O_NONBLOCK) != 0)
++        {
++            errno = EINPROGRESS;
++            rc = -1;
++        }
++        else
++        {
++            // Emscripten starts the WebSocket asynchronously and reports the
++            // connect syscall as successful immediately.  Preserve blocking
++            // socket semantics by yielding until it becomes writable, then
++            // checking SO_ERROR.
++            for (;;)
++            {
++                // WebSocket failures can set SO_ERROR without making the
++                // synthetic socket writable, so inspect it on every turn.
++                int socketError = 0;
++                socklen_t errorLength = sizeof(socketError);
++                if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &socketError, &errorLength) == 0 && socketError != 0)
++                {
++                    errno = socketError;
++                    rc = -1;
++                    break;
++                }
++
++                fd_set writes;
++                FD_ZERO(&writes);
++                FD_SET(sock, &writes);
++                struct timeval now = { 0, 0 };
++                int ready = select(sock + 1, NULL, &writes, NULL, &now);
++                if (ready > 0 && FD_ISSET(sock, &writes))
++                {
++                    // A writable connecting socket represents either OPEN or
++                    // a failed connection. Re-check SO_ERROR for the latter.
++                    socketError = 0;
++                    errorLength = sizeof(socketError);
++                    if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &socketError, &errorLength) == 0 && socketError != 0)
++                    {
++                        errno = socketError;
++                        rc = -1;
++                    }
++                    break;
++                }
++                wasmSocketYield();
++            }
++        }
++    }
++#endif
+     // set the errno information
+     setErrno(context, rc >= 0);
+ 
+@@ -729,6 +789,22 @@ RexxRoutine4(int, SockRecv, int, sock, CSTRING, var, int, dataLen, OPTIONAL_CSTR
+      * call function
+      *---------------------------------------------------------------*/
+     rc = recv(sock, pBuffer, dataLen, flags);
++#if defined(__EMSCRIPTEN__)
++    int socketFlags = fcntl(sock, F_GETFL, 0);
++    bool blockingSocket = socketFlags < 0 || (socketFlags & O_NONBLOCK) == 0;
++    while (rc < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && blockingSocket)
++    {
++        int socketError = 0;
++        socklen_t errorLength = sizeof(socketError);
++        if (getsockopt(sock, SOL_SOCKET, SO_ERROR, &socketError, &errorLength) == 0 && socketError != 0)
++        {
++            errno = socketError;
++            break;
++        }
++        wasmSocketYield();
++        rc = recv(sock, pBuffer, dataLen, flags);
++    }
++#endif
+ 
+     // set the errno information
+     setErrno(context, rc >= 0);
+@@ -951,7 +1027,39 @@ RexxRoutine4(int, SockSelect, OPTIONAL_RexxObjectPtr, array1, OPTIONAL_RexxObjec
+         /*---------------------------------------------------------------
+          * make the call
+          *---------------------------------------------------------------*/
++#if defined(__EMSCRIPTEN__)
++    // Browser WebSocket readiness is delivered asynchronously. Emscripten's
++    // select/poll cannot block the JS event loop with a non-zero timeout, so
++    // perform zero-time polls and cooperatively yield between them.
++    double deadline = -1.0;
++    if (!argumentOmitted(4))
++    {
++        deadline = emscripten_get_now() + ((double)timeout * 1000.0);
++    }
++    for (;;)
++    {
++        FD_ZERO(rSet);
++        FD_ZERO(wSet);
++        FD_ZERO(eSet);
++        for (i=0; i<rCount; i++) FD_SET(rArray[i], rSet);
++        for (i=0; i<wCount; i++) FD_SET(wArray[i], wSet);
++        for (i=0; i<eCount; i++) FD_SET(eArray[i], eSet);
++
++        struct timeval pollNow = { 0, 0 };
++        rc = select(max+1, rSet, wSet, eSet, &pollNow);
++        if (rc != 0)
++        {
++            break;
++        }
++        if (!argumentOmitted(4) && (timeout <= 0 || emscripten_get_now() >= deadline))
++        {
++            break;
++        }
++        wasmSocketYield();
++    }
++#else
+     rc = select(max+1,rSet,wSet,eSet,timeOutP);
++#endif
+ 
+     // set the errno information
+     setErrno(context, rc >= 0);
+diff --git a/interpreter/concurrency/Activity.cpp b/interpreter/concurrency/Activity.cpp
+index e8b6936..8848967 100644
+--- a/interpreter/concurrency/Activity.cpp
++++ b/interpreter/concurrency/Activity.cpp
+@@ -190,6 +190,9 @@ void Activity::runThread()
+     // highest address downward. When it hits the line in the sand we've drawn,
+     // we raise a control stack full error.
+     stackLimit = currentThread.getStackBase() + errorRecoveryStack;
++#if defined(__EMSCRIPTEN__)
++    wasmProbedDepth = 0;
++#endif
+ 
+     for (;;)
+     {
+@@ -406,6 +409,9 @@ Activity::Activity(GlobalProtectedObject &p, bool createThread)
+         // reset the stack base for this thread.
+         // establish the stack base pointer for control stack full detection.
+         stackLimit = currentThread.getStackBase() + errorRecoveryStack;
++#if defined(__EMSCRIPTEN__)
++    wasmProbedDepth = 0;
++#endif
+     }
+ }
+ 
+@@ -2276,6 +2282,60 @@ void Activity::setupCurrentActivity()
+     Numerics::setCurrentSettings(numericSettings);
+ }
+ 
++#if defined(__EMSCRIPTEN__)
++#include <emscripten.h>
++
++// activation-depth distance between native stack probes; see checkStackSpace()
++static const size_t wasmProbeStride = 8;
++
++/**
++ * The native stack probe: a function that calls itself n times through a
++ * volatile pointer (so the compiler can neither inline it nor turn the
++ * recursion into a loop).  Each level is one wasm frame on the engine's
++ * native stack and nothing on the linear-memory stack, so unwinding it with
++ * a JS exception (stack overflow) leaves no state behind.
++ */
++extern "C" EMSCRIPTEN_KEEPALIVE int orxWasmStackProbe(int n);
++static int (* volatile wasmStackProbe)(int) = orxWasmStackProbe;
++extern "C" EMSCRIPTEN_KEEPALIVE int orxWasmStackProbe(int n)
++{
++    return n <= 0 ? 0 : wasmStackProbe(n - 1) + 1;
++}
++
++/**
++ * Return 1 if less than about a quarter of the JS engine's native stack
++ * remains on the current thread.  The probe recurses through wasm frames
++ * (orxWasmStackProbe), the kind of frame that runs out: engines may limit JS
++ * and wasm differently (in Firefox a JS-only probe still succeeds while wasm
++ * frames already overflow).  If the probe does not fit, the engine throws
++ * (RangeError, InternalError "too much recursion"), which we catch here while
++ * there is still room left to raise and handle a proper Rexx error (a SYNTAX
++ * trap handler runs at the depth where the error was raised).
++ *
++ * The probe depth is calibrated once per thread, at the first probe, while
++ * the stack is still shallow: a quarter of the deepest recursion that fits
++ * then.  So the probe reserves a fixed share of the stack whatever the
++ * engine's frame sizes and stack size are.  EM_JS runs on the calling thread,
++ * which is the stack we care about.
++ */
++EM_JS(int, wasmNativeStackLow, (), {
++    var fits = function(n) { try { _orxWasmStackProbe(n); return true; } catch (e) { return false; } };
++    var depth = globalThis.__orxStackProbeDepth;
++    if (!depth)
++    {
++        var lo = 256, hi = 512;
++        while (hi < (1 << 26) && fits(hi)) { lo = hi; hi *= 2; }
++        while (hi - lo > 64)
++        {
++            var mid = (lo + hi) >> 1;
++            if (fits(mid)) lo = mid; else hi = mid;
++        }
++        depth = globalThis.__orxStackProbeDepth = Math.max(64, lo >> 2);
++    }
++    return fits(depth) ? 0 : 1;
++});
++#endif
++
+ void Activity::checkStackSpace()
+ /******************************************************************************/
+ /* Function:  Make sure there is enough stack space to run a method           */
+@@ -2307,8 +2367,38 @@ void Activity::checkStackSpace()
+     {
+         reportException(Error_Control_stack_full);
+     }
++#if defined(__EMSCRIPTEN__)
++    // Under WebAssembly the check above only watches the linear-memory C
++    // stack.  The call frames themselves live on the JS engine's native
++    // stack, which is much smaller (a few hundred Rexx levels in a browser
++    // worker) and, when exhausted, kills the runtime with a JS RangeError.
++    // A native probe costs ~20 us, so it is only done each time the
++    // activation stack gets wasmProbeStride frames deeper than the deepest
++    // depth already found safe: loops at a steady depth never probe.
++    if (stackcheck == true && stackFrameDepth >= wasmProbedDepth + wasmProbeStride)
++    {
++        checkNativeStack();
++        wasmProbedDepth = stackFrameDepth;
++    }
+ #endif
++#endif
++}
++
++
++#if defined(__EMSCRIPTEN__)
++/**
++ * Raise Error 11 if the JS engine's native stack is running low on the
++ * current thread.  Also used directly by recursions that do not push
++ * activations (the expression parser).
++ */
++void Activity::checkNativeStack()
++{
++    if (stackcheck == true && wasmNativeStackLow())
++    {
++        reportException(Error_Control_stack_full);
++    }
+ }
++#endif
+ 
+ 
+ /**
+@@ -3401,6 +3491,9 @@ void Activity::run(ActivityDispatcher &target)
+ 
+     // update the stack base
+     stackLimit = currentThread.getStackBase() + errorRecoveryStack;
++#if defined(__EMSCRIPTEN__)
++    wasmProbedDepth = 0;
++#endif
+ 
+     // get a new random seed
+     generateRandomNumberSeed();
+diff --git a/interpreter/concurrency/Activity.hpp b/interpreter/concurrency/Activity.hpp
+index 213314a..96da70e 100644
+--- a/interpreter/concurrency/Activity.hpp
++++ b/interpreter/concurrency/Activity.hpp
+@@ -193,6 +193,9 @@ class Activity : public RexxInternalObject
+     void        requestAccess();
+     void        setupCurrentActivity();
+     void        checkStackSpace();
++#if defined(__EMSCRIPTEN__)
++    void        checkNativeStack();
++#endif
+     void        cleanupActivityResources();
+     void        terminatePoolActivity();
+     thread_id_t threadIdMethod();
+@@ -422,6 +425,9 @@ class Activity : public RexxInternalObject
+     size_t   attachCount;               // extent of nested attaches
+     bool     newThreadAttached;         // Indicates this thread was a "side door" attach.
+     char    *stackLimit;                // pointer to base to the C stack location that will trigger a control stack error
++#if defined(__EMSCRIPTEN__)
++    size_t   wasmProbedDepth = 0;       // deepest activation depth at which the JS native stack probed OK
++#endif
+     bool        clauseExitUsed;         // halt/trace sys exit not set ==> 1
+     uint64_t    randomSeed;             // random number seed
+     ProtectedBase *protectedObjects;    // list of stack-based object protectors
+diff --git a/interpreter/package/PackageManager.cpp b/interpreter/package/PackageManager.cpp
+index 60d8c1e..5efe0eb 100644
+--- a/interpreter/package/PackageManager.cpp
++++ b/interpreter/package/PackageManager.cpp
+@@ -73,6 +73,48 @@ StringTable *PackageManager::packageRoutines = OREF_NULL;     // table of functi
+ StringTable *PackageManager::registeredRoutines = OREF_NULL;
+ StringTable *PackageManager::loadedRequires = OREF_NULL;
+ 
++#if defined(__EMSCRIPTEN__)
++extern RexxPackageEntry rxsock_package_entry;
++extern RexxPackageEntry rxregexp_package_entry;
++extern RexxPackageEntry rxmath_package_entry;
++extern RexxPackageEntry hostemu_package_entry;
++extern RexxPackageEntry orxnixclib_package_entry;
++
++// Extension packages linked into the WASM interpreter (there is no dlopen).
++// They are registered as internal packages when the image is built, so
++// ::REQUIRES of their .cls files and RxFuncAdd() find them without loading
++// a shared library.
++const PackageManager::EmbeddedPackage PackageManager::embeddedPackages[] =
++{
++    { "rxsock",   &rxsock_package_entry,   true },
++    { "rxregexp", &rxregexp_package_entry, true },
++    { "rxmath",   &rxmath_package_entry,   true },
++    { "hostemu",  &hostemu_package_entry,  false },
++    { "rxunixsys", &orxnixclib_package_entry, false },
++    { NULL, NULL, false }
++};
++
++
++/**
++ * Find the embedded package entry matching a restored internal package.
++ *
++ * @param package The library package restored from the image.
++ *
++ * @return The package entry, or NULL if this is not an embedded package.
++ */
++RexxPackageEntry *PackageManager::findEmbeddedPackage(LibraryPackage *package)
++{
++    for (const EmbeddedPackage *e = embeddedPackages; e->name != NULL; e++)
++    {
++        if (package->isPackage(new_string(e->name)))
++        {
++            return e->entry;
++        }
++    }
++    return NULL;
++}
++#endif
++
+ /**
+  * Initialize the package manager global state.
+  */
+@@ -86,6 +128,15 @@ void PackageManager::initialize()
+     loadInternalPackage(GlobalNames::REXX, rexxPackage);
+     // REXXUTIL is also an internally contained package
+     loadInternalPackage(GlobalNames::REXXUTIL, rexxutilPackage);
++#if defined(__EMSCRIPTEN__)
++    for (const EmbeddedPackage *e = embeddedPackages; e->name != NULL; e++)
++    {
++        if (e->inImage)
++        {
++            loadInternalPackage(new_string(e->name), e->entry);
++        }
++    }
++#endif
+ }
+ 
+ 
+@@ -155,8 +206,13 @@ void PackageManager::restore()
+             }
+             else
+             {
++#if defined(__EMSCRIPTEN__)
++                RexxPackageEntry *embedded = findEmbeddedPackage(package);
++                package->reload(embedded != NULL ? embedded : rexxutilPackage);
++#else
+                 // the only other choice is the REXXUTIL package
+                 package->reload(rexxutilPackage);
++#endif
+             }
+         }
+     }
+@@ -231,6 +287,20 @@ LibraryPackage *PackageManager::loadLibrary(RexxString *name)
+     // have we already loaded this package?
+     // may need to bootstrap it up first.
+     LibraryPackage *package = (LibraryPackage *)packages->get(name);
++#if defined(__EMSCRIPTEN__)
++    // an embedded package that is loaded on first request?
++    if (package == NULL)
++    {
++        for (const EmbeddedPackage *e = embeddedPackages; e->name != NULL; e++)
++        {
++            if (!e->inImage && name->strCaselessCompare(e->name))
++            {
++                loadInternalPackage(name, e->entry);
++                return (LibraryPackage *)packages->get(name);
++            }
++        }
++    }
++#endif
+     if (package == NULL)
+     {
+         package = new LibraryPackage(name);
+@@ -451,11 +521,13 @@ RoutineClass *PackageManager::createRegisteredRoutine(RexxString *function)
+ 
+     const char *functionName = function->getStringData();
+ 
++#if !defined(__EMSCRIPTEN__)
+     {
+         UnsafeBlock releaser;    // don't hold the lock while calling
+         // now go resolve this entry pointer
+         RexxResolveRoutine(functionName, &entry);
+     }
++#endif
+ 
+     // this is a failure
+     if (entry == NULL)
+@@ -988,11 +1060,13 @@ PREGISTEREDROUTINE PackageManager::resolveRegisteredRoutineEntry(RexxString *pac
+         REXXPFN entry = NULL;
+ 
+         const char *functionName = name->getStringData();
++#if !defined(__EMSCRIPTEN__)
+         {
+             UnsafeBlock releaser;
+             // now go resolve this entry pointer
+             RexxResolveRoutine(functionName, &entry);
+         }
++#endif
+ 
+         // this is a failure
+         if (entry == NULL)
+diff --git a/interpreter/package/PackageManager.hpp b/interpreter/package/PackageManager.hpp
+index 416ab1f..30a4d87 100644
+--- a/interpreter/package/PackageManager.hpp
++++ b/interpreter/package/PackageManager.hpp
+@@ -123,6 +123,15 @@ protected:
+ 
+     static RexxPackageEntry *rexxPackage;       // internal generated REXX package
+     static RexxPackageEntry *rexxutilPackage;   // internal generated REXXUTIL package
++#if defined(__EMSCRIPTEN__)
++    // native extension packages statically linked into the WASM interpreter
++    // inImage: registered when the image is built (functions usable without
++    // RxFuncAdd); otherwise loaded on first request, which runs its loader
++    // in the current process (needed e.g. by hostemu's subcom registration)
++    struct EmbeddedPackage { const char *name; RexxPackageEntry *entry; bool inImage; };
++    static const EmbeddedPackage embeddedPackages[];
++    static RexxPackageEntry *findEmbeddedPackage(LibraryPackage *package);
++#endif
+ };
+ 
+ #endif
+diff --git a/interpreter/parser/LanguageParser.cpp b/interpreter/parser/LanguageParser.cpp
+index b490386..5658f4f 100644
+--- a/interpreter/parser/LanguageParser.cpp
++++ b/interpreter/parser/LanguageParser.cpp
+@@ -3759,6 +3759,21 @@ RexxInternalObject* LanguageParser::parseSubTerm(int terminators)
+     // with very complex instructions, it is possible to recurse quite deeply here.
+     // so give a look at the stack space on each call so we can terminate "nicely"
+     ActivityManager::currentActivity.load()->checkStackSpace();
++#if defined(__EMSCRIPTEN__)
++    // The parser recursion pushes no activations, so the WASM native stack
++    // probe in checkStackSpace() never fires for it; probe every few levels
++    // of nesting instead.
++    struct NestingGuard
++    {
++        size_t &depth;
++        NestingGuard(size_t &d) : depth(d) { depth++; }
++        ~NestingGuard() { depth--; }
++    } nesting(wasmNesting);
++    if (wasmNesting % 8 == 0)
++    {
++        ActivityManager::currentActivity.load()->checkNativeStack();
++    }
++#endif
+ 
+     // get the first token and make sure we really have something here.
+     // The caller knows how to deal with a missing term.
+diff --git a/interpreter/parser/LanguageParser.hpp b/interpreter/parser/LanguageParser.hpp
+index 41bb1e6..31211e8 100644
+--- a/interpreter/parser/LanguageParser.hpp
++++ b/interpreter/parser/LanguageParser.hpp
+@@ -506,6 +506,9 @@ protected:
+     ArrayClass      *calls;              // root of call list
+ 
+     size_t           currentStack;       // current expression stack depth
++#if defined(__EMSCRIPTEN__)
++    size_t           wasmNesting = 0;    // parseSubTerm() nesting, for native stack probes
++#endif
+     size_t           maxStack;           // maximum stack depth
+     size_t           variableIndex;      // current variable index slot
+     size_t           constantMaxStack;           // maximum stack depth for the evaluated constants
+diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform/unix/SystemCommands.cpp
+index 2c336ee..5abf65b 100644
+--- a/interpreter/platform/unix/SystemCommands.cpp
++++ b/interpreter/platform/unix/SystemCommands.cpp
+@@ -826,6 +826,18 @@ RexxObjectPtr RexxEntry ioCommandHandler(RexxExitContext *context, RexxStringObj
+     CSTRING environment = context->CString(address);
+     CSTRING commandString = context->CString(command);
+ 
++#if defined(__EMSCRIPTEN__)
++    // There is no child-process model in the browser WASM profile.  Keep
++    // commands handled entirely in-process (cd/set/unset/export), and fail
++    // closed for commands that would require posix_spawnp().
++    RexxObjectPtr internalRc = NULLOBJECT;
++    if (handleCommandInternally(context, (char *)commandString, internalRc))
++    {
++        return internalRc;
++    }
++    return ErrorFailure(context, commandString);
++#else
++
+     if (Utilities::strCaselessCompare("path", environment) == 0)
+     {   // For the no-shell "direct" environment we need to break the command
+         // string into a command name and separate arguments each (we have no
+@@ -1061,6 +1073,7 @@ RexxObjectPtr RexxEntry ioCommandHandler(RexxExitContext *context, RexxStringObj
+         return NULLOBJECT;
+     }
+     return context->False(); // zero return code
++#endif
+ }
+ 
+ 
+diff --git a/interpreter/platform/unix/TimeSupport.cpp b/interpreter/platform/unix/TimeSupport.cpp
+index 9f44c51..2c15c8b 100644
+--- a/interpreter/platform/unix/TimeSupport.cpp
++++ b/interpreter/platform/unix/TimeSupport.cpp
+@@ -45,12 +45,43 @@
+ #include "RexxDateTime.hpp"
+ #include "SystemInterpreter.hpp"
+ 
++#ifdef __EMSCRIPTEN__
++#include <emscripten.h>
++
++// Emscripten's wall clock (gettimeofday(), CLOCK_REALTIME) is Date.now(): whole
++// milliseconds, so the microseconds of TIME('L') were always 000 and anything
++// shorter than a millisecond (TIME('E'), SysSleep) measured as 0.  The same
++// wall clock with sub-millisecond resolution (as fine as the JS engine allows)
++// is performance.timeOrigin + performance.now(), in Node and in browsers, on
++// every thread.
++EM_JS(double, wasmRealtimeMs, (), {
++    return performance.timeOrigin + performance.now();
++});
++
++static void wasmRealtime(time_t *seconds, int64_t *nanoseconds)
++{
++    double ms = wasmRealtimeMs();
++    double s = ms / 1000;
++    *seconds = (time_t)s;
++    int64_t ns = (int64_t)((ms - (double)*seconds * 1000) * 1000000);
++    *nanoseconds = ns < 0 ? 0 : (ns > 999999999 ? 999999999 : ns);
++}
++#endif
++
+ 
+ void SystemInterpreter::getCurrentTime(RexxDateTime *Date )
+ {
+     struct tm *SystemDate;               /* system date structure ptr  */
+     struct timeval tv;
++#ifdef __EMSCRIPTEN__
++    time_t seconds;
++    int64_t nanoseconds;
++    wasmRealtime(&seconds, &nanoseconds);
++    tv.tv_sec = seconds;
++    tv.tv_usec = (suseconds_t)(nanoseconds / 1000);
++#else
+     gettimeofday(&tv, NULL);
++#endif
+ 
+ #ifdef AIX
+     struct tm SD;                        /* system date area           */
+@@ -93,9 +124,16 @@ void SystemInterpreter::getCurrentTime(RexxDateTime *Date )
+  */
+ int64_t SystemInterpreter::getNanosecondTicks()
+ {
++#ifdef __EMSCRIPTEN__
++    time_t seconds;
++    int64_t nanoseconds;
++    wasmRealtime(&seconds, &nanoseconds);
++    return (int64_t)seconds * 1000000000 + nanoseconds;
++#else
+     struct timespec time;
+     clock_gettime(CLOCK_REALTIME, &time);
+     return (int64_t)time.tv_sec * 1000000000 + time.tv_nsec;
++#endif
+ }
+ 
+ 
+diff --git a/rexxapi/client/LocalMacroSpaceManager.cpp b/rexxapi/client/LocalMacroSpaceManager.cpp
+index 6a5a342..9c1bb8a 100644
+--- a/rexxapi/client/LocalMacroSpaceManager.cpp
++++ b/rexxapi/client/LocalMacroSpaceManager.cpp
+@@ -607,6 +607,11 @@ void LocalMacroSpaceManager::translateRexxProgram(const char *sourceFile, Manage
+     // translated the file, we're finished with the source, so it can be released
+     // once we exit the block.
+     {
++        RexxReturnCode (RexxEntry *compiler)(const char *, CONSTRXSTRING *, RXSTRING *);
++#if defined(__EMSCRIPTEN__)
++        // no dlopen() in a WASM process; the interpreter is linked in
++        compiler = RexxTranslateInstoreProgram;
++#else
+         SysLibrary lib;
+         if (!lib.load("rexx"))
+         {
+@@ -619,9 +624,8 @@ void LocalMacroSpaceManager::translateRexxProgram(const char *sourceFile, Manage
+             throw new ServiceException(MACRO_TRANSLATION_ERROR, "Unable to compile Rexx program");
+         }
+ 
+-        RexxReturnCode (RexxEntry *compiler)(const char *, CONSTRXSTRING *, RXSTRING *);
+-
+         compiler = (RexxReturnCode (RexxEntry *)(const char *, CONSTRXSTRING *, RXSTRING *))proc;
++#endif
+ 
+         ManagedRxstring sourceData;
+         readRxstringFromFile(fileInst, sourceData, (size_t)fsize);
+diff --git a/rexxapi/client/platform/unix/SysLocalAPIManager.cpp b/rexxapi/client/platform/unix/SysLocalAPIManager.cpp
+index d7f16d3..1b3f8d8 100644
+--- a/rexxapi/client/platform/unix/SysLocalAPIManager.cpp
++++ b/rexxapi/client/platform/unix/SysLocalAPIManager.cpp
+@@ -49,6 +49,9 @@
+ #include <signal.h>
+ #include <sys/types.h>
+ #include "SysProcess.hpp"
++#if defined(__EMSCRIPTEN__)
++#include "SysLoopbackConnection.hpp"
++#endif
+ 
+ #ifdef AIX
+ extern "C"
+@@ -73,6 +76,9 @@ int _rexxapi_fini()
+  */
+ void SysLocalAPIManager::startServerProcess()
+ {
++#if defined(__EMSCRIPTEN__)
++    throw new ServiceException(API_FAILURE, "rxapi service is unavailable in the WASM profile");
++#else
+ #define RXAPI "rxapi"
+ #define DOTDOT_BIN_RXAPI "../bin/" RXAPI
+ #define DOT_RXAPI "./" RXAPI
+@@ -140,6 +146,7 @@ void SysLocalAPIManager::startServerProcess()
+     // still no luck? This is a launch failure. Because we are the forked process,
+     // we need to exit immediately.
+     exit(1);
++#endif
+ }
+ 
+ 
+@@ -188,6 +195,10 @@ void SysLocalAPIManager::setActiveSessionQueue(QueueHandle sessionQueue)
+  */
+ ApiConnection *SysLocalAPIManager::newClientConnection()
+ {
++#if defined(__EMSCRIPTEN__)
++    // no rxapi daemon in a WASM process: talk to the server linked in-process
++    return new SysLoopbackConnection();
++#endif
+     SysLocalSocketConnection *connection = new SysLocalSocketConnection();
+ 
+     // open the pipe to the server
+diff --git a/rexxapi/common/platform/unix/SysLoopbackConnection.cpp b/rexxapi/common/platform/unix/SysLoopbackConnection.cpp
+new file mode 100644
+index 0000000..a905676
+--- /dev/null
++++ b/rexxapi/common/platform/unix/SysLoopbackConnection.cpp
+@@ -0,0 +1,138 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/**
++ * In-process transport to the Rexx API server; see SysLoopbackConnection.hpp.
++ */
++
++#include "SysLoopbackConnection.hpp"
++#include "ServiceMessage.hpp"
++#include "APIServer.hpp"
++#include <string.h>
++
++namespace
++{
++/**
++ * The server end of a loopback exchange: reads the pending request and
++ * collects the reply.
++ */
++class ServerEnd : public ApiConnection
++{
++public:
++    ServerEnd(std::vector<char> &in, std::vector<char> &out) : ApiConnection(), input(in), output(out), pos(0) { }
++
++    bool read(void *buf, size_t bufsize, size_t *bytesread) override
++    {
++        size_t n = input.size() - pos;
++        if (n > bufsize)
++        {
++            n = bufsize;
++        }
++        memcpy(buf, input.data() + pos, n);
++        pos += n;
++        *bytesread = n;
++        return n > 0 || bufsize == 0;
++    }
++
++    bool write(void *buf, size_t bufsize, size_t *byteswritten) override
++    {
++        output.insert(output.end(), (char *)buf, (char *)buf + bufsize);
++        *byteswritten = bufsize;
++        return true;
++    }
++
++    bool write(void *buf, size_t bufsize, void *buf2, size_t buf2size, size_t *byteswritten) override
++    {
++        output.insert(output.end(), (char *)buf, (char *)buf + bufsize);
++        output.insert(output.end(), (char *)buf2, (char *)buf2 + buf2size);
++        *byteswritten = bufsize + buf2size;
++        return true;
++    }
++
++    bool disconnect() override { return true; }
++
++private:
++    std::vector<char> &input;
++    std::vector<char> &output;
++    size_t pos;
++};
++
++
++/**
++ * The single in-process server instance (created on first use).
++ */
++APIServer &inProcessServer()
++{
++    static APIServer *server = []()
++    {
++        APIServer *s = new APIServer();
++        s->initServer(NULL);
++        return s;
++    }();
++    return *server;
++}
++}
++
++
++/**
++ * Run the server on the request collected so far, replacing any old reply.
++ */
++void SysLoopbackConnection::serve()
++{
++    reply.clear();
++    replyPos = 0;
++    ServerEnd end(request, reply);
++    ServiceMessage message;
++    message.readMessage(&end);
++    inProcessServer().processMessage(message);
++    message.writeResult(&end);
++    request.clear();
++}
++
++
++bool SysLoopbackConnection::read(void *buf, size_t bufsize, size_t *bytesread)
++{
++    // first read after a request: serve it now, on this thread
++    if (replyPos >= reply.size() && !request.empty())
++    {
++        serve();
++    }
++    size_t n = reply.size() - replyPos;
++    if (n > bufsize)
++    {
++        n = bufsize;
++    }
++    memcpy(buf, reply.data() + replyPos, n);
++    replyPos += n;
++    *bytesread = n;
++    if (n == 0 && bufsize != 0)
++    {
++        errcode = CSERROR_IO_FAILED;
++        return false;
++    }
++    return true;
++}
++
++
++bool SysLoopbackConnection::write(void *buf, size_t bufsize, size_t *byteswritten)
++{
++    request.insert(request.end(), (char *)buf, (char *)buf + bufsize);
++    *byteswritten = bufsize;
++    return true;
++}
++
++
++bool SysLoopbackConnection::write(void *buf, size_t bufsize, void *buf2, size_t buf2size, size_t *byteswritten)
++{
++    request.insert(request.end(), (char *)buf, (char *)buf + bufsize);
++    request.insert(request.end(), (char *)buf2, (char *)buf2 + buf2size);
++    *byteswritten = bufsize + buf2size;
++    return true;
++}
+diff --git a/rexxapi/common/platform/unix/SysLoopbackConnection.hpp b/rexxapi/common/platform/unix/SysLoopbackConnection.hpp
+new file mode 100644
+index 0000000..3b4318f
+--- /dev/null
++++ b/rexxapi/common/platform/unix/SysLoopbackConnection.hpp
+@@ -0,0 +1,47 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/**
++ * In-process connection to the Rexx API server (WebAssembly build).
++ *
++ * A WASM process cannot start or reach the rxapi daemon, so the server code
++ * (queues, registrations, macrospace) is linked into the interpreter and the
++ * client talks to it through this connection: the request written by
++ * ClientMessage is decoded and dispatched on the calling thread when the
++ * client starts reading the reply.  The message protocol and the server code
++ * are unchanged; only the transport is replaced.
++ */
++#ifndef SysLoopbackConnection_Included
++#define SysLoopbackConnection_Included
++
++#include <stddef.h>
++#include <stdlib.h>
++#include "CSStream.hpp"
++#include <vector>
++
++class SysLoopbackConnection : public ApiConnection
++{
++public:
++    SysLoopbackConnection() : ApiConnection(), replyPos(0) { }
++    ~SysLoopbackConnection() { }
++    bool read(void *buf, size_t bufsize, size_t *bytesread) override;
++    bool write(void *buf, size_t bufsize, size_t *byteswritten) override;
++    bool write(void *buf, size_t bufsize, void *buf2, size_t buf2size, size_t *byteswritten) override;
++    bool disconnect() override { return true; }
++
++protected:
++    void serve();
++
++    std::vector<char> request;   // bytes written by the client, not yet served
++    std::vector<char> reply;     // the server's answer
++    size_t replyPos;             // read position in the reply
++};
++
++#endif
+diff --git a/rexxapi/server/APIServer.cpp b/rexxapi/server/APIServer.cpp
+index f388983..dbbfe2f 100644
+--- a/rexxapi/server/APIServer.cpp
++++ b/rexxapi/server/APIServer.cpp
+@@ -214,6 +214,47 @@ void APIServer::processMessages(ApiConnection *connection)
+ }
+ 
+ 
++#if defined(__EMSCRIPTEN__)
++/**
++ * Process a single message for an in-process client (WebAssembly build, see
++ * SysLoopbackConnection): the same dispatching as processMessages(), without
++ * a connection to read from or reply to.
++ *
++ * @param message The request; the result is placed back into it.
++ */
++void APIServer::processMessage(ServiceMessage &message)
++{
++    message.result = MESSAGE_OK;     // unconditionally zero the result
++    try
++    {
++        switch (message.messageTarget)
++        {
++            case QueueManager:
++            case RegistrationManager:
++            case MacroSpaceManager:
++            {
++                getInstance(message)->dispatch(message);
++                break;
++            }
++
++            case APIManager:
++            {
++                // there is no connection to close in process
++                if (message.operation != CLOSE_CONNECTION)
++                {
++                    dispatch(message);
++                }
++                break;
++            }
++        }
++    } catch (std::bad_alloc &)
++    {
++        message.result = SERVER_ERROR;
++    }
++}
++#endif
++
++
+ /**
+  * Dispatch an API server control message.
+  *
+diff --git a/rexxapi/server/APIServer.hpp b/rexxapi/server/APIServer.hpp
+index e448335..ec9e137 100644
+--- a/rexxapi/server/APIServer.hpp
++++ b/rexxapi/server/APIServer.hpp
+@@ -70,6 +70,9 @@ public:
+     void dispatch(ServiceMessage &message);
+     void sessionTerminated(APIServerThread *thread);
+     void cleanupTerminatedSessions();
++#if defined(__EMSCRIPTEN__)
++    void processMessage(ServiceMessage &message);
++#endif
+ 
+ protected:
+ 
+diff --git a/wasm/README.md b/wasm/README.md
+new file mode 100644
+index 0000000..fe34342
+--- /dev/null
++++ b/wasm/README.md
+@@ -0,0 +1,117 @@
++# ooRexx 5.3 WebAssembly / RxSock development port
++
++Baseline: ooRexx 5.3.0, trunk r13254.  Toolchain qualification: Emscripten 6.0.9.
++
++This development port compiles the ooRexx interpreter and API statically to
++WebAssembly, builds `rexx.img` with the WASM `rexximage` executable, embeds the
++image into the runtime MEMFS, and embeds the stock RxSock package into the
++interpreter.  RxSock keeps its Rexx API; Emscripten SOCKFS supplies a WebSocket
++transport for stream sockets.
++
++## WASM platform policy
++
++* no curses / orxncurses;
++* no child process spawning from ADDRESS handlers;
++* no external rxapi daemon: the API server (external data queues, function
++  and subcom registration, macrospace) is linked in and reached through an
++  in-process transport (`rexxapi/common/platform/unix/SysLoopbackConnection`);
++* user identity: Emscripten has no passwd database, so `getpwnam()` and
++  `getpwuid()` are wrapped to return the user the process runs as (the host
++  user under Node, the synthetic user `wasm` in the browser), for `USERID()`,
++  `cd ~user` and the RexxAPI;
++* static `rexx` (linked `--whole-archive`, so the `_rexx_init()` constructor
++  that creates the interpreter locks is kept) and `rexxapi`;
++* extension packages embedded in the interpreter (no dlopen):
++  rxsock, rxregexp, rxmath (registered in the image), hostemu and rxunixsys
++  (registered on first request) — see `PackageManager::embeddedPackages`;
++* the interpreter runs on a pthread (`-sPROXY_TO_PTHREAD`), so the JS main
++  thread stays free to start workers and deliver WebSocket events; a pool of
++  4 workers is pre-started (`-sPTHREAD_POOL_SIZE=4`);
++* no Asyncify: blocking is legal on the interpreter thread;
++* native WebAssembly exceptions in the standardized encoding
++  (`-fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0`, exnref; the legacy one is
++  deprecated, and it makes WebKit before 26.6 miss C++ exceptions far more
++  often, see the comment in CMakeLists.txt): Chrome 137, Firefox 131,
++  Safari 18.4, Node 22 or later;
++* deep recursion raises Error 11 (Control stack full): besides the usual
++  linear-stack check, `Activity::checkStackSpace()` probes the JS engine's
++  native stack (where the frames really live) every few activation levels,
++  with a call that recurses through wasm frames, calibrated on each thread to
++  a quarter of its stack, so it works whatever the engine's frame and stack
++  sizes (a JS-only probe misses Firefox's wasm stack limit);
++* 8 MiB WASM stack, growable memory;
++* the wall clock (`TIME`, `.DateTime`, elapsed times) with sub-millisecond
++  resolution: `performance.timeOrigin + performance.now()`, where Emscripten's
++  `gettimeofday()`/`CLOCK_REALTIME` are `Date.now()`, whole milliseconds;
++* `rexx.img`, `socket.cls`, `streamsocket.cls` and `rxregexp.cls` preloaded
++  into MEMFS.
++
++Blocking `SockConnect`, `SockRecv`, and timed `SockSelect` preserve the native
++RxSock contract by polling Emscripten readiness with zero-time syscalls and
++sleeping between attempts (socket syscalls are proxied to the main thread).
++Nonblocking sockets preserve `EINPROGRESS` and readiness/SO_ERROR completion
++semantics. `wasm/emscripten-dns-proxy.js` makes Emscripten's fake-DNS lookup
++run on the main thread too, so host names resolve consistently.
++
++## Build
++
++With Emscripten 6.0.9 installed through emsdk
++(`./emsdk install 6.0.9 && ./emsdk activate 6.0.9`):
++
++    ./wasm/build-wasm.sh /path/to/emsdk/upstream /tmp/oorexx-wasm-build
++
++The first argument can also be an extracted official `wasm-binaries.tar.xz`
++(whose top level contains `install/`).  The runtime is built into
++`/tmp/oorexx-wasm-build/bin` (`rexx.js`, `rexx.wasm`, `rexx.data`).
++
++The initial CMake cache `cmake/wasm-emscripten-6.0.9-cache.cmake` records the
++qualified Emscripten libc capabilities and avoids slow generic Unix probes.
++
++## Node qualification
++
++For offline qualification Node 22 needs a `require('ws')` provider because
++Emscripten SOCKFS uses that API in Node. `wasm/node-ws-compat/index.js` adapts
++Node 22's built-in WHATWG WebSocket client for that purpose.
++
++The qualification server uses Python `websockets` and accepts the Emscripten
++`binary` WebSocket subprotocol:
++
++    ./wasm/tests/qualify-node.sh /tmp/oorexx-wasm-build
++
++It needs Python 3 with `websockets` (`python3 -m pip install websockets`;
++where pip refuses to change the system Python, PEP 668, as with Homebrew's,
++use a virtual environment: `python3 -m venv .venv && . .venv/bin/activate &&
++python3 -m pip install websockets`) and GNU `timeout` (on macOS:
++`brew install coreutils`; `gtimeout` is accepted too).
++
++Qualified behaviours include core Rexx execution, RxSock create/close,
++connect/send/recv, 5,000-byte partial stream reads, arbitrary binary strings,
++finite select timeout/readiness, nonblocking EINPROGRESS completion,
++connection refusal, DNS/localhost, and the unchanged `.StreamSocket` wrapper.
++
++## Browser status
++
++The generated `rexx.js/rexx.wasm/rexx.data` target `node,web,worker`. A pthread
++browser deployment must be served from a cross-origin isolated origin (COOP:
++`same-origin`, COEP: `require-corp`). `wasm/tests/http_isolated.py` is a minimal
++local server for that.
++
++Exercised in headless Chromium: core Rexx, START/REPLY/.Alarm and concurrent
++threads, SysSleep, RxSock and `.StreamSocket` over WebSocket, external data
++queue, rxregexp, rxmath, deep recursion (Error 11, at a depth set by the
++browser; see the limits below).
++
++## Known limitations / deliberate non-claims
++
++* Listening sockets are not supported (browser: Emscripten SOCKFS; Node: the
++  client-only `ws` shim makes `listen()` fail with EOPNOTSUPP).
++* UDP/datagram semantics are not qualified.
++* Native TCP servers need a WebSocket-facing endpoint/proxy; a real WebSocket
++  server can be addressed directly.
++* ADDRESS commands requiring an OS child process fail closed (RC 127).
++* Maximum recursion depth is set by the JS engine's native stack (internal
++  CALL / internal function calls / method calls): Node about 7,100 / 5,400 /
++  4,000; browser workers about 900 / 700 / 500 in Chromium, 1,300 / 900 / 700
++  in Firefox, 5,100 / 3,500 / 2,800 in WebKit.
++* Pthreads + growable memory carries an Emscripten performance warning; it is a
++  correctness-first development setting, not a final performance profile.
+diff --git a/wasm/build-wasm.sh b/wasm/build-wasm.sh
+new file mode 100755
+index 0000000..469a79f
+--- /dev/null
++++ b/wasm/build-wasm.sh
+@@ -0,0 +1,79 @@
++#!/usr/bin/env bash
++#/*----------------------------------------------------------------------------*/
++#/*                                                                            */
++#/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++#/*                                                                            */
++#/* This program and the accompanying materials are made available under       */
++#/* the terms of the Common Public License v1.0 which accompanies this         */
++#/* distribution. A copy is also available at the following address:           */
++#/* https://www.oorexx.org/license.html                                        */
++#/*                                                                            */
++#/* Redistribution and use in source and binary forms, with or                 */
++#/* without modification, are permitted provided that the following            */
++#/* conditions are met:                                                        */
++#/*                                                                            */
++#/* Redistributions of source code must retain the above copyright             */
++#/* notice, this list of conditions and the following disclaimer.              */
++#/* Redistributions in binary form must reproduce the above copyright          */
++#/* notice, this list of conditions and the following disclaimer in            */
++#/* the documentation and/or other materials provided with the distribution.   */
++#/*                                                                            */
++#/* Neither the name of Rexx Language Association nor the names                */
++#/* of its contributors may be used to endorse or promote products             */
++#/* derived from this software without specific prior written permission.      */
++#/*                                                                            */
++#/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++#/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++#/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++#/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++#/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++#/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++#/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++#/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++#/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++#/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++#/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++#/*                                                                            */
++#/*----------------------------------------------------------------------------*/
++set -euo pipefail
++
++# TOOLCHAIN: the "upstream" directory of an emsdk installation (with
++# emscripten/ and bin/), or an extracted official wasm-binaries.tar.xz (whose
++# top level contains install/)
++if [[ $# -lt 1 || $# -gt 2 ]]; then
++  echo "usage: $0 TOOLCHAIN [build-dir]   (TOOLCHAIN: emsdk/upstream or extracted wasm-binaries)" >&2
++  exit 2
++fi
++
++TC=$(cd "$1" && pwd)
++[[ -x "$TC/emscripten/emcc" ]] || TC=$TC/install
++SRC=$(cd "$(dirname "$0")/.." && pwd)
++BUILD=${2:-"$SRC/build-wasm"}
++mkdir -p "$BUILD"
++BUILD=$(cd "$BUILD" && pwd)
++NODE=$(command -v node)
++
++if [[ ! -x "$TC/emscripten/emcc" ]]; then
++  echo "no emscripten/emcc under $1 (or $1/install)" >&2
++  exit 2
++fi
++
++cat > "$BUILD/.emscripten" <<CFG
++LLVM_ROOT = '$TC/bin'
++BINARYEN_ROOT = '$TC'
++EMSCRIPTEN_ROOT = '$TC/emscripten'
++NODE_JS = ['$NODE']
++CFG
++
++export EM_CONFIG="$BUILD/.emscripten"
++export PATH="$TC/bin:$TC/emscripten:$PATH"
++
++emcmake cmake -S "$SRC" -B "$BUILD" \
++  -C "$SRC/cmake/wasm-emscripten-6.0.9-cache.cmake" \
++  -DCMAKE_BUILD_TYPE=Release \
++  -DORX_ENABLE_IPO=OFF
++cmake --build "$BUILD" --target rexx_exe -j"${JOBS:-4}"
++
++echo
++echo "WASM runtime built in $BUILD/bin"
++ls -lh "$BUILD/bin/rexx.js" "$BUILD/bin/rexx.wasm" "$BUILD/bin/rexx.data" "$BUILD/bin/rexx.img"
+diff --git a/wasm/emscripten-dns-proxy.js b/wasm/emscripten-dns-proxy.js
+new file mode 100644
+index 0000000..fe09488
+--- /dev/null
++++ b/wasm/emscripten-dns-proxy.js
+@@ -0,0 +1,57 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*
++ * ooRexx/WASM: run gethostbyname()'s name lookup on the main thread.
++ *
++ * Emscripten's SOCKFS fakes DNS: a host name is mapped to a synthetic IPv4
++ * address in a JS table ($DNS), and connect() maps it back to the name to
++ * build the WebSocket URL.  With -sPROXY_TO_PTHREAD the interpreter runs on a
++ * worker, while socket syscalls (and getaddrinfo) are proxied to the main
++ * thread.  _emscripten_lookup_name, used by gethostbyname(), is not proxied,
++ * so the mapping was created in the worker's own $DNS table and connect() on
++ * the main thread could not translate the synthetic address back
++ * (.StreamSocket~new("localhost", port) -> ECONNREFUSED).  Proxying the lookup
++ * keeps a single $DNS table on the main thread.
++ */
++addToLibrary({
++  _emscripten_lookup_name__deps: ['$UTF8ToString', '$DNS', '$inetPton4'],
++  _emscripten_lookup_name__proxy: 'sync',
++  _emscripten_lookup_name: (name) => {
++    var nameString = UTF8ToString(name);
++    return inetPton4(DNS.lookup_name(nameString));
++  },
++});
+diff --git a/wasm/node-ws-compat/index.js b/wasm/node-ws-compat/index.js
+new file mode 100644
+index 0000000..a3ff269
+--- /dev/null
++++ b/wasm/node-ws-compat/index.js
+@@ -0,0 +1,73 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++'use strict';
++// Minimal client-only compatibility layer for Emscripten SOCKFS under Node 22.
++// Emscripten calls require('ws'); Node 22 already has a WHATWG WebSocket client.
++const NativeWebSocket = globalThis.WebSocket;
++if (typeof NativeWebSocket !== 'function') throw new Error('Node built-in WebSocket unavailable');
++class WsCompat {
++  constructor(url, protocols) { this._ws = new NativeWebSocket(url, protocols); }
++  static get CONNECTING(){return NativeWebSocket.CONNECTING} static get OPEN(){return NativeWebSocket.OPEN}
++  static get CLOSING(){return NativeWebSocket.CLOSING} static get CLOSED(){return NativeWebSocket.CLOSED}
++  get CONNECTING(){return NativeWebSocket.CONNECTING} get OPEN(){return NativeWebSocket.OPEN}
++  get CLOSING(){return NativeWebSocket.CLOSING} get CLOSED(){return NativeWebSocket.CLOSED}
++  get readyState(){return this._ws.readyState} get url(){return this._ws.url}
++  set binaryType(v){this._ws.binaryType=v} get binaryType(){return this._ws.binaryType}
++  send(data){return this._ws.send(data)} close(...args){return this._ws.close(...args)}
++  on(event, handler) {
++    if (event === 'message') this._ws.addEventListener('message', async ev => {
++      let d=ev.data;
++      if (d instanceof ArrayBuffer) handler(Buffer.from(d), true);
++      else if (ArrayBuffer.isView(d)) handler(Buffer.from(d.buffer,d.byteOffset,d.byteLength), true);
++      else if (typeof d === 'string') handler(Buffer.from(d), false);
++      else if (d?.arrayBuffer) handler(Buffer.from(await d.arrayBuffer()), true);
++    });
++    else if (event === 'open') this._ws.addEventListener('open', ()=>handler());
++    else if (event === 'close') this._ws.addEventListener('close', ()=>handler());
++    else if (event === 'error') this._ws.addEventListener('error', ev=>handler(ev));
++    return this;
++  }
++}
++// Listening sockets are not supported (as in the browser): make SOCKFS's
++// listen() fail with EOPNOTSUPP instead of crashing the runtime with
++// "WebSocketServer is not a constructor".  Emscripten's syscall wrappers turn
++// an exception named ErrnoError into -errno.
++class WsServerUnsupported {
++  constructor() { const e = new Error('listening sockets are not supported'); e.name = 'ErrnoError'; e.errno = 138; throw e; }
++}
++WsCompat.Server = WsServerUnsupported;
++module.exports=WsCompat;
+diff --git a/wasm/tests/browser-index.html b/wasm/tests/browser-index.html
+new file mode 100644
+index 0000000..8625a0b
+--- /dev/null
++++ b/wasm/tests/browser-index.html
+@@ -0,0 +1,76 @@
++<!doctype html>
++<!--
++/*============================================================================*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*============================================================================*/
++-->
++<meta charset="utf-8">
++<title>ooRexx/WASM RxSock browser qualification</title>
++<style>
++  body { font-family: monospace; white-space: pre-wrap; }
++  #status { font-weight: bold; }
++</style>
++<div id="status">starting ooRexx/WASM…</div>
++<pre id="output"></pre>
++<script>
++const output = document.getElementById('output');
++const status = document.getElementById('status');
++
++// Run a low-level RxSock echo test. Change the port/host to a WebSocket endpoint
++// reachable from the browser. The server must accept the `binary` subprotocol
++// used by Emscripten SOCKFS by default.
++const rexxProgram = [
++  's=SockSocket("AF_INET","SOCK_STREAM","IPPROTO_TCP")',
++  'h.!family="AF_INET"',
++  'h.!addr="127.0.0.1"',
++  'h.!port="50010"',
++  'rc=SockConnect(s,"h.!")',
++  'msg="Hello from ooRexx/WASM browser RxSock"',
++  'n1=SockSend(s,msg)',
++  'n2=SockRecv(s,"back",4096)',
++  'say "connect=" rc "send=" n1 "recv=" n2 "same=" (back==msg)',
++  'call SockClose s'
++].join('; ');
++
++var Module = {
++  arguments: ['-e', rexxProgram],
++  print: (text) => { output.textContent += text + '\n'; },
++  printErr: (text) => { output.textContent += '[stderr] ' + text + '\n'; },
++  onRuntimeInitialized: () => { status.textContent = 'ooRexx/WASM runtime initialized'; },
++  onExit: (code) => { status.textContent = 'ooRexx/WASM exited rc=' + code; }
++};
++</script>
++<script src="rexx.js"></script>
+diff --git a/wasm/tests/http_isolated.py b/wasm/tests/http_isolated.py
+new file mode 100755
+index 0000000..2affc11
+--- /dev/null
++++ b/wasm/tests/http_isolated.py
+@@ -0,0 +1,48 @@
++#/*----------------------------------------------------------------------------*/
++#/*                                                                            */
++#/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++#/*                                                                            */
++#/* This program and the accompanying materials are made available under       */
++#/* the terms of the Common Public License v1.0 which accompanies this         */
++#/* distribution. A copy is also available at the following address:           */
++#/* https://www.oorexx.org/license.html                                        */
++#/*                                                                            */
++#/* Redistribution and use in source and binary forms, with or                 */
++#/* without modification, are permitted provided that the following            */
++#/* conditions are met:                                                        */
++#/*                                                                            */
++#/* Redistributions of source code must retain the above copyright             */
++#/* notice, this list of conditions and the following disclaimer.              */
++#/* Redistributions in binary form must reproduce the above copyright          */
++#/* notice, this list of conditions and the following disclaimer in            */
++#/* the documentation and/or other materials provided with the distribution.   */
++#/*                                                                            */
++#/* Neither the name of Rexx Language Association nor the names                */
++#/* of its contributors may be used to endorse or promote products             */
++#/* derived from this software without specific prior written permission.      */
++#/*                                                                            */
++#/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++#/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++#/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++#/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++#/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++#/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++#/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++#/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++#/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++#/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++#/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++#/*                                                                            */
++#/*----------------------------------------------------------------------------*/
++from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
++import os, sys
++root=sys.argv[1] if len(sys.argv)>1 else '.'
++os.chdir(root)
++class Handler(SimpleHTTPRequestHandler):
++    def end_headers(self):
++        self.send_header('Cross-Origin-Opener-Policy','same-origin')
++        self.send_header('Cross-Origin-Embedder-Policy','require-corp')
++        self.send_header('Cross-Origin-Resource-Policy','same-origin')
++        self.send_header('Cache-Control','no-store')
++        super().end_headers()
++ThreadingHTTPServer(('127.0.0.1',8000),Handler).serve_forever()
+diff --git a/wasm/tests/qualify-node.sh b/wasm/tests/qualify-node.sh
+new file mode 100755
+index 0000000..8d3c7f7
+--- /dev/null
++++ b/wasm/tests/qualify-node.sh
+@@ -0,0 +1,100 @@
++#!/usr/bin/env bash
++#/*----------------------------------------------------------------------------*/
++#/*                                                                            */
++#/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++#/*                                                                            */
++#/* This program and the accompanying materials are made available under       */
++#/* the terms of the Common Public License v1.0 which accompanies this         */
++#/* distribution. A copy is also available at the following address:           */
++#/* https://www.oorexx.org/license.html                                        */
++#/*                                                                            */
++#/* Redistribution and use in source and binary forms, with or                 */
++#/* without modification, are permitted provided that the following            */
++#/* conditions are met:                                                        */
++#/*                                                                            */
++#/* Redistributions of source code must retain the above copyright             */
++#/* notice, this list of conditions and the following disclaimer.              */
++#/* Redistributions in binary form must reproduce the above copyright          */
++#/* notice, this list of conditions and the following disclaimer in            */
++#/* the documentation and/or other materials provided with the distribution.   */
++#/*                                                                            */
++#/* Neither the name of Rexx Language Association nor the names                */
++#/* of its contributors may be used to endorse or promote products             */
++#/* derived from this software without specific prior written permission.      */
++#/*                                                                            */
++#/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++#/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++#/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++#/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++#/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++#/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++#/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++#/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++#/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++#/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++#/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++#/*                                                                            */
++#/*----------------------------------------------------------------------------*/
++set -uo pipefail
++# Node qualification of the MEMFS build (BUILD/bin, WebSocket sockets against
++# a local RFC6455 echo server).  Every check asserts its expected output;
++# exit status 1 and "QUALIFICATION FAIL (n): ..." if any check fails.
++BUILD=${1:?usage: qualify-node.sh /path/to/build-dir}
++ROOT=$(cd "$(dirname "$0")/../.." && pwd)
++BIN="$BUILD/bin"
++PORT=${OOREXX_WASM_TEST_PORT:-50010}
++mkdir -p "$BIN/node_modules/ws"
++cp "$ROOT/wasm/node-ws-compat/index.js" "$BIN/node_modules/ws/index.js"
++# GNU timeout (Linux coreutils); on macOS Homebrew's coreutils also has gtimeout
++TIMEOUT=$(command -v timeout || command -v gtimeout) || { echo 'qualification needs GNU timeout (macOS: brew install coreutils)' >&2; exit 2; }
++python3 -c 'import websockets' >/dev/null || { echo 'python package websockets is required for qualification' >&2; exit 2; }
++OOREXX_WASM_TEST_PORT="$PORT" python3 "$ROOT/wasm/tests/ws_echo.py" >"$BUILD/ws_echo.log" 2>&1 &
++SERVER=$!
++trap 'kill "$SERVER" 2>/dev/null || true' EXIT
++sleep 0.5
++cd "$BIN"
++
++# check TITLE REGEX... -- COMMAND...
++# Runs COMMAND, prints its output, and requires
++# every REGEX to match some output line and the exit status to be 0.
++FAILED=()
++check() {
++  local title=$1; shift
++  local pats=() p miss=() out rc
++  while [[ $1 != -- ]]; do pats+=("$1"); shift; done; shift
++  echo "== $title =="
++  out=$("$TIMEOUT" 60 "$@" 2>&1); rc=$?
++  printf '%s\n' "$out"
++  for p in "${pats[@]}"; do grep -Eq -- "$p" <<<"$out" || miss+=("/$p/"); done
++  (( rc == 0 )) || miss+=("exit status $rc")
++  if (( ${#miss[@]} )); then
++    FAILED+=("$title"); printf 'FAIL: %s: expected %s\n' "$title" "${miss[*]}"
++  fi
++}
++
++check 'version' '^Open Object Rexx Version 5\.3\.0' '^Addressing mode: 32$' -- node ./rexx.js -v
++
++check 'core' '^1267650600228229401496703205376$' '^ananab$' -- node ./rexx.js -e 'numeric digits 50; say 2 ** 100; say "banana"~reverse'
++
++check 'RxSock primitive' '^5\.3\.0$' '^socket=[0-9]+$' '^close=0$' -- node ./rexx.js -e 'say SockVersion(); s=SockSocket("AF_INET","SOCK_STREAM","IPPROTO_TCP"); say "socket="s; say "close="SockClose(s)'
++
++check 'WebSocket echo' '^connect= 0 send= 29 recv= 29 same= 1$' -- node ./rexx.js -e "s=SockSocket(\"AF_INET\",\"SOCK_STREAM\",\"IPPROTO_TCP\"); h.!family=\"AF_INET\"; h.!addr=\"127.0.0.1\"; h.!port=\"$PORT\"; rc=SockConnect(s,\"h.!\"); msg=\"Hello from ooRexx/WASM RxSock\"; n1=SockSend(s,msg); n2=SockRecv(s,\"back\",4096); say \"connect=\" rc \"send=\" n1 \"recv=\" n2 \"same=\" (back==msg); call SockClose s"
++
++check 'stream semantics 5000 bytes' '^len= 5000 same= 1$' -- node ./rexx.js -e "s=SockSocket(\"AF_INET\",\"SOCK_STREAM\",\"IPPROTO_TCP\"); h.!family=\"AF_INET\"; h.!addr=\"127.0.0.1\"; h.!port=\"$PORT\"; call SockConnect s,\"h.!\"; msg=copies(\"X\",5000); call SockSend s,msg; all=\"\"; do i=1 to 5; n=SockRecv(s,\"part\",1000); all=all||part; end; say \"len=\" length(all) \"same=\" (all==msg); call SockClose s"
++
++check 'binary transparency' '^len= 15 same= 1 hex= 00010D0A7F80FEFF41004200FF1020$' -- node ./rexx.js -e "s=SockSocket(\"AF_INET\",\"SOCK_STREAM\",\"IPPROTO_TCP\"); h.!family=\"AF_INET\"; h.!addr=\"127.0.0.1\"; h.!port=\"$PORT\"; call SockConnect s,\"h.!\"; msg=\"00010D0A7F80FEFF41004200FF1020\"x; call SockSend s,msg; n=SockRecv(s,\"back\",100); say \"len=\" n \"same=\" (back==msg) \"hex=\" c2x(back); call SockClose s"
++
++check 'select timeout/readiness' '^timeout=0 elapsed=0\.(09|[1-4][0-9])' '^ready=1 data=ready$' -- node ./rexx.js -e "s=SockSocket(\"AF_INET\",\"SOCK_STREAM\",\"IPPROTO_TCP\"); h.!family=\"AF_INET\"; h.!addr=\"127.0.0.1\"; h.!port=\"$PORT\"; call SockConnect s,\"h.!\"; r.0=1;r.1=s;w.0=0;e.0=0;call time \"R\";rc=SockSelect(\"r.\",\"w.\",\"e.\",0.10); say \"timeout=\"rc \"elapsed=\"time(\"E\"); call SockSend s,\"ready\"; r.0=1;r.1=s;rc=SockSelect(\"r.\",\"w.\",\"e.\",1); n=SockRecv(s,\"back\",10); say \"ready=\"rc \"data=\"back; call SockClose s"
++
++check 'nonblocking connect' '^connect=-1 errno=EINPROGRESS select=1 so_error=0$' -- node ./rexx.js -e "s=SockSocket(\"AF_INET\",\"SOCK_STREAM\",\"IPPROTO_TCP\"); call SockIoctl s,\"FIONBIO\",1; h.!family=\"AF_INET\"; h.!addr=\"127.0.0.1\"; h.!port=\"$PORT\"; rc=SockConnect(s,\"h.!\"); saved=errno; r.0=0;w.0=1;w.1=s;e.0=0; sr=SockSelect(\"r.\",\"w.\",\"e.\",1); call SockGetSockOpt s,\"SOL_SOCKET\",\"SO_ERROR\",\"soerr\"; say \"connect=\"rc \"errno=\"saved \"select=\"sr \"so_error=\"soerr; call SockClose s"
++
++BADPORT=$((PORT+1))
++check 'refused blocking connect' '^connect= -1 errno= ECONNREFUSED$' -- node ./rexx.js -e "s=SockSocket(\"AF_INET\",\"SOCK_STREAM\",\"IPPROTO_TCP\"); h.!family=\"AF_INET\"; h.!addr=\"127.0.0.1\"; h.!port=\"$BADPORT\"; rc=SockConnect(s,\"h.!\"); say \"connect=\" rc \"errno=\" errno; call SockClose s"
++
++check 'high level StreamSocket / DNS' '^localhost_addr= [0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' '^open= READY: out= 25 in= Hello from StreamSocket state= READY$' '^close= READY:$' -- node ./rexx.js -e "call SockGetHostByName \"localhost\",\"hi.!\"; say \"localhost_addr=\" hi.!addr; s=.StreamSocket~new(\"localhost\",$PORT); o=s~open; n=s~lineOut(\"Hello from StreamSocket\"); b=s~lineIn; say \"open=\" o \"out=\" n \"in=\" b \"state=\" s~state; say \"close=\" s~close; ::requires \"/streamsocket.cls\""
++
++if (( ${#FAILED[@]} )); then
++  echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
++  exit 1
++fi
++echo 'QUALIFICATION PASS'
+diff --git a/wasm/tests/ws_echo.py b/wasm/tests/ws_echo.py
+new file mode 100755
+index 0000000..31563ad
+--- /dev/null
++++ b/wasm/tests/ws_echo.py
+@@ -0,0 +1,46 @@
++#/*----------------------------------------------------------------------------*/
++#/*                                                                            */
++#/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++#/*                                                                            */
++#/* This program and the accompanying materials are made available under       */
++#/* the terms of the Common Public License v1.0 which accompanies this         */
++#/* distribution. A copy is also available at the following address:           */
++#/* https://www.oorexx.org/license.html                                        */
++#/*                                                                            */
++#/* Redistribution and use in source and binary forms, with or                 */
++#/* without modification, are permitted provided that the following            */
++#/* conditions are met:                                                        */
++#/*                                                                            */
++#/* Redistributions of source code must retain the above copyright             */
++#/* notice, this list of conditions and the following disclaimer.              */
++#/* Redistributions in binary form must reproduce the above copyright          */
++#/* notice, this list of conditions and the following disclaimer in            */
++#/* the documentation and/or other materials provided with the distribution.   */
++#/*                                                                            */
++#/* Neither the name of Rexx Language Association nor the names                */
++#/* of its contributors may be used to endorse or promote products             */
++#/* derived from this software without specific prior written permission.      */
++#/*                                                                            */
++#/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++#/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++#/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++#/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++#/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++#/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++#/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++#/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++#/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++#/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++#/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++#/*                                                                            */
++#/*----------------------------------------------------------------------------*/
++import asyncio, os
++import websockets
++PORT=int(os.environ.get('OOREXX_WASM_TEST_PORT','50010'))
++async def echo(ws):
++    async for message in ws:
++        await ws.send(message)
++async def main():
++    async with websockets.serve(echo, '127.0.0.1', PORT, subprotocols=['binary']):
++        await asyncio.Future()
++asyncio.run(main())

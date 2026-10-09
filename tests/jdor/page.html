@@ -1,0 +1,29 @@
+<!doctype html><meta charset=utf-8>
+<style>body{margin:0;font:12px sans-serif;background:#fff} .win{position:absolute;border:1px solid #888;background:#eee;box-shadow:2px 2px 6px #0004}
+.win .tb{background:#cde;padding:2px 6px;font:12px sans-serif} .win canvas{display:block}</style>
+<body><pre id=out style="position:absolute;left:0;top:0;margin:0;font-size:10px;color:#333;z-index:-1"></pre>
+<script src="bin/ooRexx.js"></script>
+<script>
+const wins={};
+function onJdor(m){
+  let w=wins[m.win];
+  if(m.op==='window'){
+    if(!w){ w=wins[m.win]={el:document.createElement('div')}; w.el.className='win';
+      w.tb=document.createElement('div'); w.tb.className='tb'; w.cv=document.createElement('canvas');
+      w.el.append(w.tb,w.cv); document.body.append(w.el); w.br=w.cv.getContext('bitmaprenderer'); }
+    w.el.style.left=m.x+'px'; w.el.style.top=m.y+'px'; w.tb.textContent=m.title; w.tb.style.display=m.frame?'':'none';
+    w.cv.width=m.width; w.cv.height=m.height; w.el.style.display=m.visible?'':'none'; return;
+  }
+  if(m.op==='frame'&&w){ w.br.transferFromImageBitmap(m.bitmap); window.frames_++; return; }
+  if(m.op==='close'&&w){ w.el.remove(); delete wins[m.win]; }
+}
+window.frames_=0;
+window.runRexx=async function(files, args, screen){
+  const rexx=await OoRexx.load('bin/');
+  let out='', err='';
+  const r=rexx.run({args, files, onJdor, screen, onOut:t=>{out+=t}, onErr:t=>{err+=t}, stdin:''});
+  const res=await r.done;
+  document.getElementById('out').textContent=out+err;
+  return {rc:res.rc, out, err, error:res.error, files:Object.fromEntries(Object.entries(res.files||{}).map(([k,v])=>[k,Array.from(v)]))};
+};
+</script>

@@ -1,0 +1,2436 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
+Date: Tue, 6 Oct 2026 19:22:22 +0200
+Subject: [PATCH] WebAssembly port: JavaScript objects as Rexx objects (.js,
+ .JSObject)
+
+js.cls lets Rexx programs use JavaScript objects with ordinary messages,
+in the browser build and in the Node command-line build:
+
+    say .js~Math~max(3, 7)                       -- 7
+    m = .js~Map~new; m~set("a", 1); say m~size   -- 1
+    resp = .js~fetch("data.json")~await          -- a Promise, waited for
+    fs = .js~require("node:fs")                  -- Node: require, npm
+    doc = .js~page~document                      -- browser: the page's DOM
+    p = doc~createElement("p"); p~textContent = "Hola"; doc~body~appendChild(p)
+    btn~addEventListener("click", .js~handler(obj, "CLICKED"))
+    .js~eventLoop                                -- events, until .js~stopEventLoop
+    ::requires "js.cls"
+
+.js is globalThis of the realm (the Web Worker that hosts the run in the
+browser, Node's main thread under Node); in the browser .js~page is the
+page's window, with the DOM.  Objects of different realms do not mix.
+Objects, functions, arrays and Promises are .JSObjects, by reference; strings, numbers, booleans (1/0) and
+bigints come back as Rexx strings, null as .nil, undefined as
+.js~undefined (a single object; a missing property reads as it).  Rexx
+strings always go as strings (.js~num, .js~bool, .js~bigint, .js~bytes,
+.js~undefined force a type); Arrays and Directories/StringTables are
+copied as arrays and plain objects.
+
+- Message names arrive uppercased, so they are resolved case-insensitively
+  along the prototype chain (cached per object; of two matches the one
+  starting in lowercase wins, window.document over window.Document; else an
+  error).  o~name gets a property and calls it if it is a function (not a
+  constructor: .js~Map~new); o~name(args) calls; o~name = v sets an
+  existing property.  Exact access: o["name"], o["name"] = v,
+  o~invoke("name", args...).  Also ~new, ~await, ~typeOf, ~className,
+  ~instanceOf, ~hasProperty, ~propertyNames, ~makeArray (DO OVER: an
+  iterable's values), ~supplier (DO WITH INDEX i ITEM v OVER: a Map's keys
+  and values, an iterable's 1..n, an object's properties), ~byteString; names that do not hide common JavaScript ones (Map's
+  get/set/has/keys, Response's bytes).
+- A JavaScript exception, or a rejected Promise under ~await, is SYNTAX
+  98.900 "JavaScript error: ..." with what was thrown in ADDITIONAL[2].
+- wasm/web-js.cpp: the package "js"; .JSObject's methods are native (errors
+  point at the caller's line).  Each operation goes synchronously to the
+  main runtime thread (emscripten_proxy_sync_with_ctx), which may finish it
+  later (~await); several Rexx threads may use it at once.
+- wasm/js-realm.js: a realm, the same code in the worker, Node and the
+  page: a handle table (one id per object, so == is identity; counted,
+  released when the .JSObject is garbage collected, through UNINIT), name
+  resolution, value conversion.  Promises handed to Rexx are marked handled
+  (Node ends the process on an unhandled rejection).
+- wasm/js-bridge.js (--pre-js of both builds, after js-realm.js): the
+  dispatcher on the main runtime thread.  Requests for the page realm go to
+  the page by postMessage (ooRexx-worker.js), ooRexx.js answers from its
+  own realm (js-realm.js, loaded on first use), and the interpreter's call
+  is finished then; the worker never blocks.
+- Browser: each realm off unless the page grants it, ooRexx.run({js:
+  {worker: true, page: true}}); a granted program has all of JavaScript's
+  power there (in the worker fetch with the site's cookies, IndexedDB,
+  eval; in the page the DOM).  Node: always on; require() resolves from the
+  current directory.
+- Events: JavaScript cannot call into the interpreter, so .js~handler(obj,
+  msg [, options]) is a .JSHandler that becomes, in whatever realm it is
+  passed to, a function (one per handler and realm: removeEventListener
+  works) that queues the call (js_event; from the page by postMessage) and
+  returns undefined at once.  .js~nextEvent([seconds]) takes the next one
+  (a .JSEvent; ~dispatch sends msg to obj with the call's arguments),
+  .js~eventLoop dispatches until .js~stopEventLoop; each event goes to one
+  waiting thread.  Options preventDefault, stopPropagation,
+  stopImmediatePropagation act during the browser's dispatch; option
+  latest keeps at most one event of the handler waiting, the newest, and
+  max n at most n, dropping the oldest.  A handler is kept from its first
+  trip to JavaScript until ~release (its waiting events are dropped) or the
+  end of the run; in the browser its functions do nothing after the run.  Under Node
+  the program's end ends the process (Emscripten only sets exitCode, so a
+  listening server kept Node alive).  .JSObject's methods are unguarded (a
+  thread waiting in .js~eventLoop must not hold .js).
+- wasm/extra-packages.cpp: orx_wasm_extra_packages() now lists the
+  packages a build links (jdor, js) through weak symbols; web-jdor.cpp
+  provides orx_wasm_jdor_package().
+- Tests: wasm/tests/web-api.py (11 cases, 5 of them the page realm),
+  qualify-node-cli.sh (require of an npm module, import, await, errors; an
+  HTTP server answered from Rexx, events taken by several threads;
+  iteration, options latest and max, release).  Documented in wasm/README.md.
+---
+ interpreter/package/PackageManager.cpp |   6 +-
+ wasm/README.md                         |  92 ++++
+ wasm/build-node.sh                     |  17 +-
+ wasm/build-web.sh                      |  18 +-
+ wasm/extra-packages.cpp                |  69 +++
+ wasm/js-bridge.js                      | 166 ++++++
+ wasm/js-realm.js                       | 439 +++++++++++++++
+ wasm/tests/qualify-node-cli.sh         |  74 +++
+ wasm/tests/web-api.html                |   2 +-
+ wasm/tests/web-api.py                  |  66 +++
+ wasm/web-jdor.cpp                      |  12 +-
+ wasm/web-js.cpp                        | 709 +++++++++++++++++++++++++
+ wasm/web/js.cls                        | 343 ++++++++++++
+ wasm/web/ooRexx-worker.js              |  15 +-
+ wasm/web/ooRexx.js                     |  52 ++
+ 15 files changed, 2057 insertions(+), 23 deletions(-)
+ create mode 100644 wasm/extra-packages.cpp
+ create mode 100644 wasm/js-bridge.js
+ create mode 100644 wasm/js-realm.js
+ create mode 100644 wasm/web-js.cpp
+ create mode 100644 wasm/web/js.cls
+
+diff --git a/interpreter/package/PackageManager.cpp b/interpreter/package/PackageManager.cpp
+index 8b8e190..9c17231 100644
+--- a/interpreter/package/PackageManager.cpp
++++ b/interpreter/package/PackageManager.cpp
+@@ -94,9 +94,9 @@ const PackageManager::EmbeddedPackage PackageManager::embeddedPackages[] =
+     { NULL, NULL, false }
+ };
+ 
+-// More packages a particular WASM build links in (the browser build's JDOR
+-// command handler, wasm/web-jdor.cpp), loaded on first request.  A weak
+-// symbol: NULL in the builds that do not define it.
++// More packages a particular WASM build links in (wasm/extra-packages.cpp:
++// the browser build's JDOR command handler, the JavaScript bridge), loaded
++// on first request.  A weak symbol: NULL in the builds that do not define it.
+ extern "C" const RexxLibraryPackage *orx_wasm_extra_packages(void) __attribute__((weak));
+ 
+ 
+diff --git a/wasm/README.md b/wasm/README.md
+index f9c2f43..feeca01 100644
+--- a/wasm/README.md
++++ b/wasm/README.md
+@@ -247,6 +247,96 @@ newImage 300 200; color red; moveTo 10 10; fillRect 100 50; winShow
+   logical fonts map to CSS families, as on Windows); XOR mode is
+   approximated; text antialiasing cannot be turned off.
+ 
++## JavaScript objects: `.js`, `.JSObject` (both builds)
++
++`js.cls` lets Rexx use JavaScript objects with ordinary messages, in the
++browser build and in the Node command-line build:
++
++```rexx
++say .js~Math~max(3, 7)                       -- 7
++m = .js~Map~new; m~set("a", 1); say m~size   -- 1
++resp = .js~fetch("data.json")~await          -- a Promise, waited for
++fs = .js~require("node:fs")                  -- Node: require, npm modules
++::requires "js.cls"
++```
++
++* `.js` is `globalThis` of the realm: the Web Worker that hosts the run in
++  the browser (fetch, IndexedDB, WebSocket, timers; no DOM), Node's main
++  thread under Node (`.js~require(name)` from the current directory,
++  `.js~import(name)`).  In the browser `.js~page` is the page's `window`,
++  with the DOM (`doc = .js~page~document; p = doc~createElement("p")`);
++  objects of the two realms do not mix (an argument must belong to the
++  realm of the object that gets the message).  Every object, function, array or Promise is a
++  `.JSObject`, by reference; strings, numbers, booleans (1/0) and bigints
++  come back as Rexx strings, null as .nil, undefined as `.js~undefined`
++  (a single object; a property that does not exist reads as it, and
++  `~hasProperty` tells the two apart).
++* ooRexx uppercases message names, so they are resolved case-insensitively
++  along the prototype chain (cached per object; of two matches the one
++  starting in lowercase wins, `window.document` over `window.Document`,
++  else it is an error).  `o~name` gets a property, calling it (with this = o) if it is a
++  function, except constructors (Capitalized, with a prototype:
++  `.js~Map~new`); `o~name(args)` calls a method; `o~name = v` sets an
++  existing property.  Exact: `o["name"]`, `o["name"] = v`,
++  `o~invoke("name", args...)` (`o~invoke(.nil, ...)` calls o itself).  Also
++  `o~new(...)`, `o~await`, `o~typeOf`, `o~className`, `o~instanceOf(c)`,
++  `o~hasProperty(n)`, `o~propertyNames`, `o~makeArray` (`DO x OVER o`: an
++  iterable's values, as `for...of`, so a Map's `[key, value]` pairs; an error
++  for anything else), `o~supplier` (`DO WITH INDEX i ITEM v OVER o`: a Map's
++  keys and values, an iterable's 1..n and values, other objects' own
++  properties), `o~byteString`; names chosen not to hide common JavaScript ones (a Map's
++  get/set/has/keys).  Rexx's own Object methods (send, start, copy, ...)
++  are not passed on: `o~invoke("send", x)`.
++* Rexx strings always go as strings; `.js~num(x)`, `.js~bool(x)`,
++  `.js~true`, `.js~false`, `.js~bigint(x)`, `.js~bytes(x)` (a Uint8Array),
++  `.js~undefined` force a type; an Array goes as an array, a Directory or
++  StringTable as a plain object (copies), .nil as null.
++* A JavaScript exception (or a rejected Promise under `~await`) is SYNTAX
++  98.900 "JavaScript error: TypeError: ..."; what was thrown is
++  `condition("O")~additional[2]`.
++* Several Rexx threads may use it at once; each `~await` blocks only its
++  own thread.
++* **Browser: off unless the page grants it**, realm by realm:
++  `ooRexx.run({..., js: {worker: true, page: true}})`.  A granted program
++  can do everything JavaScript can there: in the worker, fetch with the
++  site's cookies and its IndexedDB; in the page, the DOM and whatever the
++  page's own scripts can.  Grant it to code you trust as you trust your own
++  scripts (the playground does: users run their own code).  Under Node it is
++  always on.
++* Events: JavaScript cannot call into the interpreter, so a callback is a
++  handler whose calls are queued and taken by a Rexx thread:
++  `btn~addEventListener("click", .js~handler(obj, "CLICKED"))`, then
++  `.js~eventLoop` (sends `CLICKED` to `obj` with the call's arguments, until
++  `.js~stopEventLoop`) or `ev = .js~nextEvent([seconds])` + `ev~dispatch`.
++  The handler's function (one per handler and realm, so
++  `removeEventListener` works) returns undefined at once: no answers (no
++  sort comparators), and the browser has finished the dispatch by the time
++  Rexx sees it (`event~currentTarget` is .nil, `event~target` is fine), so
++  what must happen during it is an option: `.js~handler(obj, msg,
++  "preventDefault stopPropagation stopImmediatePropagation")`; option
++  `latest` keeps at most one event of the handler waiting, the newest
++  (mousemove, scroll, resize), and `max n` at most n, dropping the oldest
++  (`max 0` is an error; given both, `latest` wins).  Each event
++  goes to one waiting thread; an error in a handler ends `eventLoop` as any
++  error.  A handler stays alive from its first trip to JavaScript until
++  `handler~release` (its events still waiting are dropped) or the end of
++  the run; in the browser its functions do
++  nothing once the run is over.  Under Node the program's end is the
++  process's end, even with a server listening or a timer pending.
++* Implementation: `web-js.cpp` is the package `js` (`.JSObject`'s methods
++  are native, so errors point at the caller's line); each operation is
++  passed synchronously to the main runtime thread, where `js-bridge.js` (a
++  `--pre-js`) keeps a handle table per realm (one id per object, so `==` is
++  identity; counted, released when the `.JSObject` is garbage collected),
++  resolves names, converts values and may finish later (`~await`).  The
++  realm itself is `js-realm.js`, the same code in the worker, Node and the
++  page; `js-bridge.js` dispatches: requests for the page realm go to the page
++  by `postMessage` (`ooRexx.js` loads `js-realm.js` there on first use and
++  answers), and the interpreter's call is finished when the answer comes
++  back (about 0.3 ms a round trip in Chromium).  A handler's function hands
++  its event to `js_event` (from the page by `postMessage`), which queues it
++  for `.js~nextEvent`.
++
+ ## Known limitations / deliberate non-claims
+ 
+ * WebSocket transport (browser, and the MEMFS build under Node): listening
+@@ -256,6 +346,8 @@ newImage 300 200; color red; moveTo 10 10; fillRect 100 50; winShow
+ * UDP/datagram semantics are qualified only in the Node command-line build.
+ * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127);
+   ADDRESS JDOR draws (see above).
++* `.JSObject` is in the browser build and the Node command-line build, not
++  in the MEMFS runtime of the CMake build (`bin/`).
+ * Maximum recursion depth is set by the JS engine's native stack (internal
+   CALL / internal function calls / method calls): Node about 7,100 / 5,400 /
+   4,000; browser workers about 900 / 700 / 500 in Chromium, 1,300 / 900 / 700
+diff --git a/wasm/build-node.sh b/wasm/build-node.sh
+index 9aca691..98768a8 100755
+--- a/wasm/build-node.sh
++++ b/wasm/build-node.sh
+@@ -40,7 +40,8 @@
+ # environment variables, external commands as host processes, the RexxAPI
+ # daemon shared by all WASM processes, and real TCP/UDP sockets
+ # (NODERAWSOCKETS: node:net/node:dgram instead of the WebSocket emulation of
+-# the MEMFS build).
++# the MEMFS build), and JavaScript objects as Rexx objects (js.cls, realm
++# "node": require() and npm modules from Rexx).
+ #
+ # Usage: wasm/build-node.sh [BUILD_DIR=build-wasm] [OUTDIR=BUILD_DIR/bin-node]
+ #   (BUILD_DIR: a build made by wasm/build-wasm.sh; EM_CONFIG from it)
+@@ -53,11 +54,20 @@ BUILD=$(cd "${1:-$SRC/build-wasm}" && pwd)
+ OUT=${2:-$BUILD/bin-node}; mkdir -p "$OUT"; OUT=$(cd "$OUT" && pwd)
+ export EM_CONFIG="$BUILD/.emscripten"
+ 
++EMXX=$(sed -E 's/ .*//' "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
++# the JavaScript bridge (package "js", .JSObject, see web/js.cls) and the list
++# of extra packages; exceptions as in CMakeLists.txt
++for f in web-js extra-packages; do
++  "$EMXX" -O3 -std=gnu++11 -pthread -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0 -DHAVE_CONFIG_H -DOPSYS_EMSCRIPTEN \
++    -I"$SRC/api" -I"$SRC/api/platform/unix" -I"$BUILD" -c "$SRC/wasm/$f.cpp" -o "$BUILD/$f.o"
++done
++
+ cmd=$(cat "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
+ cmd=$(sed -E 's/--preload-file [^ ]+//g; s/-sENVIRONMENT=[^ ]+//; s/-sFORCE_FILESYSTEM=1//' <<<"$cmd")
+ cmd=${cmd//-o bin\/rexx.js/-o $OUT\/rexx.js}
+-(cd "$BUILD" && eval "$cmd" -sNODERAWFS=1 -sNODERAWSOCKETS=1 -sENVIRONMENT=node \
+-   --pre-js "$SRC/wasm/node-pre.js" --pre-js "$SRC/wasm/node-sockets-pre.js" ${EXTRA_LDFLAGS:-})
++(cd "$BUILD" && eval "$cmd" "$BUILD/web-js.o" "$BUILD/extra-packages.o" -sNODERAWFS=1 -sNODERAWSOCKETS=1 -sENVIRONMENT=node \
++   --pre-js "$SRC/wasm/node-pre.js" --pre-js "$SRC/wasm/node-sockets-pre.js" \
++   --pre-js "$SRC/wasm/js-realm.js" --pre-js "$SRC/wasm/js-bridge.js" ${EXTRA_LDFLAGS:-})
+ cp "$BUILD/bin/rexx.img" "$OUT/"
+ # rexxtry, as native installs have it next to rexx (rexx rexxtry)
+ cp "$SRC/samples/rexxtry.rex" "$OUT/"
+@@ -69,6 +79,7 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+            csvStream/csvStream.cls dateparser/dateparser.cls; do
+   cp "$SRC/extensions/$cls" "$OUT/"
+ done
++cp "$SRC/wasm/web/js.cls" "$OUT/"
+ 
+ launcher() {   # launcher NAME [rexx.js option]
+   cat > "$OUT/$1" <<SH
+diff --git a/wasm/build-web.sh b/wasm/build-web.sh
+index 581badc..326d386 100755
+--- a/wasm/build-web.sh
++++ b/wasm/build-web.sh
+@@ -44,7 +44,8 @@
+ # Usage: wasm/build-web.sh [BUILD_DIR=build-wasm] [OUTDIR=BUILD_DIR/bin-web]
+ #   (BUILD_DIR: a build made by wasm/build-wasm.sh; EM_CONFIG from it)
+ # Output: OUTDIR/{rexx.js,rexx.wasm,rexx.data,ooRexx.js,ooRexx-worker.js,
+-#         polygon-clipping.umd.min.js (JDOR's areas, loaded on first use)}
++#         polygon-clipping.umd.min.js (JDOR's areas, loaded on first use),
++#         js-realm.js (the page realm of .JSObject, loaded on first use)}
+ set -euo pipefail
+ SRC=$(cd "$(dirname "$0")/.." && pwd)
+ BUILD=$(cd "${1:-$SRC/build-wasm}" && pwd)
+@@ -58,6 +59,11 @@ EMXX=$(sed -E 's/ .*//' "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
+ # in CMakeLists.txt (exnref: a module that mixes encodings does not compile)
+ "$EMXX" -O3 -std=gnu++11 -pthread -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0 -DHAVE_CONFIG_H -DOPSYS_EMSCRIPTEN \
+   -I"$SRC/api" -I"$SRC/api/platform/unix" -I"$BUILD" -c "$SRC/wasm/web-jdor.cpp" -o "$BUILD/web-jdor.o"
++# the JavaScript bridge (package "js", .JSObject) and the list of extra packages
++for f in web-js extra-packages; do
++  "$EMXX" -O3 -std=gnu++11 -pthread -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0 -DHAVE_CONFIG_H -DOPSYS_EMSCRIPTEN \
++    -I"$SRC/api" -I"$SRC/api/platform/unix" -I"$BUILD" -c "$SRC/wasm/$f.cpp" -o "$BUILD/$f.o"
++done
+ 
+ # the portable extension classes (not ncurses: no native library here)
+ PRELOAD=()
+@@ -67,7 +73,8 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+   PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
+ done
+ # JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
+-PRELOAD+=("--preload-file" "$SRC/wasm/web/jdor.cls@/usr/lib/ooRexx/jdor.cls"
++PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls"
++          "--preload-file" "$SRC/wasm/web/jdor.cls@/usr/lib/ooRexx/jdor.cls"
+           "--preload-file" "$SRC/wasm/web/BSF.CLS@/usr/lib/ooRexx/BSF.CLS"
+           "--preload-file" "$SRC/wasm/web/BSF.CLS@/usr/lib/ooRexx/bsf.cls")
+ 
+@@ -81,12 +88,13 @@ wasm,websocket,mainScriptUrlOrBlob]"
+ cmd=$(cat "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
+ cmd=$(sed -E 's/--preload-file [^ ]+//g; s/-sENVIRONMENT=[^ ]+//' <<<"$cmd")
+ cmd=${cmd//-o bin\/rexx.js/-o $OUT\/rexx.js}
+-(cd "$BUILD" && eval "$cmd" "$BUILD/web-stdin.o" "$BUILD/web-jdor.o" \
++(cd "$BUILD" && eval "$cmd" "$BUILD/web-stdin.o" "$BUILD/web-jdor.o" "$BUILD/web-js.o" "$BUILD/extra-packages.o" \
+    -Wl,--wrap=read,--wrap=write \
+    -sENVIRONMENT=web,worker -sMODULARIZE=1 -sEXPORT_NAME=createOoRexx \
+    "-sINCOMING_MODULE_JS_API=$INCOMING" \
+-   --pre-js "$SRC/wasm/web-pre.js" --pre-js "$SRC/wasm/web-jdor.js" \
++   --pre-js "$SRC/wasm/web-pre.js" --pre-js "$SRC/wasm/web-jdor.js" --pre-js "$SRC/wasm/js-realm.js" --pre-js "$SRC/wasm/js-bridge.js" \
+    --preload-file "$BUILD/bin/rexx.img@/rexx.img" \
+    "${PRELOAD[@]}" ${EXTRA_LDFLAGS:-})
+-cp "$SRC/wasm/web/ooRexx.js" "$SRC/wasm/web/ooRexx-worker.js" "$SRC/wasm/web/polygon-clipping.umd.min.js" "$OUT/"
++cp "$SRC/wasm/web/ooRexx.js" "$SRC/wasm/web/ooRexx-worker.js" "$SRC/wasm/web/polygon-clipping.umd.min.js" \
++   "$SRC/wasm/js-realm.js" "$OUT/"
+ ls -l "$OUT" | awk 'NR>1{print $5, $9}'
+diff --git a/wasm/extra-packages.cpp b/wasm/extra-packages.cpp
+new file mode 100644
+index 0000000..57c5181
+--- /dev/null
++++ b/wasm/extra-packages.cpp
+@@ -0,0 +1,69 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*
++ * ooRexx/WASM: the native packages a particular build links in besides the
++ * interpreter's own, loaded on the first ::REQUIRES "name" LIBRARY (the hook
++ * orx_wasm_extra_packages() in interpreter/package/PackageManager.cpp).
++ *
++ * Each package lives in its own file and is found through a weak symbol, so
++ * a build lists only what it links: the browser build has "jdor" (the
++ * drawing command handler, web-jdor.cpp) and "js" (the JavaScript bridge,
++ * web-js.cpp); the Node command-line build only "js".
++ */
++
++#include <oorexxapi.h>
++
++extern "C"
++{
++RexxPackageEntry *orx_wasm_jdor_package(void) __attribute__((weak));
++RexxPackageEntry *orx_wasm_js_package(void) __attribute__((weak));
++
++const RexxLibraryPackage *orx_wasm_extra_packages(void)
++{
++    static RexxLibraryPackage packages[3];
++    static bool ready = false;
++    if (!ready)
++    {
++        size_t n = 0;
++        if (orx_wasm_jdor_package != NULL) packages[n++] = { "jdor", orx_wasm_jdor_package() };
++        if (orx_wasm_js_package != NULL) packages[n++] = { "js", orx_wasm_js_package() };
++        packages[n] = { NULL, NULL };
++        ready = true;
++    }
++    return packages;
++}
++}
+diff --git a/wasm/js-bridge.js b/wasm/js-bridge.js
+new file mode 100644
+index 0000000..31f8729
+--- /dev/null
++++ b/wasm/js-bridge.js
+@@ -0,0 +1,166 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*
++ * ooRexx/WASM: the dispatcher of the JavaScript bridge (.JSObject, see
++ * wasm/web-js.cpp and wasm/web/js.cls), a pre-js of the browser build and of
++ * the Node command-line build, after wasm/js-realm.js.  It runs on the main
++ * runtime thread, which never blocks, and passes each request of the
++ * interpreter to its realm:
++ *
++ *  - the local one: "worker" in the browser (the Web Worker that hosts the
++ *    run), "node" under Node;
++ *  - "page" (browser): the page's main thread, which has the DOM.  The
++ *    request goes there by postMessage (Module.orxJsPage, set by
++ *    ooRexx-worker.js), ooRexx.js answers with Module.jsPageReply(id, bytes),
++ *    and only then the interpreter's call is finished;
++ *  - granted: in the browser the page must allow each realm
++ *    (ooRexx.run(..., {js: {worker: true, page: true}})): it gives the Rexx
++ *    program all of JavaScript there.  Under Node "node" always is.
++ *
++ * Which realm: GLOBAL names it; most ops start with their target object,
++ * whose reference carries its realm; REQUIRE, IMPORT and VALUE are local.
++ * Released handles (X records) go to their realm.
++ *
++ * Events: the handlers' functions of the local realm, and those of the page
++ * (forwarded by ooRexx-worker.js as Module.jsEvent(bytes)), hand their event
++ * to the interpreter's queue (js_event in web-js.cpp).
++ */
++(function () {
++  'use strict';
++  const isNode = typeof process !== 'undefined' && !!(process.versions && process.versions.node);
++  const LOCAL = isNode ? 'node' : 'worker';
++  const dec = new TextDecoder('utf-8');
++
++  // the heap views, current: another thread may have grown the memory
++  const views = () => { if (typeof growMemViews === 'function') growMemViews(); };
++
++  // an event for the interpreter's queue (js_event frees the copy)
++  function emit(bytes) {
++    const p = _js_alloc(bytes.length + 1);
++    views();
++    HEAPU8.set(bytes, p);
++    _js_event(p, bytes.length);
++  }
++  Module['jsEvent'] = emit;
++
++  // Node: the program's end is the process's end, as with native ooRexx, even
++  // if JavaScript objects it made (a server, a timer) would keep Node running
++  if (isNode) {
++    const chained = Module['onExit'];
++    Module['onExit'] = (rc) => { if (chained) chained(rc); process.exit(rc); };
++  }
++  const local = orxJsRealm(LOCAL, emit);
++
++  function granted(realm) {
++    if (isNode) return realm === 'node';
++    const g = Module['orxJs'];
++    return !!(g && g[realm]);
++  }
++  function refusal(realm) {
++    if (realm !== LOCAL && (isNode || realm !== 'page')) {
++      return 'there is no JavaScript realm "' + realm + '" here (this is realm "' + LOCAL + '")';
++    }
++    return 'JavaScript is not available: the page running ooRexx did not grant the ' + realm +
++      ' realm (ooRexx run option js: {' + realm + ': true})';
++  }
++
++  // the realm a request is for (r: just after the X records)
++  function realmOf(op, r) {
++    if (op === 1) return r.str();
++    if (op >= 2 && op <= 9 && r.more() && r.peek() === 'O') return dec.decode(r.rec().d).split('\t')[0];
++    return LOCAL;
++  }
++
++  // ---- the page realm, through ooRexx.js ----------------------------------
++  let pageSeq = 0;
++  const pageWaiting = new Map();
++  Module['jsPageReply'] = function (id, bytes) {
++    const finish = pageWaiting.get(id);
++    pageWaiting.delete(id);
++    if (finish) finish(bytes);
++  };
++  function toPage(msg, transfer) {
++    if (typeof Module['orxJsPage'] !== 'function') return false;
++    Module['orxJsPage'](msg, transfer);
++    return true;
++  }
++
++  // called through wasm/web-js.cpp's proxied call (see the JsRequest layout there)
++  Module['jsCall'] = function (ctx, req) {
++    const finish = (bytes) => {
++      const p = _js_alloc(bytes.length + 1);
++      views();
++      HEAPU8.set(bytes, p);
++      HEAPU8[p + bytes.length] = 0;
++      HEAP32[(req + 12) >> 2] = p;
++      HEAP32[(req + 16) >> 2] = bytes.length;
++      _js_finish(ctx);
++    };
++    let op, rest, realm;
++    try {
++      views();
++      op = HEAP32[req >> 2];
++      const dp = HEAPU32[(req + 4) >> 2], dl = HEAP32[(req + 8) >> 2];
++      const bytes = HEAPU8.slice(dp, dp + dl);
++      const r = new local.Reader(bytes);
++      const pageIds = [];
++      while (r.more() && r.peek() === 'X') {
++        const [rr, ...ids] = dec.decode(r.rec().d).split('\t');
++        if (rr === LOCAL) for (const id of ids) local.release(Number(id));
++        else if (rr === 'page') pageIds.push(...ids.map(Number));
++      }
++      if (pageIds.length) toPage({ type: 'release', ids: pageIds });
++      rest = bytes.slice(r.p);
++      realm = realmOf(op, new local.Reader(rest));
++    } catch (e) { finish(local.errorText('Error: ' + (e && e.message || e))); return; }
++
++    if (!granted(realm)) { finish(local.errorText('Error: ' + refusal(realm))); return; }
++    if (realm === LOCAL) {
++      const out = local.handle(op, rest);
++      if (out instanceof Uint8Array) finish(out);
++      else out.then(finish);
++      return;
++    }
++    // the page
++    const id = ++pageSeq;
++    pageWaiting.set(id, finish);
++    if (!toPage({ type: 'call', id, op, bytes: rest }, [rest.buffer])) {
++      pageWaiting.delete(id);
++      finish(local.errorText('Error: the page realm is not reachable'));
++    }
++  };
++})();
+diff --git a/wasm/js-realm.js b/wasm/js-realm.js
+new file mode 100644
+index 0000000..97ac6d5
+--- /dev/null
++++ b/wasm/js-realm.js
+@@ -0,0 +1,439 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*
++ * ooRexx/WASM: a realm of the JavaScript bridge (.JSObject, see
++ * wasm/web-js.cpp and wasm/web/js.cls): orxJsRealm(name) makes one, with
++ * handle(op, bytes) -> reply bytes (or a Promise of them) and release(id).
++ * Loaded as a --pre-js in the browser build (realm "worker", the Web Worker
++ * that hosts the run) and in the Node command-line build (realm "node"),
++ * where wasm/js-bridge.js passes it the interpreter's requests, and by
++ * ooRexx.js in the page (realm "page", the DOM), which gets the requests for
++ * it from the worker by postMessage.  A realm runs on a thread that never
++ * blocks.
++ *
++ *  - handles: every object, function or symbol handed to Rexx gets an id in
++ *    its realm, the same id for the same object (so identity holds), counted:
++ *    one count per .JSObject made for it, given back when that .JSObject is
++ *    garbage collected (its UNINIT).  Id 0 is globalThis, for good;
++ *  - names: ooRexx uppercases every message name, so o~getElementById
++ *    arrives as GETELEMENTBYID; it is resolved case-insensitively along the
++ *    prototype chain (the nearest object that has a match wins; of two
++ *    matches there, the one starting in lowercase, as window.document over
++ *    window.Document; else an error), with the names of each prototype cached;
++ *  - handlers: a .JSHandler (record H) becomes a function of this realm, the
++ *    same one each time (so removeEventListener works); called, it does what
++ *    its options say to its first argument (preventDefault, stopPropagation,
++ *    stopImmediatePropagation), passes emit(bytes) the event (H "id", or
++ *    "id<tab>L" for option latest, + A arguments, for js_event in web-js.cpp)
++ *    and returns undefined at once;
++ *  - values, records and ops: see web-js.cpp.
++ */
++var orxJsRealm = (function () {
++  'use strict';
++  const isNode = typeof process !== 'undefined' && !!(process.versions && process.versions.node);
++
++  // a realm: REALM is its name (worker, node, page)
++  return function makeRealm(REALM, emit) {
++  const enc = new TextEncoder(), dec = new TextDecoder('utf-8');
++
++  // ---- handles ------------------------------------------------------------
++  const objs = [globalThis], counts = [Infinity], free = [];
++  const ids = new Map([[globalThis, 0]]);
++  function handle(v) {
++    let id = ids.get(v);
++    if (id === undefined) {
++      id = free.length ? free.pop() : objs.length;
++      objs[id] = v; counts[id] = 0; ids.set(v, id);
++    }
++    counts[id]++;
++    return id;
++  }
++  function release(id) {
++    if (!(id > 0) || objs[id] === undefined || --counts[id] > 0) return;
++    ids.delete(objs[id]); objs[id] = undefined; free.push(id);
++  }
++  function deref(realm, id) {
++    if (realm !== REALM) throw new Error('a JavaScript object of realm "' + realm + '" cannot be used in realm "' + REALM + '"');
++    if (!(id in objs) || (id > 0 && objs[id] === undefined)) throw new Error('stale JavaScript object reference #' + id);
++    return objs[id];
++  }
++
++  // ---- records ------------------------------------------------------------
++  class Reader {
++    constructor(b) { this.b = b; this.p = 0; }
++    more() { return this.p < this.b.length; }
++    peek() { return String.fromCharCode(this.b[this.p]); }
++    rec() {
++      const b = this.b, tag = String.fromCharCode(b[this.p++]);
++      let n = 0, c;
++      while ((c = b[this.p++]) !== 58) n = n * 10 + (c - 48);
++      const d = b.subarray(this.p, this.p + n);
++      this.p += n;
++      return { tag, d };
++    }
++    str() { return dec.decode(this.rec().d); }
++  }
++  class Writer {
++    constructor() { this.parts = []; this.len = 0; }
++    rec(tag, data) {
++      const d = typeof data === 'string' ? enc.encode(data) : data;
++      const h = enc.encode(tag + d.length + ':');
++      this.parts.push(h, d); this.len += h.length + d.length;
++    }
++    bytes() {
++      const out = new Uint8Array(this.len);
++      let p = 0;
++      for (const x of this.parts) { out.set(x, p); p += x.length; }
++      return out;
++    }
++  }
++
++  // a value from Rexx
++  function val(r) {
++    const { tag, d } = r.rec();
++    const s = () => dec.decode(d);
++    switch (tag) {
++      case 'S': return s();
++      case 'N': return null;
++      case 'U': return undefined;
++      case 'F': {
++        const t = s().trim(), n = Number(t);
++        if (Number.isNaN(n) && !/^[+-]?nan$/i.test(t)) throw new TypeError('"' + s() + '" is not a number');
++        return n;
++      }
++      case 'B': {
++        const t = s().trim().toLowerCase();
++        if (t === '1' || t === 'true') return true;
++        if (t === '0' || t === 'false') return false;
++        throw new TypeError('"' + s() + '" is not a logical value');
++      }
++      case 'I': return BigInt(s().trim());
++      case 'Y': return d.slice();
++      case 'O': { const [realm, id] = s().split('\t'); return deref(realm, Number(id)); }
++      case 'H': return handlerFunction(s());
++      case 'A': {
++        const n = Number(s()), a = new Array(n);
++        for (let i = 0; i < n; i++) a[i] = val(r);
++        return a;
++      }
++      case 'T': {
++        const n = Number(s()), o = {};
++        for (let i = 0; i < n; i++) { const k = r.str(); o[k] = val(r); }
++        return o;
++      }
++      default: throw new Error('bad value record ' + tag);
++    }
++  }
++
++  function className(v) {
++    try {
++      if (typeof v === 'function') return 'function ' + (v.name || '(anonymous)');
++      if (typeof v === 'symbol') return String(v);
++      const tag = v[Symbol.toStringTag];
++      if (typeof tag === 'string' && tag) return tag;
++      const c = v.constructor;
++      if (typeof c === 'function' && c.name && c.prototype !== v) return c.name;
++      return Object.prototype.toString.call(v).slice(8, -1);
++    } catch (e) { return 'object'; }
++  }
++
++  function an(what) { return (/^[aeiou]/i.test(what) ? 'an ' : 'a ') + what; }
++
++  function number(n) {
++    if (Number.isFinite(n)) return Object.is(n, -0) ? '0' : String(n).toUpperCase();
++    return String(n);
++  }
++
++  // a value for Rexx: primitives as strings, anything else by reference
++  function put(w, v) {
++    switch (typeof v) {
++      case 'string': w.rec('S', v); return;
++      case 'number': w.rec('S', number(v)); return;
++      case 'boolean': w.rec('S', v ? '1' : '0'); return;
++      case 'bigint': w.rec('S', v.toString()); return;
++      case 'undefined': w.rec('U', ''); return;
++      default:
++        if (v === null) { w.rec('N', ''); return; }
++        if (v instanceof RexxArray) {
++          w.rec('A', String(v.items.length));
++          for (const x of v.items) put(w, x);
++          return;
++        }
++        // a Promise in Rexx's hands is handled: ~await gets its rejection, and
++        // nothing else must (Node ends the process on an unhandled rejection)
++        if (v instanceof Promise) v.catch(() => {});
++        const id = handle(v);
++        w.rec('O', REALM + '\t' + id + '\t' + className(v) + ' #' + id);
++    }
++  }
++  class RexxArray { constructor(items) { this.items = items; } }   // an Array for Rexx (a copy)
++
++  // ---- handlers -----------------------------------------------------------
++  const handlerFns = new Map();
++  let closed = false;
++  function handlerFunction(spec) {
++    const [id, options = ''] = spec.split('\t');
++    let f = handlerFns.get(id);
++    if (f) return f;
++    const words = options.split(/\s+/).filter(Boolean);
++    const opt = new Set(words);
++    const max = opt.has('max') ? words[words.indexOf('max') + 1] : '';
++    f = function (...args) {
++      if (closed || typeof emit !== 'function') return undefined;
++      const e = args[0];
++      if (opt.size && e !== null && typeof e === 'object') {
++        try {
++          if (opt.has('preventDefault') && typeof e.preventDefault === 'function') e.preventDefault();
++          if (opt.has('stopPropagation') && typeof e.stopPropagation === 'function') e.stopPropagation();
++          if (opt.has('stopImmediatePropagation') && typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
++        } catch (x) { /* not an Event after all */ }
++      }
++      const w = new Writer();
++      w.rec('H', opt.has('latest') ? id + '\tL' : max ? id + '\tM' + max : id);
++      w.rec('A', String(args.length));
++      for (const a of args) { try { put(w, a); } catch (x) { w.rec('N', ''); } }
++      emit(w.bytes());
++      return undefined;
++    };
++    handlerFns.set(id, f);
++    return f;
++  }
++  function close() {
++    closed = true;
++    handlerFns.clear();
++    for (let i = 1; i < objs.length; i++) objs[i] = undefined;
++    ids.clear();
++  }
++
++  // ---- case-insensitive names --------------------------------------------
++  const nameCache = new WeakMap();
++  function namesOf(o, fresh) {
++    const cacheable = (typeof o === 'object' || typeof o === 'function') &&
++      !Array.isArray(o) && !ArrayBuffer.isView(o) &&
++      !(Object.getPrototypeOf(o) === Object.prototype || Object.getPrototypeOf(o) === null);
++    let m = cacheable && !fresh ? nameCache.get(o) : undefined;
++    if (m) return m;
++    m = new Map();
++    // an array's own names are its indexes (and length): an index is never resolved here
++    const keys = Array.isArray(o) ? ['length'] : ArrayBuffer.isView(o) ? [] : Reflect.ownKeys(o);
++    for (const k of keys) {
++      if (typeof k !== 'string') continue;
++      const u = k.toUpperCase();
++      const l = m.get(u);
++      if (l) l.push(k); else m.set(u, [k]);
++    }
++    if (cacheable) nameCache.set(o, m);
++    return m;
++  }
++  function resolve(t, upper) {
++    if (/^(0|[1-9][0-9]*)$/.test(upper)) return upper;          // an index
++    const o = Object(t);
++    for (const fresh of [false, true]) {
++      for (let p = o; p !== null && p !== undefined; p = Object.getPrototypeOf(p)) {
++        const l = namesOf(p, fresh).get(upper);
++        if (l) {
++          if (l.length === 1) return l[0];
++          // window.document and window.Document, location and Location, ...:
++          // the one in camelCase (the instance), not the interface
++          const lower = l.filter((n) => /^[a-z]/.test(n));
++          if (lower.length === 1) return lower[0];
++          throw new TypeError(upper + ' is ambiguous for a ' + className(t) + ': ' + l.join(', ') +
++            ' (use o["name"] or o~invoke("name", ...) with the exact name)');
++        }
++      }
++    }
++    return undefined;
++  }
++
++  // the Rexx message NAME(args) sent to t
++  function message(t, upper, args) {
++    const name = resolve(t, upper);
++    if (name === undefined) {
++      if (args.length) throw new TypeError(an(className(t)) + ' has no method ' + upper);
++      return undefined;
++    }
++    const v = t[name];
++    if (typeof v === 'function') {
++      // o~Map: the constructor itself (o~Map~new), not a call without new
++      if (args.length === 0 && /^[A-Z]/.test(name) && Object.prototype.hasOwnProperty.call(v, 'prototype')) return v;
++      return Reflect.apply(v, t, args);
++    }
++    if (args.length) throw new TypeError(name + ' is not a function');
++    return v;
++  }
++
++  function info(t, what, arg) {
++    switch (what) {
++      case 'typeof': return typeof t;
++      case 'class': return className(t);
++      case 'keys': return new RexxArray(Object.keys(t));
++      case 'has': return String(arg) in Object(t);
++      case 'instanceof': return typeof arg === 'function' && t instanceof arg;
++      case 'array': {
++        if (t === null || t === undefined || typeof t[Symbol.iterator] !== 'function') {
++          throw new TypeError(an(className(t)) + ' is not iterable (DO WITH INDEX k ITEM v OVER o' +
++            ' goes over its properties; o~propertyNames gives their names)');
++        }
++        return new RexxArray(Array.from(t));
++      }
++      case 'supplier': {
++        // [indexes, items]: a Map's keys and values; an iterable's 1..n and
++        // values; anything else, its own enumerable properties
++        let idx, items;
++        if (t instanceof Map) { idx = Array.from(t.keys()); items = Array.from(t.values()); }
++        else if (t !== null && t !== undefined && typeof t[Symbol.iterator] === 'function') {
++          items = Array.from(t); idx = items.map((_, i) => i + 1);
++        } else { idx = Object.keys(t); items = idx.map((k) => t[k]); }
++        return new RexxArray([new RexxArray(idx), new RexxArray(items)]);
++      }
++      case 'bytes': {
++        const b = t instanceof ArrayBuffer ? new Uint8Array(t) :
++          ArrayBuffer.isView(t) ? new Uint8Array(t.buffer, t.byteOffset, t.byteLength) : null;
++        if (!b) throw new TypeError(an(className(t)) + ' is not an ArrayBuffer or a typed array');
++        return new BytesForRexx(b);
++      }
++    }
++    throw new Error('unknown info ' + what);
++  }
++  class BytesForRexx { constructor(b) { this.b = b; } }
++
++  let nodeRequire = null;
++  function requireFromCwd(name) {
++    if (!nodeRequire) nodeRequire = require('node:module').createRequire;
++    return nodeRequire(require('node:path').join(process.cwd(), 'rexx-program.js'))(name);
++  }
++  const dynamicImport = new Function('s', 'return import(s)');
++  function importModule(name) {
++    if (isNode && /^\.{0,2}\//.test(name)) {
++      name = require('node:url').pathToFileURL(require('node:path').resolve(process.cwd(), name)).href;
++    }
++    return dynamicImport(name);
++  }
++
++  const PENDING = {};
++  let pending = null;
++  function run(op, r) {
++    while (r.more() && r.peek() === 'X') {
++      const [realm, id] = r.str().split('\t');
++      if (realm === REALM) release(Number(id));
++    }
++    switch (op) {
++      case 1: {                                   // GLOBAL realm
++        const realm = r.str();
++        if (realm === REALM) return globalThis;
++        throw new Error('there is no JavaScript realm "' + realm + '" here (this is realm "' + REALM + '")');
++      }
++      case 2: { const t = val(r), name = r.str(), args = val(r); return message(t, name, args); }
++      case 3: { const t = val(r), name = r.str(); return t[name]; }
++      case 4: { const t = val(r), name = r.str(), v = val(r); t[name] = v; return undefined; }
++      case 5: {
++        const t = val(r), upper = r.str(), v = val(r);
++        const name = resolve(t, upper);
++        if (name === undefined) {
++          throw new TypeError(an(className(t)) + ' has no property ' + upper +
++            ' (o["exactName"] = value creates one)');
++        }
++        t[name] = v;
++        return undefined;
++      }
++      case 6: {
++        const t = val(r), name = val(r), args = val(r);
++        if (name === null) {
++          if (typeof t !== 'function') throw new TypeError(an(className(t)) + ' is not a function');
++          return Reflect.apply(t, undefined, args);
++        }
++        const f = t[name];
++        if (typeof f !== 'function') throw new TypeError(name + ' is not a function');
++        return Reflect.apply(f, t, args);
++      }
++      case 7: { const t = val(r), args = val(r); return Reflect.construct(t, args); }
++      case 8: {
++        const t = val(r);
++        if (t === null || (typeof t !== 'object' && typeof t !== 'function') || typeof t.then !== 'function') return t;
++        pending = Promise.resolve(t);
++        return PENDING;
++      }
++      case 9: { const t = val(r), what = r.str(), arg = val(r); return info(t, what, arg); }
++      case 10: {
++        if (!isNode) throw new Error('require() is only available under Node');
++        return requireFromCwd(r.str());
++      }
++      case 11: return importModule(r.str());
++      case 12: return val(r);
++    }
++    throw new Error('unknown op ' + op);
++  }
++
++  function okReply(v) {
++    const w = new Writer();
++    w.rec('R', '');
++    if (v instanceof BytesForRexx) w.rec('S', v.b.slice());
++    else put(w, v);
++    return w.bytes();
++  }
++  function errReply(e) {
++    const w = new Writer();
++    let msg;
++    try {
++      msg = e instanceof Error || (e && typeof e === 'object' && 'message' in e && 'name' in e)
++        ? e.name + ': ' + e.message : String(e);
++    } catch (x) { msg = 'an exception'; }
++    w.rec('E', msg);
++    try { put(w, e); } catch (x) { w.rec('N', ''); }
++    return w.bytes();
++  }
++
++  // one request (the records after any X): its reply, now or later (a Promise)
++  function handleRequest(op, bytes) {
++    let v;
++    try { v = run(op, new Reader(bytes)); } catch (e) { return errReply(e); }
++    if (v === PENDING) {
++      const p = pending; pending = null;
++      return p.then((x) => okReply(x), (e) => errReply(e));
++    }
++    try { return okReply(v); } catch (e) { return errReply(e); }
++  }
++  // a reply for an error of the bridge itself (no thrown value)
++  function errorText(msg) {
++    const w = new Writer();
++    w.rec('E', msg); w.rec('N', '');
++    return w.bytes();
++  }
++
++  return { realm: REALM, handle: handleRequest, release, close, errorText, Reader };
++  };
++})();
+diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
+index e1c1cd8..e8af171 100755
+--- a/wasm/tests/qualify-node-cli.sh
++++ b/wasm/tests/qualify-node-cli.sh
+@@ -200,6 +200,80 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
+ check "name resolution (host resolver)" '^localhost=1 127\.0\.0\.1$' '^invalid=0$' '^reverse=1 ' "^hostname=$(hostname)\$" '^hostid=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' -- \
+   "$X dns.rex"
+ 
++# --- JavaScript objects (js.cls, realm "node")
++mkdir -p "$T/node_modules/qmod"
++echo 'module.exports = { greet: (n) => "hi " + n, Counter: class { constructor() { this.n = 0 } inc() { return ++this.n } } };' \
++  > "$T/node_modules/qmod/index.js"
++echo 'export const twice = (x) => 2 * x;' > "$T/esm.mjs"
++cat > "$T/js.rex" <<'EOF'
++say .js .js~Math~max(3, 7) .js~process~platform
++q = .js~require("qmod"); say q~greet("rexx")
++c = q~Counter~new; c~inc; say "count="c~inc
++m = .js~import("./esm.mjs")~await; say "twice="m~twice(.js~num(21))
++fs = .js~require("node:fs"); say "exists="fs~existsSync("js.rex")
++say "await=".js~eval("new Promise(r => setTimeout(() => r('later'), 50))")~await
++signal on syntax; .js~JSON~parse("{")
++syntax: say "error="condition("O")~code condition("O")~additional[2]~name
++::requires "js.cls"
++EOF
++check "JavaScript objects: require (npm), import, await, errors" '^a JSObject \(global, node\) 7 ' '^hi rexx$' '^count=2$' \
++  '^twice=42$' '^exists=1$' '^await=later$' '^error=98\.900 SyntaxError$' -- "$X js.rex"
++
++# events: an HTTP server answered from Rexx (event loop on its own thread),
++# several threads taking events, release; the program's end ends the process
++# although the server still listens
++cat > "$T/jsev.rex" <<'EOF'
++srv = .js~require("node:http")~createServer(.js~handler(.web~new, "request"))
++srv~listen(0, "127.0.0.1")
++do while srv~address == .nil; call SysSleep 0.05; end
++.js~start("eventLoop")
++do i = 1 to 3
++  say .js~fetch("http://127.0.0.1:"srv~address~port"/q?i="i)~await~text~await
++end
++.js~stopEventLoop
++h = .js~handler(.nil, "string"); t = .js~setInterval(h, 5)
++w = .array~new; do i = 1 to 3; w[i] = .taker~new~start("take"); end
++n = 0; do i = 1 to 3; n += w[i]~result; end
++h~release; call SysSleep 0.05; say "taken="n "after release:" .js~nextEvent(0.2)
++::requires "js.cls"
++::class web
++::method request
++  use arg req, res
++  res~end("rexx answered" req~method req~url)
++::class taker
++::method take
++  n = 0; do 5; if .js~nextEvent(5) \== .nil then n += 1; end
++  return n
++EOF
++cat > "$T/jsover.rex" <<'EOF'
++m = .js~Map~new; m~set("a", 1); m~set("b", 2)
++do with index k item v over m; call charout , k"="v" "; end; say
++do with index i item v over .js~JSON~parse('["x","y"]'); call charout , i"="v" "; end; say
++do with index k item v over .js~JSON~parse('{"p":7}'); say k"="v; end
++signal on syntax; do x over .js~newObject; end
++syntax: say "over object:" (condition("O")~message~pos("not iterable") > 0)
++et = .js~EventTarget~new; et~addEventListener("e", .js~handler(.nil, "string", "latest"))
++do i = 1 to 5; et~dispatchEvent(.js~CustomEvent~new("e", .js~newObject(.directory~of(("detail", i))))); end
++ev = .js~nextEvent(1); say "latest detail="ev~arguments[1]~detail "then:" .js~nextEvent(0.1)
++e2 = .js~EventTarget~new; e2~addEventListener("e", .js~handler(.nil, "string", "max 2"))
++do i = 1 to 5; e2~dispatchEvent(.js~CustomEvent~new("e", .js~newObject(.directory~of(("detail", i))))); end
++call charout , "max 2:"; do forever; ev = .js~nextEvent(0.1); if ev == .nil then leave; call charout , "" ev~arguments[1]~detail; end; say
++signal on syntax name badmax; x = .js~handler(.nil, "string", "max 0")
++badmax: say "max 0:" (condition("O")~message~pos("whole number > 0") > 0)
++e3 = .js~EventTarget~new; h = .js~handler(.nil, "string"); e3~addEventListener("e", h)
++do i = 1 to 3; e3~dispatchEvent(.js~CustomEvent~new("e", .js~newObject(.directory~of(("detail", i))))); end
++h~release; e3~dispatchEvent(.js~CustomEvent~new("e", .js~newObject(.directory~of(("detail", 4)))))
++e3~addEventListener("e", h)        -- the same function: pinned again
++e3~dispatchEvent(.js~CustomEvent~new("e", .js~newObject(.directory~of(("detail", 5)))))
++call charout , "after release:"; do forever; ev = .js~nextEvent(0.1); if ev == .nil then leave; call charout , "" ev~arguments[1]~detail; end; say
++::requires "js.cls"
++EOF
++check "JavaScript iteration (DO OVER, DO WITH), event options latest and max, release" '^a=1 b=2 $' '^1=x 2=y $' '^p=7$' \
++  '^over object: 1$' '^latest detail=5 then: The NIL object$' '^max 2: 4 5$' '^max 0: 1$' '^after release: 5$' -- "$X jsover.rex"
++
++check "JavaScript events: HTTP server in Rexx, threads, release, exit" '^rexx answered GET /q\?i=1$' \
++  '^rexx answered GET /q\?i=3$' '^taken=15 after release: The NIL object$' -- "$X jsev.rex"
++
+ echo
+ if (( ${#FAILED[@]} )); then
+   echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
+diff --git a/wasm/tests/web-api.html b/wasm/tests/web-api.html
+index 19d0aeb..860e798 100644
+--- a/wasm/tests/web-api.html
++++ b/wasm/tests/web-api.html
+@@ -68,7 +68,7 @@ window.rexxRun = async (source, o = {}) => {
+     }
+   };
+   const run = rexx.run({
+-    args: ['prog.rex'].concat(o.args || []), files, stdin: o.stdin,
++    args: ['prog.rex'].concat(o.args || []), files, stdin: o.stdin, js: o.js,
+     onOut: (t, kind) => { out += t; mark(t, kind); }, onErr: (t, kind) => { err += t; mark(t, kind); }, onJdor,
+     onInput: (info) => { asks++; debug.push(!!(info && info.debug));
+       if (inputs.length) run.write(inputs.shift() + '\n'); else run.close(); },
+diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
+index f368988..f43b363 100755
+--- a/wasm/tests/web-api.py
++++ b/wasm/tests/web-api.py
+@@ -162,6 +162,72 @@ CASES = [
+                  'shape u area a; areaAdd u b; shapeBounds u; say rc\nshape i area a; areaIntersect i b; shapeBounds i; say rc\n'
+                  '::requires "jdor.cls"', {},
+      lambda r: r["out"] == "0.0 0.0 15.0 10.0\n5.0 0.0 5.0 10.0\n"),
++  # .JSObject: JavaScript objects as Rexx objects (wasm/web-js.cpp, wasm/js-bridge.js, wasm/web/js.cls)
++  ("js not granted", 'say .js~Math~max(1, 2)\n::requires "js.cls"', {},
++     lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
++  ("js core", 'say .js .js~Math~max(3, 7) .js~math~MAX(1, 2)\nm = .js~Map~new; m~set("a", 1); say m~size m~get("a") m~has("b")\n'
++              'o = .js~newObject(.directory~of(("x", 1))); o["y"] = .js~num(2); say .js~JSON~stringify(o)\n'
++              'a = .js~JSON~parse("[10,20]"); say a~length a[1] a~className; do x over a; say x; end\n'
++              'say (.js~Math == .js~Math) (.js~Math == .js~JSON) (o~nothing == .js~undefined) .js~eval("0.1+0.2") .js~eval("true")\n'
++              'say (o~nothing == .nil) (.js~JSON~parse("null") == .nil) o~hasProperty("x") o~hasProperty("nothing") .js~undefined (.js~eval("undefined") == .js~undefined)\n'
++              '::requires "js.cls"', {"js": {"worker": True}},
++     lambda r: r["out"] == "a JSObject (global, worker) 7 2\n1 1 0\n{\"x\":\"1\",\"y\":2}\n2 20 Array\n10\n20\n"
++                           "1 0 1 0.30000000000000004 1\n0 1 1 0 undefined 1\n" and r["rc"] == 0),
++  ("js await", 'say .js~fetch("web-api.html")~await~text~await~pos("rexxRun") > 0\n'
++               'say .js~eval("new Promise(r => setTimeout(() => r(42), 50))")~await\n'
++               'signal on syntax; .js~Promise~reject(.js~Error~new("boom"))~await\n'
++               'syntax: say condition("O")~message; say condition("O")~additional[2]~message\n'
++               '::requires "js.cls"', {"js": {"worker": True}},
++     lambda r: r["out"] == "1\n42\nJavaScript error: Error: boom.\nboom\n"),
++  ("js errors", 'signal on syntax name s1; .js~JSON~parse("{"); s1: say condition("O")~code\n'
++                'signal on syntax name s2; .js~Math~nothing(1); s2: say condition("O")~message\n'
++                'signal on syntax name s3; say .js~page; s3: say condition("O")~message\n'
++                'say .js~require("x")\n::requires "js.cls"', {"js": {"worker": True}},
++     lambda r: r["out"].startswith("98.900\nJavaScript error: TypeError: a Math has no method NOTHING.\n"
++                                   "JavaScript error: Error: JavaScript is not available: the page running ooRexx did not grant the page realm (ooRexx run option js: {page: true}).\n")
++               and "only available under Node" in r["errmsg"] and "line 4" in r["errmsg"]),
++  ("js threads, release", 'do i = 1 to 3000; o = .js~newObject; end; say o~string~word(4) < 3000\n'
++                          'do t = 1 to 4; .w~new~start("go", t); end; call syssleep 0.6\n'
++                          '::class w; ::method go; use arg t; p = .js~eval("new Promise(r => setTimeout(() => r(" t "), 100))"); say "t" p~await\n'
++                          '::requires "js.cls"', {"js": {"worker": True}},
++     lambda r: r["out"].split("\n")[0] == "1" and sorted(r["out"].split("\n")[1:5]) == ["t 1", "t 2", "t 3", "t 4"]),
++  # the page realm: the DOM of the page that runs ooRexx (.js~page)
++  ("js page", 'w = .js~page; say w; doc = w~document\n'
++              'p = doc~createElement("p"); p~id = "fromRexx"; p["textContent"] = "Hola desde Rexx"; doc~body~appendChild(p)\n'
++              'q = doc~getElementById("fromRexx"); say q~className (q == p) q~textContent q~tagName\n'
++              'say w~eval("new Promise(r => setTimeout(() => r(document.getElementById(\'fromRexx\').textContent.length), 30))")~await\n'
++              'do i = 1 to 2000; e = doc~createElement("span"); end; say e~string~word(4) < 2000\n'
++              'p~remove; say doc~getElementById("fromRexx") == .nil\n'
++              '::requires "js.cls"', {"js": {"page": True}},
++     lambda r: r["out"] == "a JSObject (Window #0, page)\nHTMLParagraphElement 1 Hola desde Rexx P\n15\n1\n1\n" and r["rc"] == 0),
++  ("js page not granted", 'say .js~page\n::requires "js.cls"', {"js": {"worker": True}},
++     lambda r: "did not grant the page realm" in r["errmsg"] and r["rc"] != 0),
++  ("js realms apart", 'doc = .js~page~document; signal on syntax\n'
++                      'doc~body~appendChild(.js~newObject)\n'
++                      'syntax: say condition("O")~message\n::requires "js.cls"', {"js": {"worker": True, "page": True}},
++     lambda r: 'cannot be used in realm "page"' in r["out"]),
++  # events: .js~handler, .js~nextEvent, .js~eventLoop
++  ("js events worker", 'c = .counter~new; h = .js~handler(c, "tick", "preventDefault")\n'
++                       'say h; t = .js~setInterval(h, 10, "x"); .js~eventLoop; .js~clearInterval(t); h~release\n'
++                       'say c~n .js~nextEvent(0) .js~nextEvent(0.2)\n'
++                       '::class counter; ::attribute n; ::method init; expose n; n = 0\n'
++                       '::method tick; expose n; use arg a; n += 1; if n = 3 then .js~stopEventLoop; say "tick" n a\n'
++                       '::requires "js.cls"', {"js": {"worker": True}},
++     lambda r: r["out"] == "a JSHandler (a COUNTER~TICK)\ntick 1 x\ntick 2 x\ntick 3 x\n3 The NIL object The NIL object\n"),
++  ("js page events", 'doc = .js~page~document; box = doc~createElement("input"); box~type = "checkbox"; doc~body~appendChild(box)\n'
++                     'h = .js~handler(.nil, "string", "preventDefault"); box~addEventListener("click", h)\n'
++                     'box~click; ev = .js~nextEvent(5); e = ev~arguments[1]\n'
++                     'say ev~arguments~items e~type e~defaultPrevented box~checked (e~target == box) (e~currentTarget == .nil)\n'
++                     'box~removeEventListener("click", h); box~click; say .js~nextEvent(0.3) box~checked\n'
++                     'signal on syntax; x = .js~handler(.nil, "x", "noSuchOption")\n'
++                     'syntax: say condition("O")~message; box~remove\n'
++                     '::requires "js.cls"', {"js": {"page": True}},
++     lambda r: r["out"].startswith("1 click 1 0 1 1\nThe NIL object 1\n.js~handler: unknown option noSuchOption")),
++  ("js page latest", 'b = .js~page~document~body; h = .js~handler(.nil, "string", "latest"); b~addEventListener("x", h)\n'
++                     'w = .js~page; do i = 1 to 20; b~dispatchEvent(w~CustomEvent~new("x", w~eval("({detail: " i "})"))); end\n'
++                     'say .js~nextEvent(2)~arguments[1]~detail .js~nextEvent(0.2); b~removeEventListener("x", h)\n'
++                     '::requires "js.cls"', {"js": {"page": True}},
++     lambda r: r["out"] == "20 The NIL object\n"),
+ ]
+ 
+ fails = 0; ran = 0
+diff --git a/wasm/web-jdor.cpp b/wasm/web-jdor.cpp
+index 37f6f14..63dfc90 100644
+--- a/wasm/web-jdor.cpp
++++ b/wasm/web-jdor.cpp
+@@ -418,14 +418,8 @@ static RexxPackageEntry jdorPackage =
+     NULL
+ };
+ 
+-static const RexxLibraryPackage extraPackages[] =
++// found by wasm/extra-packages.cpp
++extern "C" RexxPackageEntry *orx_wasm_jdor_package(void)
+ {
+-    { "jdor", &jdorPackage },
+-    { NULL, NULL }
+-};
+-
+-// the hook in interpreter/package/PackageManager.cpp
+-extern "C" const RexxLibraryPackage *orx_wasm_extra_packages(void)
+-{
+-    return extraPackages;
++    return &jdorPackage;
+ }
+diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
+new file mode 100644
+index 0000000..f75e48e
+--- /dev/null
++++ b/wasm/web-js.cpp
+@@ -0,0 +1,709 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*
++ * ooRexx/WASM: the native side of the JavaScript bridge, the package "js"
++ * (::REQUIRES "js" LIBRARY, see wasm/web/js.cls).  A .JSObject stands for one
++ * JavaScript object of a realm (the runtime's Web Worker in the browser,
++ * Node's main thread under Node); its methods are native and pass each
++ * operation, synchronously, to the main runtime thread, where
++ * wasm/js-bridge.js does it (the interpreter runs on a pthread, the realm
++ * thread never blocks; JavaScript may finish the call later, as for ~await).
++ *
++ * Request and reply are sequences of records "<tag><length>:<bytes>".
++ * Values, both ways:
++ *   S string (UTF-8)    N null (.nil)    U undefined (.js~undefined; to
++ *   JavaScript, also an omitted argument)
++ *   O "realm<tab>id"  (to JavaScript) / "realm<tab>id<tab>display" (back)
++ *   A count + values (an Array)    T count + (K key, value) (a plain object)
++ *   F number   B boolean ("1"/"0")   I bigint   Y bytes (Uint8Array)
++ *   H "id<tab>options"  (to JavaScript) a .JSHandler: that realm's function
++ *                       for it, which queues an event here when called
++ * A request starts with any number of X "realm<tab>id..." records (handles
++ * whose .JSObject was garbage collected), then the operands of the op.
++ * The reply is R + a value, or E + message + the thrown value.
++ *
++ * Events: a handler's function, called by JavaScript in its realm, returns at
++ * once and hands js_event() (on the main runtime thread; from the page by
++ * postMessage) the records H "id" + A (its arguments).  They wait in a queue
++ * until a Rexx thread takes them (.js~nextEvent, .js~eventLoop) and sends the
++ * handler's message; with option latest ("id<tab>L") a new event replaces the
++ * handler's event still waiting, if any (mousemove, scroll, resize), and
++ * with option max n ("id<tab>Mn") the handler's oldest waiting event is
++ * dropped when n are already waiting.  A handler stays pinned (reachable from here) from the
++ * first time it goes to JavaScript until its ~release or the end of the run.
++ */
++
++#include <emscripten.h>
++#include <emscripten/proxying.h>
++#include <emscripten/threading.h>
++#include <oorexxapi.h>
++#include <chrono>
++#include <condition_variable>
++#include <deque>
++#include <map>
++#include <mutex>
++#include <stdlib.h>
++#include <string.h>
++#include <string>
++#include <vector>
++
++extern "C"
++{
++
++// Shared with wasm/js-bridge.js (byte offsets in comments).
++typedef struct
++{
++    int32_t     op;         //  0: see JsOp
++    const char *data;       //  4: the request records
++    int32_t     dataLen;    //  8: their length in bytes
++    char       *reply;      // 12: set by JavaScript: malloc'ed reply
++    int32_t     replyLen;   // 16: its length in bytes
++} JsRequest;
++
++EM_JS(void, js_bridge_call, (em_proxying_ctx *ctx, JsRequest *req), {
++    Module['jsCall'](ctx, req);
++});
++
++// the default realm of this process, decided on the calling thread
++EM_JS(int, js_is_node, (void), {
++    return (typeof process !== 'undefined' && process.versions && process.versions.node) ? 1 : 0;
++});
++
++EMSCRIPTEN_KEEPALIVE void *js_alloc(int n)                 { return malloc(n); }
++EMSCRIPTEN_KEEPALIVE void  js_finish(em_proxying_ctx *ctx) { emscripten_proxy_finish(ctx); }
++
++void js_event(char *data, int len);
++
++static void jsOnMain(em_proxying_ctx *ctx, void *arg)
++{
++    js_bridge_call(ctx, (JsRequest *)arg);
++}
++
++} // extern "C"
++
++enum JsOp
++{
++    OP_GLOBAL = 1,      // realm                       -> its globalThis
++    OP_MESSAGE = 2,     // target, NAME, args          -> the Rexx message NAME
++    OP_GET = 3,         // target, name                -> target[name]
++    OP_SET = 4,         // target, name, value         -> target[name] = value
++    OP_SETMESSAGE = 5,  // target, NAME, value         -> the Rexx message NAME=
++    OP_CALL = 6,        // target, name, args          -> target[name](...args), or target(...args)
++    OP_NEW = 7,         // target, args                -> new target(...args)
++    OP_AWAIT = 8,       // target                      -> the settled value
++    OP_INFO = 9,        // target, what, arg           -> typeof, class, keys, ...
++    OP_REQUIRE = 10,    // name                        -> require(name) (Node)
++    OP_IMPORT = 11,     // name                        -> import(name), a Promise
++    OP_VALUE = 12,      // value                       -> the value as JavaScript has it
++};
++
++// ---- records ----------------------------------------------------------------
++
++struct Rec { char tag; std::string data; };
++
++static bool nextRec(const std::string &s, size_t &pos, Rec &rec)
++{
++    if (pos >= s.size()) return false;
++    rec.tag = s[pos++];
++    size_t colon = s.find(':', pos);
++    if (colon == std::string::npos) { pos = s.size(); return false; }
++    size_t len = strtoul(s.substr(pos, colon - pos).c_str(), NULL, 10);
++    rec.data = s.substr(colon + 1, len);
++    pos = colon + 1 + len;
++    return true;
++}
++
++static void putRec(std::string &s, char tag, const std::string &data)
++{
++    s += tag;
++    s += std::to_string(data.size());
++    s += ':';
++    s += data;
++}
++
++// pass a request to the main runtime thread and wait for the reply
++static std::string jsCall(int op, const std::string &data)
++{
++    JsRequest req = {};
++    req.op = op;
++    req.data = data.data();
++    req.dataLen = (int32_t)data.size();
++    if (!emscripten_proxy_sync_with_ctx(emscripten_proxy_get_system_queue(),
++                                        emscripten_main_runtime_thread_id(), jsOnMain, &req))
++    {
++        std::string r;
++        putRec(r, 'E', "the JavaScript realm is not reachable");
++        putRec(r, 'N', "");
++        return r;
++    }
++    std::string r(req.reply ? req.reply : "", req.replyLen);
++    free(req.reply);
++    return r;
++}
++
++
++static RexxObjectPtr jsObjectClass = NULLOBJECT;    // .JSObject, see JsSetup()
++static RexxObjectPtr jsTypedClass = NULLOBJECT;     // .JSTyped: .js~num(x) and friends
++static RexxObjectPtr jsUndefined = NULLOBJECT;      // .js~undefined, the one object
++static RexxObjectPtr jsHandlerClass = NULLOBJECT;   // .JSHandler: .js~handler(obj, msg)
++static RexxObjectPtr jsEventClass = NULLOBJECT;     // .JSEvent: what .js~nextEvent gives
++
++// ---- events -------------------------------------------------------------------
++
++static std::mutex eventLock;                        // guards everything below
++static std::condition_variable eventCond;
++static std::deque<std::string> events;              // H id + A args, as JavaScript sent them
++static std::map<size_t, RexxObjectPtr> pinned;      // handler id -> its .JSHandler (a global reference)
++static size_t lastHandlerId = 0;
++static size_t stopGeneration = 0;                   // .js~stopEventLoop ends the loops started before
++
++static void dropEvent(const std::string &ev);
++
++// the handler id of an event, whether it has option latest ("id<tab>L"),
++// and its option max n ("id<tab>Mn", 0 when none)
++static size_t eventHandler(const std::string &ev, bool *latest = NULL, size_t *max = NULL)
++{
++    if (ev.empty() || ev[0] != 'H') return 0;
++    size_t colon = ev.find(':'), len = strtoul(ev.c_str() + 1, NULL, 10);
++    std::string d = ev.substr(colon + 1, len);
++    if (latest) *latest = d.size() > 2 && d.compare(d.size() - 2, 2, "\tL") == 0;
++    if (max)
++    {
++        size_t t = d.find("\tM");
++        *max = t == std::string::npos ? 0 : strtoul(d.c_str() + t + 2, NULL, 10);
++    }
++    return strtoul(d.c_str(), NULL, 10);
++}
++
++extern "C" EMSCRIPTEN_KEEPALIVE void js_event(char *data, int len)
++{
++    std::string ev(data, len), old;
++    free(data);
++    bool latest = false;
++    size_t max = 0;
++    size_t id = eventHandler(ev, &latest, &max);
++    {
++        std::lock_guard<std::mutex> lock(eventLock);
++        bool replaced = false;
++        if (pinned.find(id) == pinned.end())    // released: nobody will take it
++        {
++            old.swap(ev);
++            replaced = true;
++        }
++        else if (latest)       // option latest: one waiting event per handler, the newest
++        {
++            for (std::string &q : events)
++            {
++                if (eventHandler(q) == id) { old.swap(q); q = std::move(ev); replaced = true; break; }
++            }
++        }
++        else if (max > 0)      // option max n: drop the handler's oldest when n wait
++        {
++            size_t waiting = 0;
++            for (const std::string &q : events) if (eventHandler(q) == id) waiting++;
++            if (waiting >= max)
++            {
++                for (auto it = events.begin(); it != events.end(); ++it)
++                {
++                    if (eventHandler(*it) == id) { old.swap(*it); events.erase(it); break; }
++                }
++            }
++        }
++        if (!replaced) events.push_back(std::move(ev));
++    }
++    if (!old.empty()) dropEvent(old);
++    eventCond.notify_all();
++}
++
++// handles whose .JSObject went away (UNINIT), released with the next request
++static std::mutex releaseLock;
++static std::vector<std::string> released;
++
++static std::string newRequest()
++{
++    std::string s;
++    std::lock_guard<std::mutex> lock(releaseLock);
++    for (const std::string &r : released) putRec(s, 'X', r);
++    released.clear();
++    return s;
++}
++
++// build the Rexx object for the value record at pos
++static RexxObjectPtr toRexx(RexxThreadContext *c, const std::string &s, size_t &pos)
++{
++    Rec r;
++    if (!nextRec(s, pos, r)) return c->Nil();
++    switch (r.tag)
++    {
++        case 'S': return c->String(r.data.data(), r.data.size());
++        case 'U': return jsUndefined != NULLOBJECT ? jsUndefined : c->Nil();
++        case 'O':
++        {
++            size_t t1 = r.data.find('\t'), t2 = r.data.find('\t', t1 + 1);
++            if (jsObjectClass == NULLOBJECT || t1 == std::string::npos || t2 == std::string::npos)
++            {
++                return c->String(r.data.c_str());
++            }
++            RexxArrayObject args = c->ArrayOfThree(c->String(r.data.substr(0, t1).c_str()),
++                                                   c->String(r.data.substr(t1 + 1, t2 - t1 - 1).c_str()),
++                                                   c->String(r.data.substr(t2 + 1).c_str()));
++            return c->SendMessage(jsObjectClass, "NEW", args);
++        }
++        case 'A':
++        {
++            size_t n = strtoul(r.data.c_str(), NULL, 10);
++            RexxArrayObject a = c->NewArray(n);
++            for (size_t i = 1; i <= n; i++) c->ArrayPut(a, toRexx(c, s, pos), i);
++            return a;
++        }
++        default: return c->Nil();
++    }
++}
++
++static bool isA(RexxThreadContext *c, RexxObjectPtr v, RexxObjectPtr cls)
++{
++    return cls != NULLOBJECT && c->IsInstanceOf(v, (RexxClassObject)cls);
++}
++
++// encode a Rexx value for JavaScript
++static void fromRexx(RexxThreadContext *c, std::string &out, RexxObjectPtr v, int depth = 0)
++{
++    if (v == NULLOBJECT) { putRec(out, 'U', ""); return; }
++    if (v == c->Nil()) { putRec(out, 'N', ""); return; }
++    if (depth > 64) { putRec(out, 'N', ""); return; }        // a cycle: cut it
++    if (isA(c, v, jsObjectClass))
++    {
++        putRec(out, 'O', c->ObjectToStringValue(c->SendMessage0(v, "JSREF")));
++        return;
++    }
++    if (isA(c, v, jsHandlerClass))
++    {
++        size_t id = 0;
++        c->ObjectToStringSize(c->SendMessage0(v, "ID"), &id);
++        std::string options = c->ObjectToStringValue(c->SendMessage0(v, "OPTIONS"));
++        {
++            std::lock_guard<std::mutex> lock(eventLock);
++            if (pinned.find(id) == pinned.end()) pinned[id] = c->RequestGlobalReference(v);
++        }
++        putRec(out, 'H', std::to_string(id) + "\t" + options);
++        return;
++    }
++    if (isA(c, v, jsTypedClass))
++    {
++        std::string kind = c->ObjectToStringValue(c->SendMessage0(v, "KIND"));
++        RexxObjectPtr val = c->SendMessage0(v, "VALUE");
++        std::string data = val == NULLOBJECT || val == c->Nil() ? "" : c->ObjectToStringValue(val);
++        putRec(out, kind.empty() ? 'U' : kind[0], data);
++        return;
++    }
++    if (c->IsArray(v))
++    {
++        size_t size = c->ArraySize((RexxArrayObject)v);
++        putRec(out, 'A', std::to_string(size));
++        for (size_t i = 1; i <= size; i++) fromRexx(c, out, c->ArrayAt((RexxArrayObject)v, i), depth + 1);
++        return;
++    }
++    if (c->IsDirectory(v) || c->IsStringTable(v))
++    {
++        RexxArrayObject keys = (RexxArrayObject)c->SendMessage0(v, "ALLINDEXES");
++        size_t n = c->ArrayItems(keys);
++        putRec(out, 'T', std::to_string(n));
++        for (size_t i = 1; i <= n; i++)
++        {
++            RexxObjectPtr k = c->ArrayAt(keys, i);
++            putRec(out, 'K', c->ObjectToStringValue(k));
++            fromRexx(c, out, c->SendMessage1(v, "AT", k), depth + 1);
++        }
++        return;
++    }
++    if (c->IsString(v))
++    {
++        RexxStringObject str = (RexxStringObject)v;
++        putRec(out, 'S', std::string(c->StringData(str), c->StringLength(str)));
++        return;
++    }
++    putRec(out, 'S', c->ObjectToStringValue(v));
++}
++
++// the result of a reply: its value, or a raised SYNTAX 98.900 condition
++static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
++{
++    size_t pos = 0;
++    Rec r;
++    if (!nextRec(reply, pos, r)) return c->Nil();
++    if (r.tag == 'R') return toRexx(c, reply, pos);
++    // E: the message, then the thrown value (a .JSObject for an Error)
++    std::string msg = "JavaScript error: " + r.data;
++    RexxObjectPtr thrown = toRexx(c, reply, pos);
++    c->RaiseException(Rexx_Error_Execution_user_defined, c->ArrayOfTwo(c->String(msg.c_str()), thrown));
++    return NULLOBJECT;
++}
++
++static RexxObjectPtr request(RexxThreadContext *c, int op, const std::string &data)
++{
++    return result(c, jsCall(op, data));
++}
++
++// the target record of a method: this .JSObject
++static void target(RexxMethodContext *context, std::string &out)
++{
++    RexxObjectPtr ref = context->GetObjectVariable("JSREF");
++    putRec(out, 'O', ref == NULLOBJECT ? "" : context->ObjectToStringValue(ref));
++}
++
++static void args(RexxThreadContext *c, std::string &out, RexxArrayObject list, size_t from)
++{
++    size_t size = list == NULLOBJECT ? 0 : c->ArraySize(list);
++    size_t n = size >= from ? size - from + 1 : 0;
++    putRec(out, 'A', std::to_string(n));
++    for (size_t i = from; i <= size; i++) fromRexx(c, out, c->ArrayAt(list, i));
++}
++
++
++// ---- .JSObject's methods -------------------------------------------------------
++
++// UNKNOWN: o~name, o~name(args), o~name = value
++RexxMethod2(RexxObjectPtr, js_unknown, CSTRING, name, RexxArrayObject, list)
++{
++    RexxThreadContext *c = context->threadContext;
++    std::string n(name), s = newRequest();
++    target(context, s);
++    if (n.size() > 1 && n.back() == '=')
++    {
++        putRec(s, 'S', n.substr(0, n.size() - 1));
++        fromRexx(c, s, c->ArraySize(list) >= 1 ? c->ArrayAt(list, 1) : NULLOBJECT);
++        request(c, OP_SETMESSAGE, s);
++        return NULLOBJECT;
++    }
++    putRec(s, 'S', n);
++    args(c, s, list, 1);
++    return request(c, OP_MESSAGE, s);
++}
++
++// [](name): the property, case-exact
++RexxMethod1(RexxObjectPtr, js_get, RexxObjectPtr, name)
++{
++    std::string s = newRequest();
++    target(context, s);
++    putRec(s, 'S', context->ObjectToStringValue(name));
++    return request(context->threadContext, OP_GET, s);
++}
++
++// []=(value, name): set the property, case-exact (created if need be)
++RexxMethod2(RexxObjectPtr, js_put, OPTIONAL_RexxObjectPtr, value, RexxObjectPtr, name)
++{
++    std::string s = newRequest();
++    target(context, s);
++    putRec(s, 'S', context->ObjectToStringValue(name));
++    fromRexx(context->threadContext, s, value);
++    request(context->threadContext, OP_SET, s);
++    return NULLOBJECT;
++}
++
++// INVOKE(name, args...): call method name, case-exact; INVOKE(.nil, args...): call this function
++RexxMethod1(RexxObjectPtr, js_call, ARGLIST, list)
++{
++    RexxThreadContext *c = context->threadContext;
++    if (c->ArraySize(list) < 1 || c->ArrayAt(list, 1) == NULLOBJECT)
++    {
++        context->RaiseException1(Rexx_Error_Incorrect_method_minarg, context->WholeNumberToObject(1));
++        return NULLOBJECT;
++    }
++    std::string s = newRequest();
++    target(context, s);
++    RexxObjectPtr name = c->ArrayAt(list, 1);
++    if (name == c->Nil()) putRec(s, 'N', "");
++    else putRec(s, 'S', context->ObjectToStringValue(name));
++    args(c, s, list, 2);
++    return request(c, OP_CALL, s);
++}
++
++// NEW(args...): new this(...args)
++RexxMethod1(RexxObjectPtr, js_new, ARGLIST, list)
++{
++    std::string s = newRequest();
++    target(context, s);
++    args(context->threadContext, s, list, 1);
++    return request(context->threadContext, OP_NEW, s);
++}
++
++// AWAIT: wait for this Promise (or thenable); its value, or its rejection as an error
++RexxMethod0(RexxObjectPtr, js_await)
++{
++    std::string s = newRequest();
++    target(context, s);
++    return request(context->threadContext, OP_AWAIT, s);
++}
++
++// introspection: TYPEOF, CLASSNAME, PROPERTYNAMES, MAKEARRAY, SUPPLIER (its data), BYTESTRING,
++// INSTANCEOF(c), HASPROPERTY(n)
++static RexxObjectPtr info(RexxMethodContext *context, const char *what, RexxObjectPtr arg)
++{
++    std::string s = newRequest();
++    target(context, s);
++    putRec(s, 'S', what);
++    fromRexx(context->threadContext, s, arg);
++    return request(context->threadContext, OP_INFO, s);
++}
++
++RexxMethod0(RexxObjectPtr, js_typeof)    { return info(context, "typeof", NULLOBJECT); }
++RexxMethod0(RexxObjectPtr, js_classname) { return info(context, "class", NULLOBJECT); }
++RexxMethod0(RexxObjectPtr, js_keys)      { return info(context, "keys", NULLOBJECT); }
++RexxMethod0(RexxObjectPtr, js_makearray) { return info(context, "array", NULLOBJECT); }
++RexxMethod0(RexxObjectPtr, js_supplier)  { return info(context, "supplier", NULLOBJECT); }
++RexxMethod0(RexxObjectPtr, js_bytes)     { return info(context, "bytes", NULLOBJECT); }
++RexxMethod1(RexxObjectPtr, js_instanceof, RexxObjectPtr, cls) { return info(context, "instanceof", cls); }
++RexxMethod1(RexxObjectPtr, js_has, RexxObjectPtr, name)       { return info(context, "has", name); }
++
++// UNINIT: the handle can go; released with the next request
++RexxMethod0(RexxObjectPtr, js_uninit)
++{
++    RexxObjectPtr ref = context->GetObjectVariable("JSREF");
++    if (ref != NULLOBJECT)
++    {
++        std::string r = context->ObjectToStringValue(ref);
++        std::lock_guard<std::mutex> lock(releaseLock);
++        released.push_back(r);
++    }
++    return NULLOBJECT;
++}
++
++
++// ---- routines for js.cls ------------------------------------------------------------
++
++// JsSetup(.JSObject, .JSTyped, .JSHandler, .JSEvent, .js~undefined)
++RexxRoutine5(int, JsSetup, RexxObjectPtr, objectClass, RexxObjectPtr, typedClass,
++             RexxObjectPtr, handlerClass, RexxObjectPtr, eventClass, RexxObjectPtr, undefinedValue)
++{
++    if (jsUndefined == NULLOBJECT) jsUndefined = context->RequestGlobalReference(undefinedValue);
++    if (jsObjectClass == NULLOBJECT) jsObjectClass = context->RequestGlobalReference(objectClass);
++    if (jsTypedClass == NULLOBJECT) jsTypedClass = context->RequestGlobalReference(typedClass);
++    if (jsHandlerClass == NULLOBJECT) jsHandlerClass = context->RequestGlobalReference(handlerClass);
++    if (jsEventClass == NULLOBJECT) jsEventClass = context->RequestGlobalReference(eventClass);
++    return 0;
++}
++
++// JsHandlerId(): a new handler id
++RexxRoutine0(size_t, JsHandlerId)
++{
++    std::lock_guard<std::mutex> lock(eventLock);
++    return ++lastHandlerId;
++}
++
++// JsHandlerRelease(id): unpin it; its events still waiting, and those that
++// come later, are dropped (passed to JavaScript again, it starts afresh)
++RexxRoutine1(int, JsHandlerRelease, size_t, id)
++{
++    RexxObjectPtr h = NULLOBJECT;
++    std::vector<std::string> gone;
++    {
++        std::lock_guard<std::mutex> lock(eventLock);
++        auto it = pinned.find(id);
++        if (it != pinned.end()) { h = it->second; pinned.erase(it); }
++        for (auto q = events.begin(); q != events.end(); )
++        {
++            if (eventHandler(*q) == id) { gone.push_back(std::move(*q)); q = events.erase(q); }
++            else ++q;
++        }
++    }
++    for (const std::string &ev : gone) dropEvent(ev);
++    if (h != NULLOBJECT) context->ReleaseGlobalReference(h);
++    return 0;
++}
++
++// the objects handed over with an event nobody will get: released
++static void dropEvent(const std::string &ev)
++{
++    size_t pos = 0;
++    Rec r;
++    std::lock_guard<std::mutex> lock(releaseLock);
++    while (nextRec(ev, pos, r))
++    {
++        if (r.tag != 'O') continue;
++        size_t t1 = r.data.find('\t'), t2 = r.data.find('\t', t1 + 1);
++        if (t1 != std::string::npos) released.push_back(r.data.substr(0, t2));
++    }
++}
++
++// JsLoopGeneration(): for JsNextEvent's stop check
++RexxRoutine0(size_t, JsLoopGeneration)
++{
++    std::lock_guard<std::mutex> lock(eventLock);
++    return stopGeneration;
++}
++
++// JsStopLoops(): every JsNextEvent waiting with an older generation returns .nil
++RexxRoutine0(int, JsStopLoops)
++{
++    {
++        std::lock_guard<std::mutex> lock(eventLock);
++        stopGeneration++;
++    }
++    eventCond.notify_all();
++    return 0;
++}
++
++// JsNextEvent([seconds] [, generation]): the next event (a .JSEvent), or .nil
++// when the seconds are over (none: no limit) or, given a generation, when
++// JsStopLoops was called since
++RexxRoutine2(RexxObjectPtr, JsNextEvent, OPTIONAL_double, seconds, OPTIONAL_RexxObjectPtr, gen)
++{
++    size_t generation = 0;
++    bool loop = gen != NULLOBJECT && context->ObjectToStringSize(gen, &generation);
++    bool forever = argumentOmitted(1) || seconds < 0;
++    auto deadline = std::chrono::steady_clock::now() +
++        std::chrono::microseconds(forever ? 0 : (long long)(seconds * 1e6));
++    for (;;)
++    {
++        std::string ev;
++        RexxObjectPtr handler = NULLOBJECT;
++        {
++            std::unique_lock<std::mutex> lock(eventLock);
++            auto ready = [&] { return !events.empty() || (loop && stopGeneration != generation); };
++            if (forever) eventCond.wait(lock, ready);
++            else if (!eventCond.wait_until(lock, deadline, ready)) return context->Nil();
++            if (loop && stopGeneration != generation) return context->Nil();
++            ev = std::move(events.front());
++            events.pop_front();
++            size_t pos = 0;
++            Rec r;
++            if (nextRec(ev, pos, r) && r.tag == 'H')
++            {
++                auto it = pinned.find(strtoul(r.data.c_str(), NULL, 10));
++                if (it != pinned.end()) handler = it->second;
++            }
++        }
++        if (handler == NULLOBJECT) { dropEvent(ev); continue; }     // released meanwhile
++        size_t pos = 0;
++        Rec r;
++        nextRec(ev, pos, r);                                       // H
++        RexxObjectPtr args = toRexx(context->threadContext, ev, pos);
++        return context->SendMessage2(jsEventClass, "NEW", handler, args);
++    }
++}
++
++// JsDefaultRealm(): "node" under Node, else "worker"
++RexxRoutine0(RexxObjectPtr, JsDefaultRealm)
++{
++    return context->String(js_is_node() ? "node" : "worker");
++}
++
++// JsGlobal(realm): that realm's globalThis
++RexxRoutine1(RexxObjectPtr, JsGlobal, CSTRING, realm)
++{
++    std::string s = newRequest();
++    putRec(s, 'S', realm);
++    return request(context->threadContext, OP_GLOBAL, s);
++}
++
++// JsRequire(name), JsImport(name): Node's require(); import() (a Promise)
++RexxRoutine1(RexxObjectPtr, JsRequire, CSTRING, name)
++{
++    std::string s = newRequest();
++    putRec(s, 'S', name);
++    return request(context->threadContext, OP_REQUIRE, s);
++}
++
++RexxRoutine1(RexxObjectPtr, JsImport, CSTRING, name)
++{
++    std::string s = newRequest();
++    putRec(s, 'S', name);
++    return request(context->threadContext, OP_IMPORT, s);
++}
++
++// JsValue(value): the value converted to JavaScript (Arrays, Directories,
++// .js~num(...)) and back: a .JSObject for anything that is not a string
++RexxRoutine1(RexxObjectPtr, JsValue, OPTIONAL_RexxObjectPtr, value)
++{
++    std::string s = newRequest();
++    fromRexx(context->threadContext, s, value);
++    return request(context->threadContext, OP_VALUE, s);
++}
++
++static RexxMethodEntry jsMethods[] =
++{
++    REXX_METHOD(js_unknown, js_unknown),
++    REXX_METHOD(js_get, js_get),
++    REXX_METHOD(js_put, js_put),
++    REXX_METHOD(js_call, js_call),
++    REXX_METHOD(js_new, js_new),
++    REXX_METHOD(js_await, js_await),
++    REXX_METHOD(js_typeof, js_typeof),
++    REXX_METHOD(js_classname, js_classname),
++    REXX_METHOD(js_keys, js_keys),
++    REXX_METHOD(js_makearray, js_makearray),
++    REXX_METHOD(js_supplier, js_supplier),
++    REXX_METHOD(js_bytes, js_bytes),
++    REXX_METHOD(js_instanceof, js_instanceof),
++    REXX_METHOD(js_has, js_has),
++    REXX_METHOD(js_uninit, js_uninit),
++    REXX_LAST_METHOD()
++};
++
++static RexxRoutineEntry jsRoutines[] =
++{
++    REXX_TYPED_ROUTINE(JsSetup, JsSetup),
++    REXX_TYPED_ROUTINE(JsDefaultRealm, JsDefaultRealm),
++    REXX_TYPED_ROUTINE(JsGlobal, JsGlobal),
++    REXX_TYPED_ROUTINE(JsRequire, JsRequire),
++    REXX_TYPED_ROUTINE(JsImport, JsImport),
++    REXX_TYPED_ROUTINE(JsValue, JsValue),
++    REXX_TYPED_ROUTINE(JsHandlerId, JsHandlerId),
++    REXX_TYPED_ROUTINE(JsHandlerRelease, JsHandlerRelease),
++    REXX_TYPED_ROUTINE(JsLoopGeneration, JsLoopGeneration),
++    REXX_TYPED_ROUTINE(JsStopLoops, JsStopLoops),
++    REXX_TYPED_ROUTINE(JsNextEvent, JsNextEvent),
++    REXX_LAST_ROUTINE()
++};
++
++static RexxPackageEntry jsPackage =
++{
++    STANDARD_PACKAGE_HEADER
++    REXX_INTERPRETER_5_0_0,
++    "js",
++    "1.0.0",
++    NULL,
++    NULL,
++    jsRoutines,
++    jsMethods
++};
++
++// found by wasm/extra-packages.cpp
++extern "C" RexxPackageEntry *orx_wasm_js_package(void)
++{
++    return &jsPackage;
++}
+diff --git a/wasm/web/js.cls b/wasm/web/js.cls
+new file mode 100644
+index 0000000..62cbf9f
+--- /dev/null
++++ b/wasm/web/js.cls
+@@ -0,0 +1,343 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*
++ * JavaScript objects as Rexx objects, in ooRexx/WASM (browser and Node):
++ *
++ *    ::requires "js.cls"
++ *    say .js~Math~max(3, 7)                      -- 7
++ *    m = .js~Map~new; m~set("a", 1); say m~size  -- 1
++ *    say .js~Object~keys(.js~newObject(d))~join  -- d: a Directory
++ *    resp = .js~fetch("data.json")~await         -- a Promise, waited for
++ *    fs = .js~require("node:fs")                 -- Node
++ *
++ * .js is the realm's globalThis (the Web Worker that runs ooRexx in the
++ * browser, Node's main thread under Node); .js~page is the page's window in
++ * the browser (the DOM):
++ *
++ *    doc = .js~page~document
++ *    p = doc~createElement("p"); p~textContent = "Hola"; doc~body~appendChild(p)
++ *
++ * In the browser the page that runs ooRexx must grant each realm (run option
++ * js: {worker: true, page: true}): it gives the program everything
++ * JavaScript can do there.  Objects of different realms do not mix (an
++ * argument must belong to the realm of the object that gets the message).
++ *
++ * Every JavaScript object, function, array or Promise is a .JSObject (by
++ * reference, never copied).  Messages to it:
++ *   o~name          property name; if it is a function, called with this = o
++ *                   (but a constructor, Capitalized with a prototype, is
++ *                   returned as is: .js~Map~new)
++ *   o~name(a, b)    method name called with a, b
++ *   o~name = v      property name set (it must exist; else o["name"] = v)
++ Names are case-insensitive (ooRexx uppercases them); exact, with no guessing:
++ *   o["name"]       property name (also o[0] for an array's first element)
++ *   o["name"] = v   property name set (created if need be)
++ *   o~invoke("name", args...)   method name called; o~invoke(.nil, args...)
++ *                   calls o itself (a function)
++ * and o~new(args...) (new o(...)), o~await (a Promise's value; a rejection is
++ * an error), o~typeOf, o~className, o~instanceOf(c), o~hasProperty("name"),
++ * o~propertyNames (Object.keys), o~makeArray (DO x OVER o: the values of an
++ * iterable, as JavaScript's for...of, so a Map's [key, value] pairs; an error
++ * for anything else), o~supplier (DO WITH INDEX i ITEM v OVER o: a Map's keys
++ * and values, an iterable's 1..n and values, any other object's own
++ * properties), o~byteString (an ArrayBuffer's or typed array's bytes as a
++ * Rexx string).  These names were
++ * chosen not to hide common JavaScript ones (Map's get/set/has/keys, ...).
++ * Methods of Rexx's Object (send, start, copy, run, request, ...) are not
++ * passed on: use o~invoke("send", x).
++ *
++ * Values: JavaScript strings, numbers, booleans (1/0) and bigints come back as
++ * Rexx strings, null as .nil and undefined as .js~undefined (one object, so
++ * x == .js~undefined; a property that does not exist gives it, and
++ * o~hasProperty("name") tells the two apart).  Rexx strings go as strings,
++ * always (also "42"); .js~num(x), .js~bool(x), .js~true, .js~false,
++ * .js~bigint(x), .js~bytes(x) (a Uint8Array), .js~undefined force a type; an
++ * Array goes as an array, a Directory or StringTable as a plain object (copies),
++ * .nil as null; .js~newArray(items...) and .js~newObject(directory) make them
++ * in JavaScript (.js~Array and .js~Object are JavaScript's own).  A JavaScript exception is SYNTAX 98.900 "JavaScript error:
++ * TypeError: ..."; condition("O")~additional[2] is what was thrown.
++ *
++ * Events: JavaScript cannot call into Rexx while it runs, so a callback is a
++ * handler whose calls are queued, and a Rexx thread takes them:
++ *
++ *    btn~addEventListener("click", .js~handler(self, "CLICKED"))
++ *    .js~eventLoop                     -- until .js~stopEventLoop
++ *    ::method clicked
++ *      use arg event                   -- the arguments of the JavaScript call
++ *
++ * .js~handler(object, message [, options]) is a .JSHandler; given to
++ * JavaScript, it is a function there (the same one each time, so
++ * removeEventListener works) that queues the call and returns undefined at
++ * once.  So it cannot answer anything (no sort comparators), and by the
++ * time Rexx sees an event the browser has dispatched it (event~currentTarget
++ * is .nil; event~target is fine): what must happen during the dispatch goes
++ * in the options, words "preventDefault", "stopPropagation" and
++ * "stopImmediatePropagation".  Option "latest" keeps at most one event of
++ * the handler waiting, the newest (for mousemove, scroll, resize, ...), and
++ * "max n" at most n, the newest n (older ones are dropped).  .js~nextEvent([seconds]) waits for the next
++ * event (none given: as long as it takes) and returns a .JSEvent (or .nil
++ * when the time is over); event~dispatch sends the handler's message to its
++ * object with the call's arguments.  .js~eventLoop does that over and over,
++ * on the thread that called it, until .js~stopEventLoop (from a handler or
++ * another thread); an error in a handler ends it, as any error.  Several
++ * threads may wait: each event goes to one.  A handler is kept alive from
++ * the first time it goes to JavaScript until handler~release (its calls still
++ * waiting, and later ones, are dropped) or the end of the run; in the browser the functions do
++ * nothing once the run is over.
++ */
++call JsSetup .JSObject, .JSTyped, .JSHandler, .JSEvent, .JSTyped~undefined
++.environment~js = .JSGlobal~new(JsDefaultRealm(), 0, "global")
++
++::requires "js" LIBRARY
++
++/** A JavaScript object (or function, array, Promise, symbol) of a realm. */
++::class JSObject public
++::method init
++  expose jsref jsrealm jsdisplay
++  use strict arg jsrealm, id, jsdisplay
++  jsref = jsrealm || "09"x || id
++::method jsRef                      -- realm<tab>id, for the bridge
++  expose jsref
++  return jsref
++::method realm                      -- worker, node (page)
++  expose jsrealm
++  return jsrealm
++::method string                     -- a JSObject (HTMLDivElement #12, worker)
++  expose jsdisplay jsrealm
++  return "a JSObject ("jsdisplay"," jsrealm")"
++::method "=="                       -- the same JavaScript object
++  expose jsref
++  use strict arg other
++  if \other~isA(.JSObject) then return .false
++  return other~jsRef == jsref
++::method "\=="
++  use strict arg other
++  return \(self == other)
++::method "="
++  forward message "=="
++::method "\="
++  forward message "\=="
++::method "<>"
++  forward message "\=="
++::method "><"
++  forward message "\=="
++::method hashCode
++  expose jsref
++  return jsref~hashCode
++::method unknown unguarded          external "LIBRARY js js_unknown"
++::method "[]" unguarded             external "LIBRARY js js_get"
++::method "[]=" unguarded            external "LIBRARY js js_put"
++::method invoke unguarded           external "LIBRARY js js_call"
++::method new unguarded              external "LIBRARY js js_new"
++::method await unguarded            external "LIBRARY js js_await"
++::method typeOf unguarded           external "LIBRARY js js_typeof"
++::method className unguarded        external "LIBRARY js js_classname"
++::method propertyNames unguarded    external "LIBRARY js js_keys"
++::method makeArray unguarded        external "LIBRARY js js_makearray"
++::method supplierData private unguarded external "LIBRARY js js_supplier"
++::method supplier unguarded         -- DO WITH INDEX i ITEM v OVER o
++  signal on syntax
++  data = self~supplierData
++  return .supplier~new(data[2], data[1])
++syntax: raise propagate
++::method byteString unguarded       external "LIBRARY js js_bytes"
++::method instanceOf unguarded       external "LIBRARY js js_instanceof"
++::method hasProperty unguarded      external "LIBRARY js js_has"
++::method uninit unguarded           external "LIBRARY js js_uninit"
++
++/** .js: the default realm's globalThis, and the bridge's helpers.  Their
++    errors are raised in the caller (RAISE PROPAGATE), not in this file. */
++::class JSGlobal public subclass JSObject
++::method worker unguarded           -- the realm of the Web Worker running ooRexx (browser)
++  signal on syntax
++  return JsGlobal("worker")
++syntax: raise propagate
++::method node unguarded             -- Node's realm
++  signal on syntax
++  return JsGlobal("node")
++syntax: raise propagate
++::method page unguarded             -- the page's window (browser; the page must grant it)
++  signal on syntax
++  return JsGlobal("page")
++syntax: raise propagate
++::method require unguarded          -- Node's require(name), from the current directory
++  signal on syntax
++  use strict arg name
++  return JsRequire(name)
++syntax: raise propagate
++::method import unguarded           -- import(name): a Promise of the module
++  signal on syntax
++  use strict arg name
++  return JsImport(name)
++syntax: raise propagate
++::method new unguarded              -- .js~new(constructor, args...)
++  signal on syntax
++  use arg ctor
++  if \ctor~isA(.JSObject) then raise syntax 98.900 array(".js~new: the constructor must be a JSObject")
++  return ctor~sendWith("NEW", arg(2, "A"))
++syntax: raise propagate
++::method num unguarded              -- force a JavaScript number
++  use strict arg x
++  return .JSTyped~new("F", x)
++::method bool unguarded             -- force a boolean (1/0, true/false)
++  use strict arg x
++  return .JSTyped~new("B", x)
++::method true unguarded
++  return .JSTyped~new("B", 1)
++::method false unguarded
++  return .JSTyped~new("B", 0)
++::method bigint unguarded
++  use strict arg x
++  return .JSTyped~new("I", x)
++::method bytes unguarded            -- a Uint8Array with these bytes
++  use strict arg x
++  return .JSTyped~new("Y", x)
++::method undefined unguarded       -- JavaScript's undefined: always the same object
++  return .JSTyped~undefined
++::method str unguarded              -- x as a string
++  use strict arg x
++  return x~string
++::method newArray unguarded         -- a new JavaScript array of the arguments
++  signal on syntax
++  return JsValue(arg(1, "A"))
++syntax: raise propagate
++::method newObject unguarded        -- a new plain JavaScript object from a Directory/StringTable
++  signal on syntax
++  use strict arg d = (.directory~new)
++  return JsValue(d)
++syntax: raise propagate
++::method handler unguarded          -- .js~handler(object, message [, options]): see Events above
++  signal on syntax
++  use strict arg target, message, options = ""
++  return .JSHandler~new(target, message, options)
++syntax: raise propagate
++::method nextEvent unguarded        -- the next event (a .JSEvent), or .nil after seconds
++  signal on syntax
++  use strict arg seconds = (-1)
++  if \datatype(seconds, "N") then raise syntax 98.900 array(".js~nextEvent: seconds must be a number, found" seconds)
++  if seconds < 0 then return JsNextEvent()
++  return JsNextEvent(seconds)
++syntax: raise propagate
++::method eventLoop unguarded        -- dispatch events until .js~stopEventLoop
++  generation = JsLoopGeneration()
++  do forever
++    event = JsNextEvent(, generation)
++    if event == .nil then return
++    event~dispatch
++  end
++::method stopEventLoop unguarded    -- end every .js~eventLoop running now
++  call JsStopLoops
++::method value unguarded            -- x as JavaScript sees it (a .JSObject unless a string)
++  signal on syntax
++  use strict arg x
++  return JsValue(x)
++syntax: raise propagate
++
++/** A Rexx object and message for JavaScript to call (.js~handler). */
++::class JSHandler public
++::attribute target get
++::attribute message get
++::attribute options get
++::attribute id get
++::method init
++  expose target message options id
++  use strict arg target, message, options = ""
++  message = message~upper
++  known = "preventDefault stopPropagation stopImmediatePropagation latest max"
++  opts = ""
++  words = options~space~makeArray(" ")
++  do i = 1 to words~items
++    word = words[i]
++    p = wordPos(word~upper, known~upper)
++    if p = 0 then raise syntax 98.900 array(".js~handler: unknown option" word "(known:" known")")
++    opts = opts known~word(p)
++    if word~upper == "MAX" then do          -- max n: n a whole number > 0
++      i += 1
++      n = words[i]
++      if n == .nil then n = ""
++      if \datatype(n, "W") then raise syntax 98.900 array(".js~handler: max needs a whole number > 0, found" n)
++      if n < 1 then raise syntax 98.900 array(".js~handler: max needs a whole number > 0, found" n)
++      opts = opts (n + 0)
++    end
++  end
++  options = opts~strip
++  id = JsHandlerId()
++::method release                    -- no more events from it
++  expose id
++  call JsHandlerRelease id
++::method string
++  expose target message
++  return "a JSHandler ("target"~"message")"
++
++/** One call of a handler's JavaScript function (.js~nextEvent). */
++::class JSEvent public
++::attribute handler get
++::attribute arguments get
++::method init
++  expose handler arguments
++  use strict arg handler, arguments
++::method target
++  expose handler
++  return handler~target
++::method message
++  expose handler
++  return handler~message
++::method dispatch                   -- the handler's message to its object, with the call's arguments
++  expose handler arguments
++  if var("RESULT") then drop result
++  handler~target~sendWith(handler~message, arguments)
++  if var("RESULT") then return result
++::method string
++  expose handler arguments
++  return "a JSEvent ("handler~target"~"handler~message", "arguments~items "arguments)"
++
++/** A Rexx value with a JavaScript type forced (.js~num, .js~bool, ...). */
++::class JSTyped public
++::attribute kind get
++::attribute value get
++::method undefined class unguarded  -- the one .js~undefined
++  expose undefined
++  if var("UNDEFINED") then return undefined
++  undefined = self~new("U", "")
++  return undefined
++::method init
++  expose kind value
++  use strict arg kind, value
++::method string
++  expose kind value
++  if kind == "U" then return "undefined"
++  return value
+diff --git a/wasm/web/ooRexx-worker.js b/wasm/web/ooRexx-worker.js
+index 7de8c97..bd06285 100644
+--- a/wasm/web/ooRexx-worker.js
++++ b/wasm/web/ooRexx-worker.js
+@@ -41,16 +41,23 @@
+  * stops everything.  The page never blocks.
+  *
+  * page -> worker: {type:'run', scriptUrl, wasmModule, data, args, files, cwd,
+- *                  env, stdin, screen}   (stdin: null = interactive, else
++ *                  env, stdin, screen, js}   (stdin: null = interactive, else
+  *                  Uint8Array followed by end of file; screen: {width,
+- *                  height}, what JDOR's winScreenSize answers)
++ *                  height}, what JDOR's winScreenSize answers; js: the
++ *                  JavaScript realms granted to .JSObject, {worker, page})
+  *                 {type:'stdin', bytes}   {type:'eof'}
+  *                 {type:'jdor', event}   (the page moved or closed a JDOR
+  *                  window: {op:'moved', win, x, y} | {op:'closed', win})
++ *                 {type:'jsReply', id, bytes}   (the page realm's answer to a
++ *                  .JSObject request, see wasm/js-bridge.js)
++ *                 {type:'jsEvent', bytes}   (a .JSHandler's function was
++ *                  called in the page: an event for the interpreter)
+  * worker -> page: {type:'out'|'err', bytes, kind}   {type:'input', debug}
+  *                 (kind: 'plain' | 'trace' | 'error'; debug: a read of
+  *                 .debugInput, i.e. interactive trace)
+  *                 {type:'jdor', msg}   (JDOR windows, see wasm/web-jdor.js)
++ *                 {type:'js', msg}   (a .JSObject request for the page realm:
++ *                  {type:'call', id, op, bytes} | {type:'release', ids})
+  *                 {type:'exit', rc, files}   {type:'error', message}
+  */
+ 'use strict';
+@@ -77,6 +84,8 @@ self.onmessage = (ev) => {
+   const msg = ev.data;
+   if (msg.type === 'stdin' || msg.type === 'eof') { feed(msg); return; }
+   if (msg.type === 'jdor') { if (M && M.jdorEvent) M.jdorEvent(msg.event); return; }
++  if (msg.type === 'jsReply') { if (M && M.jsPageReply) M.jsPageReply(msg.id, msg.bytes); return; }
++  if (msg.type === 'jsEvent') { if (M && M.jsEvent) M.jsEvent(msg.bytes); return; }
+   if (msg.type !== 'run' || M) return;
+   cwd = msg.cwd || '/';
+   importScripts(msg.scriptUrl);
+@@ -87,6 +96,7 @@ self.onmessage = (ev) => {
+     orxFiles: msg.files || {},
+     orxCwd: cwd,
+     orxEnv: msg.env || {},
++    orxJs: msg.js || {},
+     mainScriptUrlOrBlob: msg.scriptUrl,
+     locateFile: (p) => base + p,
+     instantiateWasm(imports, receive) {
+@@ -99,6 +109,7 @@ self.onmessage = (ev) => {
+     orxErr: (b, kind) => post({ type: 'err', bytes: b, kind }, [b.buffer]),
+     orxStdinWanted: (debug) => post({ type: 'input', debug: !!debug }),
+     orxJdor: (m, transfer) => post({ type: 'jdor', msg: m }, transfer),
++    orxJsPage: (m, transfer) => post({ type: 'js', msg: m }, transfer),
+     print: (s) => post({ type: 'err', bytes: textBytes(s) }),
+     printErr: (s) => post({ type: 'err', bytes: textBytes(s) }),
+     orxReady: () => {
+diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
+index ce302cf..eb80101 100644
+--- a/wasm/web/ooRexx.js
++++ b/wasm/web/ooRexx.js
+@@ -86,11 +86,45 @@
+  *                  win, x, y}) and closes with run.jdorEvent({op:'closed', win}).
+  *   screen         {width, height} JDOR's winScreenSize (default: the
+  *                  window's inner size)
++ *   js             the JavaScript realms the Rexx program may use as objects
++ *                  (js.cls: .js, .JSObject), each off by default:
++ *                    worker: true   the Web Worker that runs it (.js): fetch
++ *                                   (with this site's cookies), IndexedDB,
++ *                                   WebSocket, eval, ...
++ *                    page: true     this page (.js~page, its window): the DOM,
++ *                                   and everything the page's scripts can do
++ *                  Each gives the program everything JavaScript can do there:
++ *                  grant them only to programs you trust as you trust your own
++ *                  scripts.  The page realm loads js-realm.js (next to
++ *                  ooRexx.js) on first use; the program's page objects live
++ *                  until the run ends, and the event handlers it set up
++ *                  (.js~handler) do nothing after it.
+  */
+ (function (global) {
+   'use strict';
+   const here = (global.document && document.currentScript && document.currentScript.src) || '';
+ 
++  // js-realm.js (orxJsRealm), loaded once, when a run grants the page realm
++  let realmScript = null;
++  function loadRealm(base) {
++    if (!realmScript) {
++      realmScript = new Promise((resolve, reject) => {
++        if (global.orxJsRealm) { resolve(); return; }
++        const s = document.createElement('script');
++        s.src = base + 'js-realm.js';
++        s.onload = () => resolve();
++        s.onerror = () => reject(new Error(base + 'js-realm.js could not be loaded'));
++        document.head.appendChild(s);
++      });
++    }
++    return realmScript;
++  }
++  // an error reply in the bridge's records (wasm/web-js.cpp), without js-realm.js
++  function errorBytes(msg) {
++    const e = new TextEncoder(), m = e.encode(msg);
++    return e.encode('E' + m.length + ':' + msg + 'N0:');
++  }
++
+   class OoRexx {
+     static async load(base) {
+       base = new URL(base || here.slice(0, here.lastIndexOf('/') + 1) || './', global.location.href).href;
+@@ -124,6 +158,20 @@
+       const t0 = performance.now();
+       let settle, finished = false;
+       const done = new Promise((resolve) => { settle = resolve; });
++      // the page realm of this run (.js~page), if granted
++      const pageGranted = !!(opts.js && opts.js.page);
++      let pageRealm = null;
++      const pageEvent = (bytes) => { if (!finished) worker.postMessage({ type: 'jsEvent', bytes }, [bytes.buffer]); };
++      const pageReady = pageGranted ? loadRealm(this.base).then(() => { pageRealm = global.orxJsRealm('page', pageEvent); }) : null;
++      const jsRequest = (m) => {
++        const reply = (bytes) => { if (!finished) worker.postMessage({ type: 'jsReply', id: m.id, bytes }, [bytes.buffer]); };
++        if (!pageReady) { if (m.type === 'call') reply(errorBytes('Error: the page realm was not granted')); return; }
++        pageReady.then(() => {
++          if (!pageRealm) return;
++          if (m.type === 'release') { for (const id of m.ids) pageRealm.release(id); return; }
++          Promise.resolve(pageRealm.handle(m.op, m.bytes)).then(reply);
++        }, (e) => { if (m.type === 'call') reply(errorBytes('Error: ' + e.message)); });
++      };
+       const end = (result) => {
+         if (finished) return;
+         finished = true;
+@@ -131,6 +179,8 @@
+         if (tailOut && opts.onOut) opts.onOut(tailOut);
+         if (tailErr && opts.onErr) opts.onErr(tailErr);
+         worker.terminate();
++        if (pageRealm) pageRealm.close();       // its handlers' functions do nothing now
++        pageRealm = null;
+         result.ms = performance.now() - t0;
+         settle(result);
+       };
+@@ -140,6 +190,7 @@
+           case 'out': if (opts.onOut) opts.onOut(outDec.decode(m.bytes, { stream: true }), m.kind || 'plain'); break;
+           case 'err': if (opts.onErr) opts.onErr(errDec.decode(m.bytes, { stream: true }), m.kind || 'plain'); break;
+           case 'input': if (opts.onInput) opts.onInput({ debug: !!m.debug }); break;
++          case 'js': jsRequest(m.msg); break;
+           case 'jdor': if (opts.onJdor) opts.onJdor(m.msg); else if (m.msg.bitmap) m.msg.bitmap.close(); break;
+           case 'exit': end({ rc: m.rc, files: m.files, stopped: false }); break;
+           case 'error': end({ rc: null, files: {}, stopped: false, error: m.message }); break;
+@@ -151,6 +202,7 @@
+         data: this.data.slice(0), args: opts.args || [], files, cwd, env: opts.env || {},
+         stdin: opts.stdin === undefined || opts.stdin === null ? null : bytes(opts.stdin),
+         screen: opts.screen || { width: global.innerWidth || 1280, height: global.innerHeight || 800 },
++        js: { worker: !!(opts.js && opts.js.worker), page: !!(opts.js && opts.js.page) },
+       });
+       return {
+         done,

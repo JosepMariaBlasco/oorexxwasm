@@ -1,0 +1,84 @@
+#!/usr/bin/env rexx
+-- Adapted for ooRexx/WASM: JDOR without BSF4ooRexx or Java (see NOTICE)
+/*
+   Name:    "1-150_JDOR_string_circle.rxj"
+   Invoke:  "rexx 1-150_JDOR_string_circle.rxj [?]"
+            "rexxj 1-150_JDOR_string_circle.rxj [?]" (Windows)
+            "rexxj.sh 1-150_JDOR_string_circle.rxj [?]" (Unix)
+
+            ? ... optional argument, if supplied displays processed JDOR commands
+
+   Purpose:  Demonstrates the use of the rotate command to draw strings in a circle.
+
+   Date:    2022-10-03
+
+   Author:  Rony G. Flatscher, WU Vienna
+
+   Changes: 2022-10-31 - changed "goto" to "moveTo"
+            2022-11-27 - change current directory to source directory to allow access to png files
+            2023-05-30 - added optional argument ? to show processed JDOR commands
+                         in canonical form
+                       - creates and defines JDOR handler explicitly
+
+   last change: Revision: $Revision: 951 $ $Author: orexx $ $Date: 2022-08-10 18:06:25 +0200 (Mi., 10 Aug 2022) $
+                (svn hint: use 'propset svn:keywords "Author Date Revision" filename')
+
+   license:
+
+    ------------------------ Apache Version 2.0 license -------------------------
+       Copyright (C) 2022-2023 Rony G. Flatscher
+
+       Licensed under the Apache License, Version 2.0 (the "License");
+       you may not use this file except in compliance with the License.
+       You may obtain a copy of the License at
+
+           http://www.apache.org/licenses/LICENSE-2.0
+
+       Unless required by applicable law or agreed to in writing, software
+       distributed under the License is distributed on an "AS IS" BASIS,
+       WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+       See the License for the specific language governing permissions and
+       limitations under the License.
+    -----------------------------------------------------------------------------
+*/
+   -- make sure we change to program's directory to refer to images with unqualified filenames
+parse source . . s      -- get full path to this program
+oldDir=directory(filespec('location',s))  -- change current dir to this program's source dir
+
+
+bShowCommands=(arg(1)="?") -- ? supplied as argument, then show JDOR commands in canonical form
+-- set default environment to JDOR
+if bShowCommands then
+   address jdor with output using (.stdout)  -- redirect output
+else
+   address jdor
+
+   -- now use JDOR commands
+winShow                 -- will implicitly create a 500x500 bitmap
+moveTo 450 450
+loadImage orx "oorexx_256.png"
+drawImage orx 50 50
+color blue
+moveTo 0 20
+drawString "Hello at:" .dateTime~new
+translate 250 250       -- move 0,0 to center
+color red
+fontstyle 3             -- bold=1 + italic=2
+fontsize 18             -- size=18
+font serif1 "Serif"     -- can be: "Dialog", "DialogInput", "Serif", "SansSerif", "Monospaced"
+drawString "ooRexx at:" .dateTime~new
+fontstyle 0             -- normal
+fontsize 14             -- size=14
+font mono "Monospaced"
+moveTo 10 0             -- currX=10, currY=0
+angle=30
+do i=2 to 360/angle
+   rotate angle         -- rotates entire image
+   drawString "ooRexx at:" .dateTime~new  -- now draw
+   if random(0,1) then do;  color red;    font serif1; end
+                  else do; "color gray"; "font mono" ; end
+end
+if \bShowCommands then say "'sleep 5' ..."
+sleep 5                 -- sleep for five seconds
+
+::requires "jdor.cls"   -- set up the JDOR environment

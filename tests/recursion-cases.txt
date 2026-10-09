@@ -1,0 +1,9 @@
+func	say f(100000); exit; f: procedure; arg n; if n=0 then return 0; return 1+f(n-1)
+call	call c 100000; say result; exit; c: procedure; arg n; if n=0 then return 0; call c n-1; return result+1
+method	say .r~new~m(100000); ::class r; ::method m; use arg n; if n=0 then return 0; return 1+self~m(n-1)
+interp	n=0; s='n=n+1; interpret s'; interpret s
+routine	say g(100000); ::routine g; use arg n; if n=0 then return 0; return 1+g(n-1)
+trapped	signal on syntax; say f(100000); exit; syntax: say "trapped" condition("o")~code; exit; f: procedure; arg n; if n=0 then return 0; return 1+f(n-1)
+depth	signal on syntax; d=0; call f; exit; syntax: say "depth" d; exit; f: procedure expose d; d=d+1; call f
+parser	e=copies("(",20000)"1"copies(")",20000); signal on syntax; interpret "x="e; say "parsed" x; exit; syntax: say "trapped" condition("o")~code
+thread	say .t~new~start("go")~result; ::class t; ::method go; signal on syntax; return f(100000); syntax: return "trapped in thread" condition("o")~code; ::routine f; use arg n; if n=0 then return 0; return 1+f(n-1)

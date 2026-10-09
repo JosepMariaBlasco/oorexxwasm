@@ -1,0 +1,8 @@
+<!doctype html><meta charset="utf-8"><pre id="output"></pre><div id="status">starting</div>
+<script>
+const output=document.getElementById('output'), status=document.getElementById('status');
+const prog=decodeURIComponent(location.hash.slice(1));
+var Module={arguments:['-e',prog],print:t=>output.textContent+=t+'\n',printErr:t=>output.textContent+='[stderr] '+t+'\n',
+ onExit:c=>status.textContent='exited rc='+c};
+window.onerror=(m)=>{status.textContent='JSERROR '+m};
+</script><script src="rexx.js"></script>

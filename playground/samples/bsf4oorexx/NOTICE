@@ -1,0 +1,13 @@
+These JDOR samples and bitmaps come from BSF4ooRexx850 by Rony G. Flatscher
+(https://sourceforge.net/projects/bsf4oorexx/, SVN branches/850/samples, r1125),
+under the Apache License 2.0 (LICENSE-Apache-2.0.txt).  The programs are
+converted from Latin-1 to UTF-8 and adapted to the JDOR environment of the
+ooRexx/WASM browser build (adapt-bsf4oorexx-samples.py): instead of creating
+a Java handler through BSF4ooRexx (.bsf~new, BsfCommandHandler, ::requires
+"BSF.CLS"), they say ::requires "jdor.cls", which defines ADDRESS JDOR, and
+bsf.createJavaArrayOf becomes .array~of; where a program opens the
+bitmap it saved with an operating system command (ADDRESS SYSTEM), a second
+JDOR environment shows it in a window instead.  Each adapted program says so in
+its second line (after the #! line).  The drawing commands are Rony's, unchanged.  In the
+playground they run on the browser build's JDOR command handler (no Java
+involved).

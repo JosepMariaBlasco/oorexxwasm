@@ -1,0 +1,43 @@
+<!doctype html><meta charset=utf-8><title>ooRexx test suite in the browser</title>
+<body><pre id=st>loading</pre>
+<script src="bin/ooRexx.js"></script>
+<script>
+// The official ooRexx test suite in the browser build: the test tree
+// (suite.idx + suite.bin, made by run.py) is written into each run's MEMFS
+// under /suite; every test group is one run, i.e. a fresh interpreter in its
+// own worker, so a crash or a hang loses only that group.
+let rexx = null, files = null;
+window.ready = (async () => {
+  rexx = await OoRexx.load('bin/');
+  const [idx, bin] = await Promise.all([fetch('suite.idx').then((r) => r.json()),
+                                        fetch('suite.bin').then((r) => r.arrayBuffer())]);
+  files = {};
+  for (const [p, off, len] of idx) files['/suite/' + p] = new Uint8Array(bin, off, len);
+  document.getElementById('st').textContent = 'ready: ' + idx.length + ' files';
+  return idx.length;
+})();
+// runGroup('ooRexx/base/bif', 'ABBREV', 300000) -> {rc, out, err, ms, stopped, error}
+window.runGroup = async (dir, name, timeoutMs, startMs) => {
+  await window.ready;
+  let out = '', err = '';
+  const t0 = performance.now();
+  // a copy per run: the worker takes ownership of what it is given
+  const f = {};
+  for (const [k, v] of Object.entries(files)) f[k] = v.slice();
+  const run = rexx.run({
+    args: ['testOORexx.rex', '-R', dir, '-f', name, '-U'], files: f, cwd: '/suite',
+    env: { PATH: '/suite:/suite/framework:/' }, stdin: '',
+    onOut: (t) => { out += t; }, onErr: (t) => { err += t; },
+  });
+  let stopped = false, starthang = false;
+  const timer = setTimeout(() => { stopped = true; run.stop(); }, timeoutMs);
+  // no output at all after startMs: the runtime did not start (seen in WebKit)
+  const watchdog = startMs ? setTimeout(() => { if (!out && !err) { starthang = true; run.stop(); } }, startMs) : null;
+  let res;
+  try { res = await run.done; } catch (e) { res = { rc: -1, error: String(e) }; }
+  clearTimeout(timer); if (watchdog) clearTimeout(watchdog);
+  return { rc: res.rc, out, err, ms: Math.round(performance.now() - t0), starthang,
+           stopped: !starthang && (stopped || !!res.stopped),
+           error: res.error ? String(res.error) : null };
+};
+</script>

@@ -1,0 +1,89 @@
+#!/usr/bin/env rexx
+-- Adapted for ooRexx/WASM: JDOR without BSF4ooRexx or Java (see NOTICE)
+/*
+   Name:    "1-180_JDOR_sandGlass.rxj"
+   Invoke:  "rexx 1-180_JDOR_sandGlass.rxj [?]"
+            "rexxj 1-180_JDOR_sandGlass.rxj [?]" (Windows)
+            "rexxj.sh 1-180_JDOR_sandGlass.rxj [?]" (Unix)
+
+            ? ... optional argument, if supplied displays processed JDOR commands
+
+   Purpose:  Demonstrates the use of JDOR for drawing a sand glass using different
+             colors and strokes.
+
+   Date:    2022-10-26
+
+   Author:  Rony G. Flatscher, WU Vienna
+
+   Changes: 2022-10-31 - changed "goto" to "moveTo"
+            2022-11-27 - change current directory to source directory to allow access to png files
+            2023-05-30 - added optional argument ? to show processed JDOR commands
+                         in canonical form
+                       - creates and defines JDOR handler explicitly
+
+   last change: Revision: $Revision: 951 $ $Author: orexx $ $Date: 2022-08-10 18:06:25 +0200 (Mi., 10 Aug 2022) $
+                (svn hint: use 'propset svn:keywords "Author Date Revision" filename')
+
+   license:
+
+    ------------------------ Apache Version 2.0 license -------------------------
+       Copyright (C) 2022-2023 Rony G. Flatscher
+
+       Licensed under the Apache License, Version 2.0 (the "License");
+       you may not use this file except in compliance with the License.
+       You may obtain a copy of the License at
+
+           http://www.apache.org/licenses/LICENSE-2.0
+
+       Unless required by applicable law or agreed to in writing, software
+       distributed under the License is distributed on an "AS IS" BASIS,
+       WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+       See the License for the specific language governing permissions and
+       limitations under the License.
+    -----------------------------------------------------------------------------
+*/
+   -- make sure we change current directory to program's directory
+parse source . . s      -- get full path to this program
+oldDir=directory(filespec('location',s))  -- change current dir to this program's source dir
+
+
+bShowCommands=(arg(1)="?") -- ? supplied as argument, then show JDOR commands in canonical form
+-- set default environment to JDOR
+if bShowCommands then
+   address jdor with output using (.stdout)  -- redirect output
+else
+   address jdor
+
+   -- now we can use JDOR commands
+stroke st5 5            -- define stroke of 5 pts, implicitly creates 500x500 image
+image                   -- fetch image
+say "--> (image) rc:         " rc
+say "--> (image) rc~toString:" rc~tostring
+stroke st3 3            -- define stroke of 3 pts
+stroke st1 1            -- define stroke of 1 pt
+color saddlebrown50 139 69 19 128   -- R,G,B,alpha=128 (~50 % transparency)
+color green20         0 255  0 51    -- R,G,B,alpha= 51 (~20 % transparency)
+strokes=st1, st3, st5                 -- Rexx array of stroke nick names
+colors =black, saddlebrown50, green20 -- Rexx array of color nick names
+width=400
+height=400
+newImage width height   -- create new bitmap, replaces implicitly created one
+image                   -- fetch image
+say "--> (image) rc:         " rc
+say "--> (image) rc~toString:" rc~tostring
+winShow                 -- show frame
+do i=1 to 3
+  m=50+(i-1)*50         -- margin
+  w = width-m
+  h = height-m
+  color  colors[i]
+  stroke strokes[i]
+  moveTo m m; drawLine w m
+  moveTo w m; drawLine m h
+  moveTo m h; drawLine w h
+  moveTo w h; drawLine m m
+end
+if \bShowCommands then say "'sleep 3' ..."
+sleep 3                 -- sleep for three seconds
+
+::requires "jdor.cls"   -- set up the JDOR environment

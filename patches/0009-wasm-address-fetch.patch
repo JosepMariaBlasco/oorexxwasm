@@ -1,0 +1,786 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
+Date: Wed, 7 Oct 2026 15:51:21 +0200
+Subject: [PATCH] wasm: ADDRESS FETCH, HTTP from classic Rexx (browser and
+ Node)
+
+wasm/web/fetch.cls, written in Rexx over cmdhandler.cls, js.cls (fetch())
+and json.cls: .CommandHandler~register("FETCH", ...).  Commands GET / HEAD
+/ DELETE url [INTO var], POST / PUT / PATCH url [[JSON] value] [INTO var]
+(a word, FROM var, JSON FROM var serialized by json.cls, or the WITH INPUT
+lines), SAVE url file, HEADER name [value] / HEADER RESET, TIMEOUT
+seconds, STATUS, HEADERS [name], JSON [path] (the body as json.cls reads
+it: Directory, Array, string, .JsonBoolean, .nil; a path picks one
+value).  Words split by wasm/web/commandwords.cls (.CommandWords:
+quotes, FROM, INTO anywhere; shared with DOM); values to
+INTO var (a stem gets lines), else to WITH OUTPUT (a body never to the
+console).  RC 0; the HTTP status, 1 (no such JSON path) or 2 (no JSON
+body) with ERROR; -1 network error, -3 wrong command, -4 SAVE cannot
+write, with FAILURE.  Copied into bin-node, preloaded in bin-web.  Test:
+wasm/tests/fetch.rex with fetch-server.py (44 checks), in
+qualify-node-cli.sh and web-api.py.  Not part of the posted RFE.
+---
+ wasm/build-node.sh             |   2 +-
+ wasm/build-web.sh              |   2 +
+ wasm/tests/fetch-server.py     |  36 ++++
+ wasm/tests/fetch.rex           | 138 +++++++++++++
+ wasm/tests/qualify-node-cli.sh |   7 +
+ wasm/tests/web-api.py          |   6 +
+ wasm/web/commandwords.cls      | 131 ++++++++++++
+ wasm/web/fetch.cls             | 353 +++++++++++++++++++++++++++++++++
+ 8 files changed, 674 insertions(+), 1 deletion(-)
+ create mode 100644 wasm/tests/fetch-server.py
+ create mode 100644 wasm/tests/fetch.rex
+ create mode 100644 wasm/web/commandwords.cls
+ create mode 100644 wasm/web/fetch.cls
+
+diff --git a/wasm/build-node.sh b/wasm/build-node.sh
+index 0e8b5a9..c43795e 100755
+--- a/wasm/build-node.sh
++++ b/wasm/build-node.sh
+@@ -79,7 +79,7 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+            csvStream/csvStream.cls dateparser/dateparser.cls cmdhandler/cmdhandler.cls; do
+   cp "$SRC/extensions/$cls" "$OUT/"
+ done
+-cp "$SRC/wasm/web/js.cls" "$OUT/"
++cp "$SRC/wasm/web/js.cls" "$SRC/wasm/web/commandwords.cls" "$SRC/wasm/web/fetch.cls" "$OUT/"
+ 
+ launcher() {   # launcher NAME [rexx.js option]
+   cat > "$OUT/$1" <<SH
+diff --git a/wasm/build-web.sh b/wasm/build-web.sh
+index 86995f9..2f58d6f 100755
+--- a/wasm/build-web.sh
++++ b/wasm/build-web.sh
+@@ -74,6 +74,8 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+ done
+ # JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
+ PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls"
++          "--preload-file" "$SRC/wasm/web/commandwords.cls@/usr/lib/ooRexx/commandwords.cls"
++          "--preload-file" "$SRC/wasm/web/fetch.cls@/usr/lib/ooRexx/fetch.cls"
+           "--preload-file" "$SRC/wasm/web/jdor.cls@/usr/lib/ooRexx/jdor.cls"
+           "--preload-file" "$SRC/wasm/web/BSF.CLS@/usr/lib/ooRexx/BSF.CLS"
+           "--preload-file" "$SRC/wasm/web/BSF.CLS@/usr/lib/ooRexx/bsf.cls")
+diff --git a/wasm/tests/fetch-server.py b/wasm/tests/fetch-server.py
+new file mode 100644
+index 0000000..1d84ec7
+--- /dev/null
++++ b/wasm/tests/fetch-server.py
+@@ -0,0 +1,36 @@
++# ADDRESS FETCH test server (wasm/tests/fetch.rex): python3 fetch-server.py PORT
++import sys, time, json
++from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
++class H(BaseHTTPRequestHandler):
++    def log_message(self, *a): pass
++    def send(self, code, body, ctype="text/plain", extra=()):
++        b = body if isinstance(body, bytes) else body.encode()
++        self.send_response(code); self.send_header("Content-Type", ctype)
++        self.send_header("Content-Length", str(len(b))); self.send_header("Access-Control-Allow-Origin", "*"); self.send_header("Access-Control-Expose-Headers", "X-Answer")
++        for k, v in extra: self.send_header(k, v)
++        self.end_headers()
++        if self.command != "HEAD":
++            try: self.wfile.write(b)
++            except (BrokenPipeError, ConnectionResetError): pass   # the client gave up (TIMEOUT)
++    def route(self):
++        n = int(self.headers.get("Content-Length") or 0)
++        body = self.rfile.read(n).decode() if n else ""
++        p = self.path
++        if p == "/data.json":
++            self.send(200, json.dumps({"items": [{"name": "uno"}, {"name": "dos", "tags": ["a", "b"]}],
++                "count": 2, "ok": True, "none": None, "Mixed Case": "yes"}), "application/json", [("X-Answer", "42")])
++        elif p == "/text": self.send(200, "l1\r\nl2\r\n")
++        elif p == "/echo": self.send(200, self.command + "|" + (self.headers.get("X-Test") or "-") + "|" + body)
++        elif p == "/ctype": self.send(200, (self.headers.get("Content-Type") or "-") + "|" + body)
++        elif p == "/slow": time.sleep(3); self.send(200, "late")
++        elif p == "/bin": self.send(200, bytes(range(256)), "application/octet-stream")
++        else: self.send(404, "not here")
++    def do_OPTIONS(self):
++        self.send_response(204)
++        for k, v in (("Access-Control-Allow-Origin", "*"), ("Access-Control-Allow-Headers", "*"),
++                     ("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, PATCH, DELETE"),
++                     ("Access-Control-Expose-Headers", "X-Answer")):
++            self.send_header(k, v)
++        self.end_headers()
++    do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = do_HEAD = route
++ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+diff --git a/wasm/tests/fetch.rex b/wasm/tests/fetch.rex
+new file mode 100644
+index 0000000..01451f3
+--- /dev/null
++++ b/wasm/tests/fetch.rex
+@@ -0,0 +1,138 @@
++/* fetch.rex: tests of ADDRESS FETCH (wasm/web/fetch.cls), Node and browser.  */
++/* Needs the server wasm/tests/fetch-server.py:                              */
++/*   python3 fetch-server.py 8123 &  rexx fetch.rex http://127.0.0.1:8123     */
++/* Prints one line per check; exits 1 if any fails.                          */
++parse arg base
++if base == "" then base = "http://127.0.0.1:8123"
++.local~ok = 0; .local~bad = 0
++address fetch
++
++address fetch "GET" base"/data.json" with output stem body.
++call check "GET: RC 0, body to WITH OUTPUT", rc == 0 & body.0 == 1 & body.1~pos('"count"') > 0
++"GET" base"/data.json INTO page"
++call check "GET INTO var: the body", rc == 0 & page~pos('"count"') > 0
++"GET INTO page2" base"/data.json"
++call check "INTO anywhere: before the URL", rc == 0 & page2 == page
++"STATUS INTO s";           call check "STATUS INTO", rc == 0 & s == 200
++"JSON INTO data"
++call check "JSON INTO: a Directory", rc == 0 & data~isA(.Directory) & data["count"] == 2
++call check "JSON INTO: arrays are Arrays", data["items"]~isA(.Array) & data["items"][2]["name"] == "dos"
++call check "JSON INTO: booleans and null", data["ok"] == .json~true & data["none"] == .nil & data~hasIndex("none")
++"JSON items.2.name INTO v";   call check "JSON path INTO, 1-based index", v == "dos"
++"JSON items.2.tags.1 INTO v"; call check "JSON nested array", v == "a"
++"JSON items INTO v";          call check "JSON path INTO: an Array", v~isA(.Array) & v~items == 2
++"JSON 'Mixed Case' INTO v";   call check "JSON quoted path, case kept", v == "yes"
++"JSON ok INTO v";             call check "JSON true: .JsonBoolean", v == .json~true
++names = ""
++do item over data["items"]; names = names item["name"]; end
++call check "DO OVER a JSON array", names == " uno dos"
++address fetch "JSON items.2.name" with output stem o.
++call check "JSON without INTO: to WITH OUTPUT", o.0 == 1 & o.1 == "dos"
++address fetch "JSON items.2" with output stem o.
++call check "JSON without INTO: objects as JSON text", o.1 == '{"name":"dos","tags":["a","b"]}'
++address fetch "JSON none" with output stem o.
++call check "JSON without INTO: null", o.1 == "null"
++"HEADERS X-Answer INTO v";   call check "HEADERS name INTO", v == 42
++"HEADERS X-Nothing INTO v";  call check "HEADERS absent name: empty", rc == 0 & v == ""
++"HEADERS INTO h"
++call check "HEADERS INTO: a StringTable", h~isA(.StringTable) & h["x-answer"] == 42
++address fetch "HEADERS" with output stem h.
++found = 0
++do i = 1 to h.0; if h.i~caselessPos("x-answer: 42") == 1 then found = 1; end
++call check "HEADERS to WITH OUTPUT", found
++"HEADERS INTO h."
++found = 0
++do i = 1 to h.0; if h.i~caselessPos("x-answer: 42") == 1 then found = 1; end
++call check "HEADERS INTO stem", found
++
++address fetch "GET" base"/text" with output stem t.
++call check "CRLF body: lines without CR", t.0 == 2 & t.1 == "l1" & t.2 == "l2"
++t.9 = "stale"
++"GET" base"/text INTO t."
++call check "GET INTO stem: lines, stem dropped first", t.0 == 2 & t.2 == "l2" & t.9 == "T.9"
++
++in.1 = "line one"; in.2 = "line two"; in.0 = 2
++"HEADER X-Test hello"
++address fetch "POST" base"/echo" with input stem in. output stem e.
++call check "POST: WITH INPUT body, request header", e.1 == "POST|hello|line one" & e.2 == "line two"
++"HEADER X-Test"
++address fetch "PUT" base"/echo" with input stem in. output stem e.
++call check "PUT; HEADER name drops it", e.1 == "PUT|-|line one"
++"HEADER X-Test 'two words'"
++"POST" base"/echo 'a body' INTO e"
++call check "POST quoted body; quoted header value", e == "POST|two words|a body"
++msg = "from a variable"
++"PATCH" base"/echo FROM msg INTO e"
++call check "PATCH FROM var", e == "PATCH|two words|from a variable"
++"HEADER RESET"
++d = .directory~new; d["name"] = "Ana"; d["n"] = 3
++"POST" base"/ctype JSON FROM d INTO e"
++call check "POST JSON FROM: json.cls text, Content-Type", e == 'application/json|{"n":3,"name":"Ana"}'
++"HEADER Content-Type 'application/vnd.x+json'"
++"POST" base"/ctype JSON FROM d INTO e"
++call check "POST JSON FROM: a HEADER Content-Type wins", e~left(23) == "application/vnd.x+json|"
++"HEADER RESET"
++address fetch "DELETE" base"/echo" with output stem e.
++call check "DELETE; HEADER RESET", e.1 == "DELETE|-|"
++"POST" base"/ctype INTO e JSON FROM d"
++call check "INTO anywhere: before JSON FROM", e == 'application/json|{"n":3,"name":"Ana"}'
++"POST" base"/echo 'INTO' INTO e"
++call check "a quoted INTO is a word, not a keyword", e == "POST|-|INTO"
++
++call on error name onError
++errorRc = ""
++address fetch "GET" base"/nope" with output stem n.
++call check "404: RC and ERROR", rc == 404 & errorRc == 404 & n.1 == "not here"
++
++errorRc = ""
++address fetch "JSON x" with error stem err.
++call check "JSON on a non-JSON body: RC 2, ERROR", rc == 2 & errorRc == 2 & err.1~pos("not JSON") > 0
++"GET" base"/data.json"
++errorRc = ""
++address fetch "JSON items.7.name" with error stem err.
++call check "JSON missing path: RC 1, ERROR, a message", rc == 1 & errorRc == 1 & err.1~pos("items.7") > 0
++call off error
++
++call on failure name onFailure
++failureRc = ""
++address fetch "GET http://127.0.0.1:1/x" with error stem err.
++call check "network error: RC -1, FAILURE, reason", rc == -1 & failureRc == -1 & err.0 == 1
++"TIMEOUT 0.5"
++address fetch "GET" base"/slow" with error stem err.
++call check "TIMEOUT", rc == -1 & err.0 == 1
++"TIMEOUT 0"
++address fetch "FROB x" with error stem err.
++call check "unknown command: RC -3, FAILURE", rc == -3 & err.1~pos("FROB") > 0
++address fetch "GET" base"/x extra" with error stem err.
++call check "extra words: RC -3", rc == -3 & err.1~pos("extra") > 0
++address fetch 'GET "unclosed' with error stem err.
++call check "quote not closed: RC -3", rc == -3 & err.1~pos("not closed") > 0
++address fetch "STATUS INTO a INTO b" with error stem err.
++call check "two INTO: RC -3", rc == -3
++drop nothing
++address fetch "POST" base"/echo FROM nothing" with error stem err.
++call check "FROM an unset variable: RC -3", rc == -3
++call off failure
++
++file = "fetch-test.bin"
++"SAVE" base"/bin" file
++data = charin(file, 1, 300); call stream file, "c", "close"
++call check "SAVE: bytes to a file", rc == 0 & data == xrange("00"x, "ff"x)
++call SysFileDelete file
++address fetch "HEAD" base"/data.json" with output stem hd.
++call check "HEAD: no body", rc == 0 & hd.0 == 0
++
++say
++say .ok "passed," .bad "failed"
++exit .bad > 0
++
++onError:   errorRc = rc; return
++onFailure: failureRc = rc; return
++
++check: procedure
++  use arg name, ok
++  if ok then do; .local~ok += 1; say "ok   " name; end
++  else do; .local~bad += 1; say "FAIL " name; end
++  return
++
++::requires "fetch.cls"
+diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
+index 58bdb5a..3f0baad 100755
+--- a/wasm/tests/qualify-node-cli.sh
++++ b/wasm/tests/qualify-node-cli.sh
+@@ -278,6 +278,13 @@ check "JavaScript events: HTTP server in Rexx, threads, release, exit" '^rexx an
+ check "command handlers in Rexx (cmdhandler.cls)" '^[0-9]+ passed, 0 failed$' '!^FAIL ' -- \
+   "$X '$(cd "$(dirname "$0")" && pwd)/cmdhandler.rex'"
+ 
++# --- ADDRESS FETCH (wasm/web/fetch.cls over cmdhandler.cls and js.cls), portable test
++"$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
++FETCH_SRV=$!; sleep 0.5
++check "ADDRESS FETCH: requests, JSON, headers, errors, SAVE" '^44 passed, 0 failed$' '!^FAIL ' -- \
++  "$X '$(cd "$(dirname "$0")" && pwd)/fetch.rex' http://127.0.0.1:50125"
++kill $FETCH_SRV 2>/dev/null
++
+ echo
+ if (( ${#FAILED[@]} )); then
+   echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
+diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
+index 90643a8..da8cd5e 100755
+--- a/wasm/tests/web-api.py
++++ b/wasm/tests/web-api.py
+@@ -64,6 +64,9 @@ class H(SimpleHTTPRequestHandler):
+ ThreadingHTTPServer(('127.0.0.1',8001),H).serve_forever()
+ """])
+ import atexit; atexit.register(srv.terminate)
++# ADDRESS FETCH's test server (another origin: CORS as on the web)
++fsrv = subprocess.Popen([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "fetch-server.py"), "8124"])
++atexit.register(fsrv.terminate)
+ time.sleep(0.7)
+ 
+ CASES = [
+@@ -165,6 +168,9 @@ CASES = [
+                  'shape u area a; areaAdd u b; shapeBounds u; say rc\nshape i area a; areaIntersect i b; shapeBounds i; say rc\n'
+                  '::requires "jdor.cls"', {},
+      lambda r: r["out"] == "0.0 0.0 15.0 10.0\n5.0 0.0 5.0 10.0\n"),
++  # ADDRESS FETCH (wasm/web/fetch.cls over cmdhandler.cls and js.cls): the portable test
++  ("fetch", open(f"{SRC}/wasm/tests/fetch.rex").read(), {"js": {"worker": True}, "args": ["http://127.0.0.1:8124"]},
++     lambda r: "44 passed, 0 failed" in r["out"] and r["rc"] == 0),
+   # .JSObject: JavaScript objects as Rexx objects (wasm/web-js.cpp, wasm/js-bridge.js, wasm/web/js.cls)
+   ("js not granted", 'say .js~Math~max(1, 2)\n::requires "js.cls"', {},
+      lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
+diff --git a/wasm/web/commandwords.cls b/wasm/web/commandwords.cls
+new file mode 100644
+index 0000000..6ee0c5f
+--- /dev/null
++++ b/wasm/web/commandwords.cls
+@@ -0,0 +1,131 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:          */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*
++ * commandwords.cls: how ADDRESS FETCH and ADDRESS DOM (fetch.cls, dom.cls)
++ * split their commands.  Words are separated by blanks; a word in quotes
++ * ("..." or '...', the quote doubled inside) may hold blanks and is never
++ * taken for a keyword; "INTO name", anywhere, names the variable for the
++ * command's value; "FROM name" takes a value from a variable.
++ *
++ *    w = .CommandWords~new('TEXT "Hello, world" INTO x')
++ *    if w~error \== .nil then ...      -- e.g. a quote not closed
++ *    verb = w~take~upper               -- TEXT (w~peek: without taking it)
++ *    into = w~takeInto                 -- "x": "INTO name", anywhere, or .nil
++ *    v = w~takeValue(context)          -- the next word, or with "FROM name"
++ *                                      -- that variable's value (.nil: unset;
++ *                                      -- context: a cmdhandler.cls context)
++ *    w~items, w[i], w~quoted(i), w~isKeyword(i, "FROM"), w~rest (an Array)
++ */
++
++::class CommandWords public
++
++::attribute error get                   -- .nil, or why the command cannot be split
++
++::method init
++  expose words quoted error
++  use strict arg command
++  words = .array~new; quoted = .array~new; error = .nil
++  command = command~string
++  i = 1; n = command~length
++  do forever
++    i = command~verify(" " || "09"x, , i)    -- the next word's start
++    if i = 0 then leave
++    q = command~subchar(i)
++    if q == '"' | q == "'" then do
++      start = i; word = ""; j = i + 1
++      do forever
++        k = command~pos(q, j)
++        if k = 0 then do
++          error = "a quote" q "is not closed:" command~substr(i)
++          return
++        end
++        word ||= command~substr(j, k - j)
++        if command~subchar(k + 1) == q then do     -- a doubled quote
++          word ||= q; j = k + 2; iterate
++        end
++        leave
++      end
++      i = k + 1
++      if i <= n & (" " || "09"x)~pos(command~subchar(i)) = 0 then do
++        error = "a quoted word must end at a blank:" command~substr(start)
++        return
++      end
++      words~append(word); quoted~append(.true)
++    end
++    else do
++      k = command~verify(" " || "09"x, "M", i)
++      if k = 0 then k = n + 1
++      words~append(command~substr(i, k - i)); quoted~append(.false)
++      i = k
++    end
++  end
++
++::method items
++  expose words
++  return words~items
++
++::method "[]"
++  expose words
++  use strict arg i
++  return words[i]
++
++::method quoted
++  expose quoted
++  use strict arg i
++  return quoted[i] == .true
++
++-- word i is this keyword (unquoted, any case)
++::method isKeyword
++  expose words quoted
++  use strict arg i, keyword
++  if i < 1 | i > words~items then return .false
++  return \quoted[i] & words[i]~upper == keyword~upper
++
++-- the first word, taken out (.nil when there is none)
++::method take
++  expose words quoted
++  if words~items = 0 then return .nil
++  quoted~delete(1)
++  return words~delete(1)
++
++::method peek
++  expose words
++  if words~items = 0 then return .nil
++  return words[1]
++
++-- "INTO name", anywhere: the name, both words taken out; else .nil (only
++-- the first one: a second "INTO name" stays, for the handler to refuse)
++::method takeInto
++  expose words quoted
++  do i = 1 to words~items - 1
++    if \self~isKeyword(i, "INTO") then iterate
++    if quoted[i + 1] then iterate
++    name = words[i + 1]
++    words~delete(i + 1); quoted~delete(i + 1); words~delete(i); quoted~delete(i)
++    return name
++  end
++  return .nil
++
++-- the next value: a word, or with "FROM name" that variable's value (.nil
++-- when it has none); .nil when there are no words left
++::method takeValue
++  expose words
++  use strict arg context
++  if self~isKeyword(1, "FROM") & words~items >= 2 & \self~quoted(2) then do
++    self~take
++    return context~getVar(self~take)
++  end
++  return self~take
++
++-- the words left, an Array
++::method rest
++  expose words
++  return words~copy
+diff --git a/wasm/web/fetch.cls b/wasm/web/fetch.cls
+new file mode 100644
+index 0000000..b0a71d9
+--- /dev/null
++++ b/wasm/web/fetch.cls
+@@ -0,0 +1,353 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:          */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*
++ * fetch.cls: ADDRESS FETCH, HTTP from classic Rexx (ooRexx/WASM, browser and
++ * Node).  Written in Rexx on top of three pieces: cmdhandler.cls (a command
++ * environment written in Rexx), js.cls (JavaScript's fetch()) and json.cls
++ * (ooRexx's JSON reader and writer); commands are split by commandwords.cls,
++ * shared with dom.cls.
++ *
++ *    ::requires "fetch.cls"
++ *    address fetch
++ *    "HEADER Accept application/json"
++ *    "GET https://api.example.com/items"
++ *    if rc \= 0 then say "HTTP status" rc
++ *    "JSON INTO data"                            -- the body as ooRexx objects
++ *    do item over data["items"]; say item["name"]; end
++ *    "JSON items.1.name INTO first"              -- or one value, by its path
++ *
++ * Commands: words separated by blanks, case does not matter; a word in
++ * quotes ("..." or '...', the quote doubled inside) may hold blanks.  Where
++ * a value is expected, FROM name takes it from the variable name.  A value
++ * a command gives goes to the variable named by INTO name, anywhere after
++ * the command's name (a stem, INTO name., gets lines as EXECIO does: name.0
++ * and name.1 ...); without INTO it is written to WITH OUTPUT, or to the
++ * console.
++ *
++ *   GET url, HEAD url, DELETE url       a request; the response body (text)
++ *     [INTO var]                        to var, or to WITH OUTPUT as lines;
++ *                                       never to the console: unasked, a
++ *                                       body would flood it (it is kept, for
++ *                                       JSON, anyway)
++ *   POST url, PUT url, PATCH url        the same, sending a body: the value
++ *     [[JSON] value] [INTO var]         given (a word, or FROM var), or else
++ *                                       the WITH INPUT lines; JSON FROM var
++ *                                       sends var's objects as JSON text
++ *                                       (json.cls; Content-Type
++ *                                       application/json unless a HEADER
++ *                                       set one)
++ *   SAVE url file                       GET, the body (bytes) to a file
++ *   HEADER name value                   a request header for every request
++ *                                       from now on; HEADER name drops it;
++ *                                       HEADER RESET drops them all
++ *   TIMEOUT seconds                     give up on requests after this long
++ *                                       (0: never, the default)
++ *   STATUS [INTO var]                   the last response's status
++ *   HEADERS [INTO var]                  the last response's headers: a
++ *                                       StringTable (or "name: value" lines
++ *                                       for a stem and WITH OUTPUT)
++ *   HEADERS name [INTO var]             one of them ("" when it is not there)
++ *   JSON [path] [INTO var]              the last response body, read as JSON
++ *                                       by json.cls: a Directory for an
++ *                                       object, an Array for an array, a
++ *                                       string for a string or a number,
++ *                                       .JsonBoolean, .nil for null; a path
++ *                                       (names and 1-based indexes separated
++ *                                       by dots, results.1.name) picks one
++ *                                       value of it.  Without INTO: strings
++ *                                       as they are, the rest as JSON text
++ *
++ * Redirection is part of the ADDRESS instruction, so a command that uses it
++ * names the environment: address fetch "POST" url with input stem body.
++ * (a bare '"POST" url with input stem body.' would be a concatenation).
++ *
++ * RC: 0 when all went well.  Positive, and the ERROR condition, when the
++ * command was right but the answer is not the expected one: the HTTP status
++ * of a request that did not get a 2xx; 1 a JSON path that is not in the
++ * body; 2 no body to read as JSON, or one that is not JSON, or no response
++ * yet (HEADERS).  Negative, and the FAILURE condition: -1 a network error
++ * (no answer, CORS refusal, timeout; the reason on WITH ERROR or the
++ * console); -3 an unknown command or wrong arguments; -4 SAVE cannot write
++ * its file.  SIGNAL ON ERROR / CALL ON FAILURE work as for any command.
++ *
++ * In the browser, requests are made by the Web Worker that runs ooRexx (the
++ * page must grant it: js: {worker: true}); the page's origin rules (CORS)
++ * apply, and its cookies go with requests to its own site.
++ */
++.CommandHandler~register("FETCH", .FetchHandler~new)
++
++::requires "cmdhandler.cls"
++::requires "commandwords.cls"
++::requires "js.cls"
++::requires "json.cls"
++
++
++::class FetchHandler public subclass CommandHandler
++
++::method init
++  expose headers timeout response text json
++  headers = .stringTable~new
++  timeout = 0
++  response = .nil; text = .nil; json = .nil
++
++::method command
++  use strict arg command, context
++  words = .CommandWords~new(command)
++  if words~error \== .nil then return self~bad(context, words~error)
++  verb = words~take
++  if verb == .nil then return self~bad(context, "a command is needed")
++  verb = verb~upper
++  into = words~takeInto
++  select
++    when wordPos(verb, "GET HEAD DELETE POST PUT PATCH") > 0 then
++      return self~request(verb, words, into, context)
++    when verb == "SAVE"    then return self~save(words, into, context)
++    when verb == "HEADER"  then return self~header(words, into, context)
++    when verb == "TIMEOUT" then return self~setTimeout(words, into, context)
++    when verb == "STATUS"  then return self~status(words, into, context)
++    when verb == "HEADERS" then return self~responseHeaders(words, into, context)
++    when verb == "JSON"    then return self~jsonValue(words, into, context)
++    otherwise return self~bad(context, "unknown command" verb)
++  end
++
++-- wrong command: the reason to the error output, FAILURE -3
++::method bad private
++  use strict arg context, why
++  context~error("FETCH:" why)
++  return context~raiseFailure(-3)
++
++-- a value for INTO var, or to the output
++::method give private
++  use strict arg context, into, value
++  if into == .nil then do
++    if value~isA(.String) then context~output(value)
++    else if value~isA(.StringTable) then do       -- headers
++      lines = .array~new
++      do name over value~allIndexes~sortWith(.caselessComparator~new)
++        lines~append(name": "value[name])
++      end
++      context~output(lines)
++    end
++    else context~output(.json~toJSON(value))
++    return 0
++  end
++  if into~right(1) == "." then do                 -- a stem: lines, as EXECIO
++    if value~isA(.String) then lines = value~makeArray("0a"x)
++    else if value~isA(.StringTable) then do
++      lines = .array~new
++      do name over value~allIndexes~sortWith(.caselessComparator~new)
++        lines~append(name": "value[name])
++      end
++    end
++    else lines = value~makeArray
++    context~dropVar(into)
++    do i = 1 to lines~items
++      context~setVar(into || i, lines[i])
++    end
++    context~setVar(into || "0", lines~items)
++    return 0
++  end
++  context~setVar(into, value)
++  return 0
++
++-- one request
++::method request private
++  expose response text json headers
++  use strict arg method, words, into, context
++  url = words~take
++  if url == .nil then return self~bad(context, method": a URL is needed")
++  body = .nil; type = .nil
++  if wordPos(method, "POST PUT PATCH") > 0 then do
++    if words~isKeyword(1, "JSON") then do
++      words~take
++      if words~items = 0 then return self~bad(context, method "JSON: a value is needed (FROM var)")
++      data = words~takeValue(context)
++      body = .json~toJSON(data)
++      type = "application/json"
++    end
++    else if words~items > 0 then do
++      body = words~takeValue(context)
++      if body == .nil then return self~bad(context, method": the variable has no value")
++    end
++    else if context~isRedirected("Input") then
++      body = context~lines~makeString("L", "0a"x)
++  end
++  if words~items > 0 then return self~bad(context, method": unexpected" words~rest~makeString("L", " "))
++  if \self~send(method, url, body, type, context) then return context~raiseFailure(-1)
++  text = .nil; json = .nil
++  if method \== "HEAD" then do
++    text = response~text~await
++    lines = text~makeArray("0a"x)
++    do i = 1 to lines~items                  -- CRLF bodies: drop the CRs
++      if lines[i]~right(1) == "0d"x then lines[i] = lines[i]~left(lines[i]~length - 1)
++    end
++    if into \== .nil then do
++      if into~right(1) == "." then self~give(context, into, lines)
++      else self~give(context, into, text)
++    end
++    -- only to WITH OUTPUT: unasked, a body would flood the console
++    else if lines~items > 0 & context~isRedirected("Output") then context~output(lines)
++  end
++  else if into \== .nil then return self~bad(context, "HEAD: no body for INTO")
++  return self~result(context)
++
++-- GET to a file, as bytes
++::method save private
++  expose response text json
++  use strict arg words, into, context
++  url = words~take; file = words~take
++  if url == .nil | file == .nil | words~items > 0 | into \== .nil then
++    return self~bad(context, "SAVE: a URL and a file name are needed")
++  if \self~send("GET", url, .nil, .nil, context) then return context~raiseFailure(-1)
++  text = .nil; json = .nil
++  bytes = response~arrayBuffer~await~byteString
++  s = .stream~new(file)
++  if s~open("write replace") \== "READY:" then do
++    context~error("FETCH SAVE: cannot write" file)
++    return context~raiseFailure(-4)
++  end
++  s~charout(bytes)
++  s~close
++  return self~result(context)
++
++-- fetch(); .false (and the reason to the error output) on a network error
++::method send private
++  expose headers timeout response
++  use strict arg method, url, body, type, context
++  init = .directory~new
++  init["method"] = method                  -- JavaScript names: exact case
++  h = .js~newObject(.directory~new)
++  hasType = .false
++  do name over headers
++    h[name] = headers[name]
++    if name~caselessEquals("Content-Type") then hasType = .true
++  end
++  if type \== .nil & \hasType then h["Content-Type"] = type
++  init["headers"] = h
++  if body \== .nil then init["body"] = body
++  if timeout > 0 then init["signal"] = .js~AbortSignal~timeout(.js~num(timeout * 1000))
++  signal on syntax name failed
++  response = .js~fetch(url, .js~newObject(init))~await
++  return .true
++failed:
++  response = .nil
++  reason = condition("O")~message
++  parse var reason "JavaScript error: " js
++  if js \== "" then reason = js
++  context~error("FETCH" method url":" reason)
++  return .false
++
++-- RC for the last response: 0 for 2xx, else the status (and ERROR)
++::method result private
++  expose response
++  use strict arg context
++  status = response~status
++  if status >= 200 & status <= 299 then return 0
++  return context~raiseError(status)
++
++::method header private
++  expose headers
++  use strict arg words, into, context
++  name = words~take
++  if name == .nil | into \== .nil then return self~bad(context, "HEADER: a header name is needed")
++  if words~items = 0 then do
++    if name~upper == "RESET" & \words~quoted(1) then headers~empty
++    else headers~remove(name)
++    return 0
++  end
++  value = words~takeValue(context)
++  if value == .nil then return self~bad(context, "HEADER" name": the variable has no value")
++  if words~items > 0 then return self~bad(context, "HEADER" name": one value (in quotes if it has blanks)")
++  headers[name] = value
++  return 0
++
++::method setTimeout private
++  expose timeout
++  use strict arg words, into, context
++  seconds = words~take
++  if seconds == .nil | words~items > 0 | into \== .nil then signal wrong
++  if \seconds~dataType("N") then signal wrong
++  if seconds < 0 then signal wrong
++  timeout = seconds
++  return 0
++wrong:
++  return self~bad(context, "TIMEOUT: seconds expected")
++
++::method status private
++  expose response
++  use strict arg words, into, context
++  if words~items > 0 then return self~bad(context, "STATUS takes no arguments")
++  if response == .nil then return self~give(context, into, 0)
++  return self~give(context, into, response~status)
++
++::method responseHeaders private
++  expose response
++  use strict arg words, into, context
++  name = words~take
++  if words~items > 0 then return self~bad(context, "HEADERS [name]")
++  if response == .nil then do
++    context~error("FETCH HEADERS: no response yet")
++    return context~raiseError(2)
++  end
++  if name \== .nil then do
++    value = response~headers~get(name)
++    if value == .nil then value = ""
++    return self~give(context, into, value)
++  end
++  all = .stringTable~new
++  do pair over response~headers            -- [name, value] pairs, as for...of
++    all[pair[0]] = pair[1]
++  end
++  return self~give(context, into, all)
++
++-- the last body as JSON (json.cls), or one value of it by its path
++::method jsonValue private
++  expose text json
++  use strict arg words, into, context
++  path = words~take
++  if words~items > 0 then return self~bad(context, "JSON [path] [INTO var]")
++  if json == .nil then do
++    if text == .nil then do
++      context~error("FETCH JSON: no response body")
++      return context~raiseError(2)
++    end
++    signal on syntax name notJson
++    json = .array~of(.json~new~fromJSON(text))   -- in an Array: null is .nil
++    signal off syntax
++  end
++  value = json[1]
++  where = ""
++  if path \== .nil then do step over path~makeArray(".")
++    if step == "" then iterate
++    where = where"."step
++    if value~isA(.Array) then do
++      if \step~dataType("W") then signal missing
++      if step < 1 | step > value~items then signal missing
++      value = value[step]
++    end
++    else if value~isA(.Directory) then do
++      if \value~hasIndex(step) then signal missing
++      value = value[step]
++    end
++    else signal missing
++  end
++  if into == .nil then do
++    if value == .nil then value = "null"
++    else if value~isA(.JsonBoolean) then value = value~makeJSON
++    else if \value~isA(.String) then value = .json~toJSON(value)
++  end
++  return self~give(context, into, value)
++missing:
++  context~error("FETCH JSON: no" where~substr(2) "in the response")
++  return context~raiseError(1)
++notJson:
++  context~error("FETCH JSON: the response body is not JSON")
++  return context~raiseError(2)

@@ -1,0 +1,1542 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>ooRexx Playground</title>
+<meta name="description" content="The ooRexx interpreter compiled to WebAssembly: write ooRexx and run it in your browser, with threads and interactive standard input.">
+<link rel="stylesheet" href="fonts/fonts.css">
+<link rel="stylesheet" href="rexx-parser/rexx-light.css" data-rexx-style="light">
+<link rel="stylesheet" href="rexx-parser/rexx-dark.css" data-rexx-style="dark">
+<style>
+:root {
+  --ground: #eef1f4;
+  --panel: #f8fafb;
+  --ink: #1b2430;
+  --muted: #5b6776;
+  --line: #c9d1da;
+  --accent: #b8432f;
+  --accent-ink: #ffffff;
+  --trace: #8a6200;
+  --err: #b8432f;
+  --ok: #2f6b45;
+  --input: #1f5f8b;
+  --gutter: #8994a1;
+  --code-bg: #ffffff;
+  /* ANSI 16 colors, readable on the light console */
+  --a0: #1b2430; --a1: #b3261e; --a2: #2a7a36; --a3: #8a6200; --a4: #1f5fad; --a5: #8e3fa0; --a6: #0f7c86; --a7: #8994a1;
+  --a8: #5b6776; --a9: #d93a2b; --a10: #3a9a46; --a11: #a87b00; --a12: #2f78d0; --a13: #b04fc4; --a14: #1597a3; --a15: #b5bec8;
+  /* console streams (the Settings panel overrides them, per theme) */
+  --c-out: var(--ink); --c-err: #c62828; --c-trace: var(--trace); --c-in: var(--input); --c-dbg: #7b3fb5;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  --sans: "IBM Plex Sans Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #12171d; --panel: #181e26; --ink: #dfe5ec; --muted: #93a0ae;
+    --line: #2c3540; --accent: #e8836a; --accent-ink: #1a0f0b; --trace: #d9a93a;
+    --err: #ef8a73; --ok: #7cc49a; --input: #7fb8e0; --gutter: #5f6b78; --code-bg: #0f1419;
+    --a0: #4a5562; --a1: #ef6f5e; --a2: #7cc49a; --a3: #d9a93a; --a4: #6fa8dc; --a5: #c58fd6; --a6: #5cc3c9; --a7: #dfe5ec;
+    --a8: #7d8896; --a9: #ff8a7a; --a10: #9be0b5; --a11: #f2c766; --a12: #93c3ee; --a13: #dcaeea; --a14: #86dde2; --a15: #ffffff;
+    --c-err: #ff7b72; --c-dbg: #c9a2ff;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #12171d; --panel: #181e26; --ink: #dfe5ec; --muted: #93a0ae;
+  --line: #2c3540; --accent: #e8836a; --accent-ink: #1a0f0b; --trace: #d9a93a;
+  --err: #ef8a73; --ok: #7cc49a; --input: #7fb8e0; --gutter: #5f6b78; --code-bg: #0f1419;
+  --a0: #4a5562; --a1: #ef6f5e; --a2: #7cc49a; --a3: #d9a93a; --a4: #6fa8dc; --a5: #c58fd6; --a6: #5cc3c9; --a7: #dfe5ec;
+  --a8: #7d8896; --a9: #ff8a7a; --a10: #9be0b5; --a11: #f2c766; --a12: #93c3ee; --a13: #dcaeea; --a14: #86dde2; --a15: #ffffff;
+    --c-err: #ff7b72; --c-dbg: #c9a2ff;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body {
+  margin: 0; background: var(--ground); color: var(--ink);
+  font: 15px/1.5 var(--sans);
+  padding-inline: 16px; padding-block: 20px 40px;
+}
+.wrap { max-width: 1240px; margin: 0 auto; display: grid; gap: 18px; }
+header { display: grid; gap: 6px; }
+.brand { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; }
+h1 { margin: 0; font-weight: 600; font-size: 34px; letter-spacing: 0.02em; }
+h1 span { color: var(--accent); }
+.tag {
+  font: 500 12px/1 var(--mono); text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--muted); border: 1px solid var(--line); padding: 5px 8px; border-radius: 3px;
+}
+.tag.state::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--gutter); margin-right: 7px; vertical-align: 1px; }
+.tag.state[data-state="ready"]::before { background: var(--ok); }
+.tag.state[data-state="loading"]::before { background: var(--trace); }
+.tag.state[data-state="failed"]::before { background: var(--err); }
+.lede { margin: 0; max-width: 76ch; color: var(--muted); text-wrap: pretty; }
+.lede a { color: var(--accent); }
+.lede code, footer code { font-family: var(--mono); font-size: 13px; color: var(--ink); }
+
+nav.programs { display: flex; flex-wrap: wrap; gap: 10px 22px; }
+nav.programs .group { display: grid; gap: 6px; align-content: start; }
+nav.programs .group > span { font: 500 11px/1 var(--sans); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+nav.programs .group > div { display: flex; flex-wrap: wrap; gap: 6px; }
+nav.programs button {
+  font: 500 14px/1 var(--sans); color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 3px; padding: 8px 11px; cursor: pointer;
+}
+nav.programs button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 -2px 0 var(--accent); }
+nav.programs button:hover { border-color: var(--muted); }
+
+.work { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+@media (max-width: 860px) { .work { grid-template-columns: minmax(0, 1fr); } }
+
+section.pane { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; display: grid; min-width: 0; }
+.bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+  padding: 8px 12px; border-bottom: 1px solid var(--line); min-height: 50px;
+}
+.label { font: 500 13px/1 var(--sans); letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.args { display: flex; align-items: center; gap: 8px; flex: 1 1 200px; justify-content: flex-end; }
+.args input {
+  font: 13px var(--mono); color: var(--ink); background: var(--code-bg);
+  border: 1px solid var(--line); border-radius: 3px; padding: 6px 8px; width: min(100%, 260px);
+}
+textarea {
+  width: 100%; border: 0; resize: vertical; background: var(--code-bg); color: var(--ink);
+  font: 13px/1.5 var(--mono); padding: 10px 14px; outline: none; display: block;
+}
+#src { min-height: 460px; max-height: 75vh; white-space: pre; overflow: auto; tab-size: 2; }
+/* highlighted editor: the Rexx Highlighter's HTML under a transparent textarea */
+.editor { position: relative; background: var(--code-bg); }
+.editor #src { position: relative; z-index: 1; background: transparent; }
+.editor.lit #src { color: transparent; caret-color: var(--ink); }
+.editor.lit #src::selection { color: transparent; background: color-mix(in srgb, var(--input) 30%, transparent); }
+.hl {
+  position: absolute; inset: 0; overflow: hidden; pointer-events: none; margin: 0;
+  font: 13px/1.5 var(--mono); padding: 10px 14px; white-space: pre; tab-size: 2; color: var(--ink);
+}
+.editor:not(.lit) .hl { visibility: hidden; }
+.hl .bad { text-decoration: underline wavy var(--err); text-decoration-skip-ink: none; }
+.hint .lint { color: var(--err); flex: 1 1 100%; order: -1; }
+.hint label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
+.hint input[type=checkbox] { margin: 0; accent-color: var(--accent); }
+.hint select { font: 12px var(--mono); color: var(--ink); background: var(--code-bg); border: 1px solid var(--line); border-radius: 3px; padding: 1px 2px; max-width: 22ch; }
+.hint select:disabled { opacity: .5; }
+#stdin { min-height: 64px; height: 64px; border-bottom: 1px solid var(--line); }
+textarea:focus-visible, .args input:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.hint { font: 12px var(--mono); color: var(--muted); padding: 6px 12px; border-top: 1px solid var(--line); display: flex; gap: 12px; flex-wrap: wrap; justify-content: space-between; }
+
+.run {
+  font: 600 14px/1 var(--sans); letter-spacing: 0.05em; text-transform: uppercase;
+  background: var(--accent); color: var(--accent-ink); border: 0; border-radius: 3px;
+  padding: 9px 18px; cursor: pointer; min-width: 84px;
+}
+.run.stop { background: var(--ink); color: var(--panel); }
+.run:disabled { opacity: 0.6; cursor: progress; }
+.small {
+  font: 500 12px/1 var(--sans); letter-spacing: 0.04em; text-transform: uppercase;
+  background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 3px;
+  padding: 5px 8px; cursor: pointer;
+}
+.small:hover { color: var(--ink); border-color: var(--muted); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.console {
+  background: var(--code-bg); font: 13px/1.55 var(--mono);
+  min-height: 340px; max-height: 620px; overflow: auto; padding: 10px 14px;
+}
+.console > .flow { white-space: pre-wrap; word-break: break-word; }
+#out { margin: 0; font: inherit; display: inline; }
+#out { color: var(--c-out); }
+#out .e { color: var(--c-err); }
+#out .t { color: var(--c-trace); }
+#out .in { color: var(--c-in); }
+#out .dbg { color: var(--c-dbg); }
+#out .x { color: var(--err); }
+#out .note { color: var(--gutter); font-style: italic; }
+/* the input line continues the output, like a terminal; "›" only at the start of a line */
+.prompt { display: inline; }
+.prompt.bol::before { content: "\203A\00a0"; color: var(--gutter); }
+.prompt.waiting.bol::before { color: var(--input); }
+.prompt.waiting input { border-bottom-color: var(--input); }
+.prompt input {
+  border: 0; border-bottom: 1px dotted var(--line); outline: none; background: transparent;
+  color: var(--input); font: inherit; padding: 0; width: min(36ch, 60%); vertical-align: baseline;
+}
+/* interactive trace is reading (.debugInput): what you type shows in its colour already */
+.prompt.dbg input { color: var(--c-dbg); }
+.prompt.dbg.waiting input { border-bottom-color: var(--c-dbg); }
+.prompt.dbg.waiting.bol::before { color: var(--c-dbg); }
+.legend { display: flex; gap: 12px; align-items: center; font: 12px var(--mono); color: var(--muted); }
+.legend i { font-style: normal; }
+.legend .o { color: var(--c-out); }
+.legend .e { color: var(--c-err); }
+.legend .t { color: var(--c-trace); }
+.legend .u { color: var(--c-in); }
+.legend .d { color: var(--c-dbg); }
+.iconbtn { font: 600 13px/1 var(--sans); background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 3px; padding: 4px 7px; cursor: pointer; }
+.iconbtn:hover { color: var(--ink); border-color: var(--muted); }
+.brand .iconbtn { margin-left: auto; align-self: center; }
+dialog {
+  border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); padding: 0;
+  width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 48px); box-shadow: 0 12px 40px rgb(0 0 0 / .25);
+}
+dialog::backdrop { background: rgb(10 14 20 / .45); }
+dialog .dhead { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); }
+dialog .dhead h2 { margin: 0; font: 600 18px/1.2 var(--sans); }
+dialog .dbody { padding: 6px 18px 18px; overflow: auto; }
+dialog h3 { font: 600 13px/1.3 var(--sans); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 18px 0 6px; }
+dialog p, dialog li { margin: 0 0 6px; max-width: 72ch; text-wrap: pretty; }
+dialog ul { margin: 0 0 6px; padding-left: 20px; }
+dialog code, dialog kbd { font: 13px var(--mono); }
+dialog kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px; padding: 0 4px; background: var(--code-bg); }
+dialog a { color: var(--accent); }
+.colors { display: grid; grid-template-columns: auto auto 1fr; gap: 8px 12px; align-items: center; margin: 8px 0 12px; }
+.colors input[type=color] { width: 44px; height: 26px; border: 1px solid var(--line); border-radius: 3px; background: none; padding: 1px; cursor: pointer; }
+.colors .sample { font: 13px var(--mono); }
+.dfoot { display: flex; gap: 8px; justify-content: flex-end; }
+.status { display: flex; gap: 6px 14px; flex-wrap: wrap; align-items: center; padding: 8px 12px; border-top: 1px solid var(--line); font: 12px var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+.status .good { color: var(--ok); }
+.status .bad { color: var(--err); }
+.files { display: flex; gap: 8px 12px; flex-wrap: wrap; align-items: center; padding: 8px 12px; border-top: 1px solid var(--line); font: 12px var(--mono); color: var(--muted); }
+.filelist { display: flex; gap: 6px 14px; flex-wrap: wrap; align-items: center; flex: 1 1 auto; min-width: 0; }
+.filelist .none { font-style: italic; }
+.storenote { color: var(--err); flex-basis: 100%; order: 3; }
+.filelist .f { display: inline-flex; gap: 6px; align-items: baseline; white-space: nowrap; }
+.filelist .f.on .open { color: var(--accent); text-decoration-color: var(--accent); }
+.filelist .dir { color: var(--muted); }
+.mounts { display: flex; gap: 6px; flex-wrap: wrap; flex-basis: 100%; }
+.mount { border: 1px solid var(--input); color: var(--input); border-radius: 3px; padding: 2px 4px 2px 7px; display: inline-flex; gap: 6px; align-items: baseline; }
+.mount i { font-style: normal; color: var(--muted); }
+.mount .unlink { background: none; border: 0; color: var(--muted); cursor: pointer; font: inherit; padding: 0 2px; }
+.mount .unlink:hover { color: var(--ink); }
+.filelist .f.linked .dir { color: var(--input); }
+.filelist .ro { color: var(--muted); font-size: 11px; }
+.linkmode { display: inline-flex; gap: 4px; align-items: center; }
+.files a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--line); text-underline-offset: 3px; }
+.files a:hover { text-decoration-color: var(--accent); }
+.files .dl, .files .del { text-decoration: none; color: var(--muted); background: none; border: 0; padding: 0 2px; font: inherit; cursor: pointer; }
+.files .dl:hover, .files .del:hover { color: var(--ink); }
+.fileacts { display: flex; gap: 6px; align-items: center; margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+.fileacts .small { white-space: nowrap; }
+.fileacts input { font: 12px var(--mono); color: var(--ink); background: var(--code-bg); border: 1px solid var(--line); border-radius: 3px; padding: 4px 6px; width: 24ch; }
+.fileacts input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+body.dragging .wrap { outline: 2px dashed var(--accent); outline-offset: 8px; }
+
+footer { color: var(--muted); font-size: 14px; max-width: 80ch; display: grid; gap: 6px; }
+footer p { margin: 0; text-wrap: pretty; }
+footer a { color: var(--accent); }
+.noscript, .fatal { border: 1px solid var(--err); color: var(--err); border-radius: 4px; padding: 10px 14px; background: var(--panel); }
+@media (prefers-reduced-motion: no-preference) { nav.programs button, .run { transition: border-color .15s, opacity .15s; } }
+
+/* JDOR windows (ADDRESS JDOR, see the Drawing section of the help) */
+.jdorwin { position: fixed; z-index: 40; background: #eeeeee; border: 1px solid var(--line);
+  border-radius: 6px; overflow: hidden; box-shadow: 0 8px 28px rgba(0,0,0,.28); max-width: calc(100vw - 16px); }
+.jdorwin.ontop { z-index: 45; }
+.jdorwin.noframe { border-radius: 0; cursor: move; }
+.jdorwin .jt { display: flex; align-items: center; gap: 8px; padding: 2px 3px 2px 10px; background: var(--panel);
+  color: var(--ink); font: 13px/1.6 var(--sans); cursor: move; user-select: none; border-bottom: 1px solid var(--line);
+  touch-action: none; }
+.jdorwin.noframe .jt { position: absolute; top: 2px; right: 2px; padding: 0; border: 0; background: var(--panel);
+  border-radius: 4px; opacity: 0; transition: opacity .15s; }
+.jdorwin.noframe .jt span { display: none; }
+.jdorwin.noframe:hover .jt, .jdorwin.noframe .jt:focus-within { opacity: .9; }
+.jdorwin .jt span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jdorwin .jt button { border: 0; background: none; color: var(--muted); font: 16px/1 var(--sans); padding: 2px 6px;
+  border-radius: 4px; cursor: pointer; }
+.jdorwin .jt button:hover { background: var(--accent); color: var(--accent-ink); }
+.jdorwin canvas { display: block; max-width: calc(100vw - 18px); height: auto; touch-action: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <h1>oo<span>Rexx</span> Playground</h1>
+      <span class="tag">ooRexx 5.3.0 &middot; WebAssembly</span>
+      <span class="tag state" id="rstate" data-state="loading">runtime: loading…</span>
+      <button class="iconbtn" id="helpbtn" type="button" title="How the playground works (F1)">? Help</button>
+    </div>
+    <p class="lede">Write ooRexx and press Run. This is the real ooRexx interpreter, the same C++ code as the one you install, compiled to WebAssembly and running in your browser, threads included. Standard input is interactive: when a program reads, type in the console. Your files stay in your browser: upload them (or drop them on the page, or link a folder) to run them or <code>::requires</code> them. The extension classes (<code>json.cls</code>, <code>rxregexp.cls</code>, <code>csvStream.cls</code>…) and the <a href="https://rexx.epbcn.com/rexx-parser/" target="_blank" rel="noopener">Rexx Parser</a> (<code>Rexx.Parser.cls</code>, which also highlights and checks the program as you type) are preloaded. There is no shell, but a program can use JavaScript and the page, as objects (<code>.JSObject</code>) or as commands (<code>ADDRESS DOM</code>, <code>ADDRESS FETCH</code>), and <code>ADDRESS JDOR</code> draws: JDOR, Rony G. Flatscher's drawing commands from BSF4ooRexx, on the browser's canvas (see the <i>JavaScript &amp; the page</i>, <i>The page, the classic way</i> and <i>Drawing</i> samples).</p>
+    <noscript><p class="noscript">The playground needs JavaScript.</p></noscript>
+    <p class="fatal" id="fatal" hidden></p>
+  </header>
+
+  <nav class="programs" id="programs" aria-label="Sample programs"></nav>
+
+  <div class="work">
+    <section class="pane" aria-label="Program">
+      <div class="bar">
+        <span class="label">Program</span>
+        <label class="args"><span class="label">Arguments</span>
+          <input id="args" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="(none)"></label>
+      </div>
+      <div class="editor" id="editor"><div class="hl" id="hl" aria-hidden="true"></div><textarea id="src"
+        spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Rexx source"></textarea></div>
+      <div class="hint"><span class="lint" id="lint" hidden></span><span id="fname"></span><span><label
+        title="Syntax highlighting and checking by the Rexx Parser"><input type="checkbox" id="hlon" checked> highlight</label>
+        <label title="Highlighting style (the Rexx Parser's stylesheets)">style <select id="hlstyle"></select></label>
+        &middot; Ctrl+Enter runs &middot; Esc stops</span></div>
+      <div class="files" id="files">
+        <span class="label">Your files</span>
+        <span class="mounts" id="mounts" hidden></span>
+        <span class="filelist" id="filelist"></span>
+        <span class="storenote" id="storenote" hidden></span>
+        <span class="fileacts">
+          <input id="newname" hidden spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="name.rex or dir/name.cls" aria-label="New file name (Enter creates, Esc cancels)">
+          <button class="small" type="button" id="newfile">New</button>
+          <button class="small" type="button" id="upload" title="Upload files (a .zip can be unpacked)">Upload</button>
+          <button class="small" type="button" id="uploaddir" title="Upload a folder, with its subfolders">Folder</button>
+          <button class="small" type="button" id="zipall" hidden title="Download all your files as a .zip">Download all</button>
+          <button class="small" type="button" id="clearfiles" hidden>Clear files</button>
+          <button class="small" type="button" id="linkdir" hidden title="Use a folder of your computer here, as /home/rexx/NAME/">Link folder</button>
+          <span id="linkmode" class="linkmode" hidden><span>link as</span><button class="small" type="button" id="linkrw">read &amp; write</button><button
+            class="small" type="button" id="linkro">read only</button><button class="small" type="button" id="linkcancel" aria-label="Cancel">&times;</button></span>
+          <button class="small" type="button" id="relink" hidden>Reconnect</button>
+          <input type="file" id="picker" multiple hidden>
+          <input type="file" id="dirpicker" webkitdirectory multiple hidden>
+        </span>
+      </div>
+    </section>
+
+    <section class="pane" aria-label="Run">
+      <div class="bar">
+        <span class="label">Standard input</span>
+        <button class="run" id="run" disabled>Run</button>
+      </div>
+      <textarea id="stdin" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Standard input"
+        placeholder="Empty: the program asks for input in the console. Lines here: they are the whole input."></textarea>
+      <div class="bar">
+        <span class="label">Console</span>
+        <span class="legend"><i class="o">stdout</i><i class="e">stderr</i><i class="t">trace</i><i class="u">you</i>
+          <button class="small" id="clear" type="button">Clear</button>
+          <button class="small" id="settingsbtn" type="button" title="Console colors" aria-label="Settings">&#9881;</button></span>
+      </div>
+      <div class="console" id="console"><div class="flow"><pre id="out" aria-live="polite"></pre><label
+        class="prompt" id="prompt" hidden><input id="line" spellcheck="false" autocapitalize="off"
+        autocomplete="off" aria-label="Input line (Enter sends, Ctrl+D ends the input)"></label></div></div>
+      <div class="status" id="status"><span>Not run yet</span></div>
+    </section>
+  </div>
+
+  <footer>
+    <p>New here? Press <kbd>F1</kbd> or <b>? Help</b> for how the playground works.</p>
+    <p>Each run starts a fresh interpreter in its own Web Worker, and every ooRexx thread (<code>START</code>, early <code>REPLY</code>, <code>.Alarm</code>) is a further worker sharing its memory, so the page stays responsive and Stop always works. When a program reads standard input, its thread waits on shared memory until you send a line: <code>PULL</code>, <code>LINEIN</code>, <code>CHARIN</code>, <code>TRACE ?</code> and <code>rexxtry</code> work as in a terminal. Ctrl+D sends end of file.</p>
+    <p>Your files live in <code>/home/rexx</code>, the current directory of every run: what you upload or create there, and what a program writes there, is kept in this browser, on this device, until you delete it. Folders keep their structure (Folder, a dropped folder, or an uploaded .zip), so relative <code>::requires</code> work; Download all gives everything back as a .zip. In Chrome and Edge, Link folder mounts a folder of your computer as <code>/home/rexx/NAME/</code>, read &amp; write or read only: edit there with your own tools, run here. Click a file to edit it and Run to run it; any program can <code>::requires</code> it or read it. In the console, &uarr; and &darr; recall earlier lines. The console understands ANSI escape sequences for colors and styles (<code>'1b'x || '[31m'</code>…; see the ANSI colors sample). Sockets reach only WebSocket servers, and there is no shell, so <code>ADDRESS</code> commands for one fail (<code>ADDRESS DOM</code>, <code>FETCH</code> and <code>JDOR</code> work).</p>
+    <p>WebAssembly port started by Tom Dyer; threads, RexxAPI, browser runtime and playground by Josep Maria Blasco. The <a href="https://rexx.epbcn.com/rexx-parser/" target="_blank" rel="noopener">Rexx Parser</a> and its Highlighter are by Josep Maria Blasco (Apache 2.0): <code>::requires "Rexx.Parser.cls"</code>, <code>"parser/Highlighter.cls"</code>, or <code>call highlight "-a prog.rex"</code>.</p>
+    <p>ooRexx is developed by the <a href="https://www.rexxla.org/" target="_blank" rel="noopener">Rexx Language Association</a>; see <a href="https://www.oorexx.org/" target="_blank" rel="noopener">oorexx.org</a>. <span id="build"></span></p>
+  </footer>
+</div>
+
+<dialog id="settings" aria-labelledby="settingstitle">
+  <div class="dhead"><h2 id="settingstitle">Settings</h2><button class="iconbtn" type="button" data-close>Close</button></div>
+  <div class="dbody">
+    <h3>Console colors <span id="settingstheme"></span></h3>
+    <p>Each theme (light, dark) keeps its own colors. They are remembered in this browser.</p>
+    <div class="colors" id="colors"></div>
+    <div class="dfoot"><button class="small" type="button" id="colorsreset">Reset to defaults</button></div>
+  </div>
+</dialog>
+
+<dialog id="help" aria-labelledby="helptitle">
+  <div class="dhead"><h2 id="helptitle">How the playground works</h2><button class="iconbtn" type="button" data-close>Close</button></div>
+  <div class="dbody">
+    <h3>Running</h3>
+    <p>Pick a sample or write your own program, then <kbd>Run</kbd> (<kbd>Ctrl</kbd>+<kbd>Enter</kbd>). <kbd>Stop</kbd> (<kbd>Esc</kbd>) ends it at once, endless loops included. <b>Arguments</b> is what <code>PARSE ARG</code> gets. Every run starts a fresh ooRexx interpreter (5.3.0, the real C++ code compiled to WebAssembly) in its own worker; ooRexx threads (<code>START</code>, early <code>REPLY</code>, <code>.Alarm</code>) are real threads too.</p>
+    <h3>Standard input and the console</h3>
+    <ul>
+      <li>If the <b>Standard input</b> box is empty, input is interactive: when the program reads (<code>PULL</code>, <code>LINEIN</code>, <code>CHARIN</code>, <code>TRACE ?</code>, <code>rexxtry</code>), type in the console and press <kbd>Enter</kbd>. <kbd>Ctrl</kbd>+<kbd>D</kbd> sends end of file. <kbd>&uarr;</kbd> and <kbd>&darr;</kbd> recall earlier lines.</li>
+      <li>If the box has text, that text is the whole input, followed by end of file.</li>
+      <li>Colors tell the streams apart: <span class="legend" style="display:inline-flex"><i class="o">stdout</i><i class="e">stderr</i><i class="t">trace</i><i class="u">you</i><i class="d">you, in interactive trace</i></span>. Trace goes where <code>.traceOutput</code> sends it (<code>.error</code>, unless you redirect it), but the interpreter tells the page which lines are trace (the traceback of an error included) and which are error messages, and when interactive trace is the one reading (<code>.debugInput</code>). Change the colors with &#9881; (Settings).</li>
+      <li>The console understands ANSI escape sequences for colors and styles (<code>'1b'x || '[31m'</code>…; see the <i>ANSI colors</i> sample); <code>ESC[2J</code> clears it.</li>
+    </ul>
+    <h3>The editor</h3>
+    <p>The <a href="https://rexx.epbcn.com/rexx-parser/" target="_blank" rel="noopener">Rexx Parser</a> highlights the program and checks its syntax as you type: an error is shown under the editor and its line is underlined. <b>style</b> picks one of the Parser's highlighting styles (<i>auto</i> follows the page theme); <b>highlight</b> turns it all off. <kbd>Tab</kbd> inserts two spaces. Edits to a sample are kept while the page is open.</p>
+    <h3>Your files</h3>
+    <ul>
+      <li>Every run has <code>/home/rexx</code> as its current directory. Your files live there, and what a program writes there stays for the next runs. Click a file to edit it (Run then runs it); &darr; downloads it, &times; deletes it.</li>
+      <li><b>New</b> creates a file (a path like <code>lib/util.cls</code> creates the folder too). <b>Upload</b> adds files (a <code>.zip</code> can be unpacked), <b>Folder</b> adds a whole folder with its subfolders, and you can also drop files or folders on the page. <b>Download all</b> gives everything back as a <code>.zip</code>.</li>
+      <li>These files are kept in this browser, on this device, until you delete them (<b>Clear files</b>).</li>
+      <li><b>Link folder</b> (Chrome, Edge) mounts a folder of your computer as <code>/home/rexx/NAME/</code>, <i>read &amp; write</i> or <i>read only</i>. Edit there with your own tools and run here: the folder is read again before every run and when you come back to the page. Deleting in a linked folder always asks; nothing is ever written to a read-only one. Several folders can be linked at once. Each linked folder is also in <code>REXX_PATH</code>, so <code>::requires "lib/util.cls"</code> finds <code>/home/rexx/NAME/lib/util.cls</code> without the folder's name.</li>
+      <li>Any program can <code>::requires</code> or read these files, with relative paths as usual.</li>
+    </ul>
+    <h3>Libraries</h3>
+    <p>Preloaded: the extension classes (<code>json.cls</code>, <code>rxregexp.cls</code>, <code>csvStream.cls</code>, <code>yaml.cls</code>, <code>dateparser.cls</code>, <code>socket.cls</code>, <code>streamsocket.cls</code>, <code>mime.cls</code>, <code>smtp.cls</code>, <code>rxftp.cls</code>) and the Rexx Parser: <code>::requires "Rexx.Parser.cls"</code>, <code>"parser/Highlighter.cls"</code>, or <code>call highlight "-a prog.rex"</code> and <code>call elements "prog.rex"</code> (see the <i>Rexx Parser</i> sample).</p>
+    <h3>Drawing (JDOR)</h3>
+    <p><code>ADDRESS JDOR</code> draws: JDOR, the drawing command handler of BSF4ooRexx by Rony G. Flatscher, here on the browser's canvas. <code>::requires "jdor.cls"</code> sets up the JDOR environment, an image and its window, and <code>address jdor</code> selects it (in each routine, as for any environment: the default one, the shell, does not exist here); <code>call addJdorHandler "NAME"</code> sets up another one. Then commands like <code>newImage 300 200</code>, <code>color red</code>, <code>moveTo 10 10</code>, <code>fillRect 100 50</code>, <code>winShow</code> draw, as documented in BSF4ooRexx's <i>JDOR Synopsis</i>. There is no Java here: objects that commands return say what they are (<code>a JDOR Image (#99)</code>), and errors read <code>JDOR (web): ...</code>. The <i>Drawing (JDOR)</i> samples are Rony's, adapted to <code>::requires "jdor.cls"</code> (instead of BSF4ooRexx); programs written for BSF4ooRexx also run unchanged, through this build's small <code>BSF.CLS</code> (just what JDOR programs use). Windows float over the page: drag them by the title bar (frameless ones anywhere), close them with &times; (on a frameless one it shows when the pointer is over it); they stay until the next run. <code>loadImage</code> and <code>saveImage</code> use your files; <code>winScreenSize</code> is the size of this page. Printing and the clipboard depend on what the browser allows.</p>
+    <h3>JavaScript and the page</h3>
+    <p><code>::requires "js.cls"</code> gives JavaScript objects as Rexx objects. <code>.js</code> is the worker that runs your program (it has <code>fetch</code>, the browser's local database and WebSockets); <code>.js~page</code> is the page itself (its <code>document</code>, the DOM): <code>.js~page~document~title = "Hi"</code>. Messages read properties and call methods (<code>o~name</code>, <code>o~name(a, b)</code>, <code>o~name = v</code>); names are found whatever their case, and <code>o["exactName"]</code> is exact. A Promise is waited for with <code>~await</code>. JavaScript cannot call Rexx back while it runs: <code>.js~handler(object, "MESSAGE")</code> gives a function that queues the call, and <code>.js~eventLoop</code> sends the messages (see <i>Events from the page</i>). The full reference is at the top of <code>js.cls</code>.</p>
+    <p><code>ADDRESS DOM</code> (<code>::requires "dom.cls"</code>) builds windows with commands, no objects needed: <code>'NEW "Sign up"'</code> opens a floating panel, <code>FIELD</code>, <code>BUTTON</code> and <code>TEXT</code> fill it, and <code>'WAIT INTO ev'</code> waits for the next event. <code>ADDRESS FETCH</code> (<code>::requires "fetch.cls"</code>) does HTTP: <code>"GET" url</code>, then <code>"JSON INTO data"</code>; RC tells how it went. See the <i>The page, the classic way</i> samples, and the top of <code>dom.cls</code> and <code>fetch.cls</code>. Panels, like JDOR windows, stay until the next run.</p>
+    <h3>Limits</h3>
+    <p>There is no shell, so <code>ADDRESS</code> commands for one fail (<code>ADDRESS DOM</code>, <code>FETCH</code> and <code>JDOR</code> work, see above). Sockets reach only WebSocket servers, and <code>fetch</code> only servers that accept requests from other sites (CORS). Memory is the browser's. Recursion is less deep than natively (a browser worker has a smaller stack).</p>
+    <h3>Privacy</h3>
+    <p>Everything runs in your browser. Your programs and files are never sent anywhere: the page only downloads the interpreter and its libraries.</p>
+    <h3>Keys</h3>
+    <ul>
+      <li><kbd>Ctrl</kbd>+<kbd>Enter</kbd> run &middot; <kbd>Esc</kbd> stop &middot; <kbd>F1</kbd> this help</li>
+      <li>In the console: <kbd>Enter</kbd> send a line &middot; <kbd>Ctrl</kbd>+<kbd>D</kbd> end of file &middot; <kbd>&uarr;</kbd>/<kbd>&darr;</kbd> history</li>
+    </ul>
+  </div>
+</dialog>
+
+<script id="samples" type="application/json">/*SAMPLES*/</script>
+<script src="ooRexx.js"></script>
+<script>
+(() => {
+  const data = JSON.parse(document.getElementById("samples").textContent);
+  const $ = (id) => document.getElementById(id);
+  const nav = $("programs"), src = $("src"), stdinBox = $("stdin"), argsEl = $("args"), runBtn = $("run");
+  const consoleEl = $("console"), out = $("out"), prompt = $("prompt"), line = $("line");
+  const statusEl = $("status"), filelist = $("filelist"), fname = $("fname"), rstate = $("rstate");
+  const newname = $("newname"), picker = $("picker");
+  const HOME = "/home/rexx/";
+  const MAX_CONSOLE = 400000;
+  const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const fmtMs = (ms) => ms < 1000 ? ms.toFixed(0) + " ms" : (ms / 1000).toFixed(2) + " s";
+  const enc = new TextEncoder();
+  const utf8 = new TextDecoder("utf-8", { fatal: true });
+  const MAX_FILE = 32 * 1024 * 1024;  // per uploaded file
+  const MAX_EDIT = 2 * 1024 * 1024;   // larger files are download-only
+  const fmtSize = (n) => n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(1) + " KB" : (n / 1048576).toFixed(1) + " MB";
+  const asText = (b) => {           // the file's text if it can go in the editor, else null
+    if (b.length > MAX_EDIT || b.includes(0)) return null;
+    try { return utf8.decode(b); } catch { return null; }
+  };
+  const RXPATH = "/usr/lib/ooRexx:/usr/lib/rexx-parser/bin";
+  let parserFiles = null;           // the Rexx Parser, written into every run (rexx-parser.json)
+  const parserLoad = fetch("rexx-parser.json").then((r) => r.ok ? r.json() : Promise.reject(new Error(r.status)))
+    .then((j) => { const f = {}; for (const k in j) f[k] = enc.encode(j[k]); parserFiles = f; })
+    .catch(() => { parserFiles = null; });
+  const history = [];               // lines sent from the console, oldest first
+  let hpos = 0, hdraft = "";
+
+  let rexx = null, current = null, run = null;   // current: a sample, or {file, user: true} for a file of yours
+  const edits = new Map();          // sample file -> edited source
+  let workspace = new Map();        // path -> Uint8Array, written by earlier runs
+
+  const sameBytes = (a, b) => a === b || (!!a && !!b && a.length === b.length && a.every((v, i) => v === b[i]));
+  // linked folders, mounted as /home/rexx/NAME/: name -> {handle, rw, known: Map(path -> bytes)}
+  const mounts = new Map();
+  const disk = { busy: Promise.resolve(), error: null, pending: [] };
+  const mountOf = (p) => { for (const [n, m] of mounts) if (p.startsWith(HOME + n + "/")) return m; return null; };
+  const isBrowserFile = (p) => !mountOf(p);
+
+  // ---- persistence: your files are kept in this browser (IndexedDB) ----------------
+  const store = (() => {
+    let db = null, ready = false, broken = null, saved = new Map(), chain = Promise.resolve();
+    const req2p = (r) => new Promise((ok, ko) => { r.onsuccess = () => ok(r.result); r.onerror = () => ko(r.error); });
+    const tx2p = (t) => new Promise((ok, ko) => { t.oncomplete = ok; t.onerror = t.onabort = () => ko(t.error); });
+    async function load() {
+      saved = new Map();
+      try {
+        if (!db) {
+          const r = indexedDB.open("oorexx-playground", 2);
+          r.onupgradeneeded = () => {
+            for (const n of ["files", "meta"]) if (!r.result.objectStoreNames.contains(n)) r.result.createObjectStore(n);
+          };
+          db = await req2p(r);
+        }
+        const t = db.transaction("files"), os = t.objectStore("files");
+        const [keys, vals] = await Promise.all([req2p(os.getAllKeys()), req2p(os.getAll())]);
+        keys.forEach((k, i) => saved.set(k, new Uint8Array(vals[i])));
+      } catch (e) { broken = "your files are not kept: this browser does not allow storage here"; db = null; }
+      ready = true;
+      return new Map(saved);
+    }
+    function save(ws) {                 // write only what changed since the last save
+      if (!ready || !db) return;
+      const mine = new Map([...ws].filter(([p]) => isBrowserFile(p)));   // linked folders keep their own
+      const puts = [], dels = [];
+      for (const [p, b] of mine) if (!sameBytes(saved.get(p), b)) puts.push([p, b]);
+      for (const p of saved.keys()) if (!mine.has(p) && isBrowserFile(p)) dels.push(p);
+      if (!puts.length && !dels.length) return;
+      const next = new Map(mine);
+      chain = chain.then(async () => {
+        try {
+          const t = db.transaction("files", "readwrite"), os = t.objectStore("files");
+          for (const [p, b] of puts) os.put(b, p);
+          for (const p of dels) os.delete(p);
+          await tx2p(t);
+          saved = next; broken = null;
+        } catch (e) {
+          broken = "your files are not kept: " + (e && e.name === "QuotaExceededError" ? "browser storage is full" : "storage failed");
+        }
+        renderNote();
+      });
+    }
+    async function meta(key, value) {   // small settings that are not files (the linked folder's handle)
+      if (!db) return null;
+      try {
+        const t = db.transaction("meta", value === undefined ? "readonly" : "readwrite"), os = t.objectStore("meta");
+        if (value === undefined) return await req2p(os.get(key));
+        if (value === null) os.delete(key); else os.put(value, key);
+        await tx2p(t);
+      } catch (e) { return null; }
+      return null;
+    }
+    return { load, save, meta, get broken() { return broken; }, get ready() { return ready; } };
+  })();
+  const remember = (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} };
+  const recall = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
+
+  // ---- console ------------------------------------------------------------------
+  function emit(text, cls, style) {
+    if (!text) return;
+    const stick = consoleEl.scrollHeight - consoleEl.scrollTop - consoleEl.clientHeight < 40;
+    const last = out.lastChild;
+    style = style || "";
+    if (!cls && !style && last && last.nodeType === 3) last.appendData(text);
+    else if ((cls || style) && last && last.nodeType === 1 && last.className === cls && (last.getAttribute("style") || "") === style) last.textContent += text;
+    else if (cls || style) {
+      const s = document.createElement("span"); s.className = cls; if (style) s.setAttribute("style", style);
+      s.textContent = text; out.appendChild(s);
+    }
+    else out.appendChild(document.createTextNode(text));
+    if (out.textContent.length > MAX_CONSOLE) {
+      while (out.firstChild && out.textContent.length > MAX_CONSOLE * 0.8) out.removeChild(out.firstChild);
+      if (!out.firstChild || out.firstChild.className !== "note") {
+        const n = document.createElement("span"); n.className = "note"; n.textContent = "[earlier output trimmed]\n";
+        out.insertBefore(n, out.firstChild);
+      }
+    }
+    prompt.classList.toggle("bol", atLineStart());
+    if (stick) consoleEl.scrollTop = consoleEl.scrollHeight;
+  }
+  // ---- ANSI escape sequences (SGR colors and styles) on stdout/stderr -------------
+  // One style state, as in a terminal; a sequence split between two chunks is held back.
+  let sgr, pend;
+  let errBol = true, errCls = "e", lastCls = "", errCount = 0, traceCount = 0, debugRead = false;
+  function ansiReset() { sgr = {}; pend = { "": "", e: "" }; errBol = true; errCls = "e"; lastCls = ""; errCount = traceCount = 0; }
+  // stderr carries both the program's errors and its trace (.traceOutput writes to .error):
+  // trace lines are told apart by ooRexx's trace format
+  const TRACE_RE = /^(\[[^\]]*\]\s*)?(\s*\d*\s+\*-\*|\s+>[^\s]>\s|\s*\+\+\+\s)/;
+  ansiReset();
+  const ESC_RE = /\x1b(?:\[([0-?]*)[ -\/]*([@-~])|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])/g;
+  const ESC_DONE = /^\x1b(?:\[[0-?]*[ -\/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])/;
+  function color256(n) {
+    if (n < 16) return `var(--a${n})`;
+    if (n < 232) { n -= 16; const c = (v) => v ? 55 + v * 40 : 0; return `rgb(${c(Math.floor(n / 36))},${c(Math.floor(n / 6) % 6)},${c(n % 6)})`; }
+    const g = 8 + (n - 232) * 10; return `rgb(${g},${g},${g})`;
+  }
+  function applySgr(params) {
+    const p = params === "" ? [0] : params.split(/[;:]/).map((x) => x === "" ? 0 : +x);
+    for (let i = 0; i < p.length; i++) {
+      const n = p[i];
+      if (n === 0) sgr = {};
+      else if (n === 1) sgr.bold = true; else if (n === 2) sgr.dim = true; else if (n === 3) sgr.italic = true;
+      else if (n === 4) sgr.under = true; else if (n === 7) sgr.inverse = true; else if (n === 8) sgr.hidden = true;
+      else if (n === 9) sgr.strike = true;
+      else if (n === 22) sgr.bold = sgr.dim = false; else if (n === 23) sgr.italic = false; else if (n === 24) sgr.under = false;
+      else if (n === 27) sgr.inverse = false; else if (n === 28) sgr.hidden = false; else if (n === 29) sgr.strike = false;
+      else if (n >= 30 && n <= 37) sgr.fg = `var(--a${n - 30})`; else if (n >= 90 && n <= 97) sgr.fg = `var(--a${n - 82})`;
+      else if (n >= 40 && n <= 47) sgr.bg = `var(--a${n - 40})`; else if (n >= 100 && n <= 107) sgr.bg = `var(--a${n - 92})`;
+      else if (n === 39) sgr.fg = null; else if (n === 49) sgr.bg = null;
+      else if (n === 38 || n === 48) {
+        let c = null;
+        if (p[i + 1] === 5 && i + 2 < p.length) { c = color256(p[i + 2] & 255); i += 2; }
+        else if (p[i + 1] === 2 && i + 4 < p.length) { c = `rgb(${p[i + 2] & 255},${p[i + 3] & 255},${p[i + 4] & 255})`; i += 4; }
+        else break;
+        if (n === 38) sgr.fg = c; else sgr.bg = c;
+      }
+    }
+  }
+  function sgrStyle(cls) {
+    let fg = sgr.fg, bg = sgr.bg, st = "";
+    if (sgr.inverse) { const f = fg; fg = bg || "var(--code-bg)"; bg = f || ({ e: "var(--c-err)", t: "var(--c-trace)" }[cls] || "var(--c-out)"); }
+    if (sgr.hidden) fg = "transparent";
+    if (fg) st += `color:${fg};`;
+    if (bg) st += `background:${bg};`;
+    if (sgr.bold) st += "font-weight:600;";
+    if (sgr.dim) st += "opacity:.65;";
+    if (sgr.italic) st += "font-style:italic;";
+    if (sgr.under || sgr.strike) st += `text-decoration:${sgr.under ? "underline " : ""}${sgr.strike ? "line-through" : ""};`;
+    return st;
+  }
+  // kind: what the interpreter says it was writing ("plain", "trace", "error": the
+  // runtime marks trace lines and error messages); without it, stderr is split by format
+  function term(text, stream, kind) {   // stream: "" stdout, "e" stderr
+    text = pend[stream] + text; pend[stream] = "";
+    const k = text.lastIndexOf("\x1b");
+    if (k >= 0 && text.length - k < 256 && !ESC_DONE.test(text.slice(k))) { pend[stream] = text.slice(k); text = text.slice(0, k); }
+    if (kind) {
+      const cls = kind === "trace" ? "t" : kind === "error" ? "e" : stream;
+      const n = (text.match(/\n/g) || []).length;
+      if (cls === "t") traceCount += n; else if (cls === "e") errCount += n;
+      paint(text, cls);
+      return;
+    }
+    if (stream === "") { paint(text, ""); return; }
+    for (const piece of text.match(/[^\n]*\n|[^\n]+$/g) || []) {   // per line: trace or stderr
+      if (errBol) {
+        const plain = piece.replace(ESC_RE, "");
+        errCls = TRACE_RE.test(plain) || (/^\s+$/.test(plain) && !piece.endsWith("\n")) ? "t" : "e";
+      }
+      errBol = piece.endsWith("\n");
+      if (errBol) errCls === "t" ? traceCount++ : errCount++;
+      paint(piece, errCls);
+    }
+  }
+  function paint(text, cls) {
+    if (!text) return;
+    if (text.trim()) lastCls = cls;
+    if (!text.includes("\x1b")) { emit(text, cls, sgrStyle(cls)); return; }
+    let at = 0, m;
+    ESC_RE.lastIndex = 0;
+    while ((m = ESC_RE.exec(text))) {
+      emit(text.slice(at, m.index).replace(/\x1b/g, ""), cls, sgrStyle(cls));
+      at = ESC_RE.lastIndex;
+      if (m[2] === "m") applySgr(m[1]);
+      else if (m[2] === "J" && (m[1] === "2" || m[1] === "3")) out.textContent = "";   // clear screen
+    }
+    emit(text.slice(at).replace(/\x1b/g, ""), cls, sgrStyle(cls));
+  }
+  function termFlush() { for (const c of ["", "e"]) if (pend[c]) { const t = pend[c]; pend[c] = ""; emit(t.replace(/\x1b/g, ""), c === "e" ? errCls : c, sgrStyle(c)); } }
+
+  function note(text) { out.innerHTML = `<span class="note">${esc(text)}</span>`; }
+  function atLineStart() { const t = out.lastChild ? out.lastChild.textContent : "\n"; return t === "" || t.endsWith("\n"); }
+
+  // ---- highlighting: the Rexx Highlighter, in a run of its own that stays up ------
+  // hlserver.rex (rexx-parser.json) answers "id count" + lines with HTML. The overlay
+  // always shows the textarea's exact text: lines unchanged since the last answer keep
+  // their colors, the others are plain until the next answer.
+  const editor = $("editor"), hlEl = $("hl"), lint = $("lint"), hlon = $("hlon");
+  const H = { run: null, buf: "", id: 0, sent: null, busy: false, timer: 0, restarts: 0,
+              base: { lines: [], html: [] }, err: null, on: recall("orx-pg-hl") !== "off" };
+  hlon.checked = H.on;
+  // Style chooser, after the Rexx Parser's style-chooser.js: same stylesheets, same
+  // ?style= parameter, same stored preference (the Parser's site shares this origin).
+  // "auto" (empty) follows the page theme with the page's own background; a chosen
+  // style brings its background too. Sheets are fetched when first chosen.
+  const themeQ = matchMedia("(prefers-color-scheme: dark)");
+  const STYLE_KEY = "rexx-parser.codeStyle", chooser = $("hlstyle");
+  const offered = (st) => !!st && (data.styles || []).includes(st);
+  chooser.innerHTML = '<option value="">auto (page theme)</option>' +
+    (data.styles || []).map((st) => `<option value="${esc(st)}">${esc(st)}</option>`).join("");
+  let hlStyle = (() => {
+    let st = null;
+    try { st = new URL(location.href).searchParams.get("style"); } catch {}
+    if (!offered(st)) st = recall(STYLE_KEY);
+    return offered(st) ? st : "";
+  })();
+  chooser.value = hlStyle;
+  function sheet(st) {
+    let l = document.querySelector(`link[data-rexx-style="${st}"]`);
+    if (!l) {
+      l = document.createElement("link");
+      l.rel = "stylesheet"; l.href = `rexx-parser/rexx-${st}.css`; l.dataset.rexxStyle = st;
+      l.addEventListener("load", hlCaret);
+      document.head.appendChild(l);
+    }
+  }
+  function hlCaret() {   // the caret in the style's own text color
+    src.style.caretColor = hlStyle && editor.classList.contains("lit") ? getComputedStyle(hlEl).color : "";
+  }
+  function hlTheme() {
+    const t = document.documentElement.dataset.theme || (themeQ.matches ? "dark" : "light");
+    const st = hlStyle || (t === "dark" ? "dark" : "light");
+    sheet(st);
+    editor.className = editor.className.replace(/\s*highlight-rexx-\S+/g, "") + " highlight-rexx-" + st;
+    hlEl.className = hlStyle ? "hl rexx" : "hl";
+    hlCaret();
+  }
+  themeQ.addEventListener("change", hlTheme); hlTheme();
+  chooser.addEventListener("change", () => {
+    hlStyle = chooser.value;
+    remember(STYLE_KEY, hlStyle || null);
+    try {
+      const url = new URL(location.href);
+      if (hlStyle) url.searchParams.set("style", hlStyle); else url.searchParams.delete("style");
+      window.history.replaceState(null, "", url.toString());
+    } catch {}
+    hlTheme();
+  });
+  function hlScroll() { hlEl.scrollTop = src.scrollTop; hlEl.scrollLeft = src.scrollLeft; }
+  function hlRender() {
+    editor.classList.toggle("lit", H.on);
+    chooser.disabled = !H.on;
+    hlCaret();
+    if (!H.on) return;
+    const cur = src.value.split("\n"), b = H.base;
+    let p = 0, q = 0;
+    const max = Math.min(cur.length, b.lines.length);
+    while (p < max && cur[p] === b.lines[p]) p++;
+    while (q < max - p && cur[cur.length - 1 - q] === b.lines[b.lines.length - 1 - q]) q++;
+    const bad = H.err && H.sent && H.err.id === H.sent.id && src.value === H.sent.text ? H.err.line - 1 : -1;
+    const out = new Array(cur.length);
+    for (let i = 0; i < cur.length; i++) {
+      const h = i < p ? b.html[i] : i >= cur.length - q ? b.html[b.lines.length - (cur.length - i)] : esc(cur[i]);
+      out[i] = i === bad ? `<span class="bad">${h || " "}</span>` : h;
+    }
+    hlEl.innerHTML = out.join("\n") + "\n\n ";
+    hlScroll();
+  }
+  function hlLint() {
+    const e = H.on && H.err && H.sent && src.value === H.sent.text ? H.err : null;
+    lint.hidden = !e;
+    lint.textContent = e ? (e.line ? `line ${e.line}: ` : "") + `Error ${e.code}: ${e.text}` : "";
+  }
+  function hlChanged(delay) {
+    hlRender(); hlLint();
+    clearTimeout(H.timer);
+    if (H.on) H.timer = setTimeout(hlSend, delay);
+  }
+  function hlSend() {
+    if (!H.on || H.busy || !H.run) return;
+    if (H.sent && H.sent.text === src.value && H.sent.done) return;
+    const text = src.value, lines = text.split("\n");
+    H.sent = { id: ++H.id, text, lines, done: false };
+    H.busy = true;
+    H.run.write(`${H.id} ${lines.length}\n` + lines.join("\n") + "\n");
+  }
+  function hlAnswer(id, status, rest, html) {
+    H.busy = false;
+    if (!H.sent || id !== H.sent.id) return;
+    H.sent.done = true;
+    if (status === "OK") {
+      const m = /<code>([\s\S]*)<\/code>/.exec(html);
+      const lines = m ? m[1].split("\n").map((l) => l.replace(/^<span id="[^"]*"><a [^>]*><\/a>/, "").replace(/<\/span>$/, "")) : [];
+      if (lines.length === H.sent.lines.length) H.base = { lines: H.sent.lines, html: lines };
+      H.err = null;
+    } else {
+      const m = /^\s*(\d*)\s+(\S+)\s+([\s\S]*)$/.exec(rest) || [];
+      H.err = { id, line: +m[1] || 0, code: m[2] || "?", text: (m[3] || rest).trim() };
+    }
+    hlRender(); hlLint();
+    if (src.value !== H.sent.text) { clearTimeout(H.timer); H.timer = setTimeout(hlSend, 150); }
+  }
+  function hlOut(t) {
+    H.buf += t;
+    for (;;) {
+      const i = H.buf.indexOf("\x1e"); if (i < 0) return;
+      const n = H.buf.indexOf("\n", i); if (n < 0) return;
+      const html = H.buf.slice(0, i), st = H.buf.slice(i + 1, n);
+      H.buf = H.buf.slice(n + 1);
+      const m = /^(\d+) (OK|ERR)(.*)$/.exec(st);
+      if (m) hlAnswer(+m[1], m[2], m[3], html);
+    }
+  }
+  function hlStart() {
+    if (H.run || !rexx || !parserFiles || !H.on) return;
+    H.buf = ""; H.busy = false; if (H.sent) H.sent.done = true;
+    const r = H.run = rexx.run({
+      args: ["/usr/lib/rexx-parser/playground/hlserver.rex"], files: parserFiles, cwd: "/tmp/hl",
+      env: { REXX_PATH: RXPATH }, onOut: hlOut, onErr: () => {},
+    });
+    r.done.then(() => {
+      if (H.run !== r) return;
+      H.run = null; H.busy = false;
+      if (H.on && ++H.restarts <= 3) setTimeout(() => { hlStart(); if (H.sent) H.sent.done = false; hlSend(); }, 1000);
+    });
+    H.sent = null;
+    hlSend();
+  }
+  hlon.addEventListener("change", () => {
+    H.on = hlon.checked; remember("orx-pg-hl", H.on ? null : "off");
+    if (H.on) { hlStart(); hlChanged(0); }
+    else { if (H.run) { const r = H.run; H.run = null; r.stop(); } editor.classList.remove("lit"); chooser.disabled = true; hlCaret(); hlLint(); }
+  });
+
+  // ---- samples ------------------------------------------------------------------
+  function saveCurrent() {
+    if (!current) return;
+    if (current.user) { if (!current.ro) workspace.set(HOME + current.file, enc.encode(src.value)); }
+    else edits.set(current.file, src.value);
+  }
+  function select(s) {
+    if (run) return;
+    saveCurrent();
+    current = s;
+    src.readOnly = false;
+    if (store.ready) remember("orx-pg-open", null);
+    for (const b of nav.querySelectorAll("button")) b.setAttribute("aria-pressed", b.dataset.file === s.file);
+    src.value = edits.has(s.file) ? edits.get(s.file) : s.source;
+    hlChanged(0);
+    stdinBox.value = s.stdin || "";
+    argsEl.value = s.args || "";
+    fname.textContent = HOME + s.file + (s.from === "oorexx" ? "  (from the ooRexx samples)" :
+      s.from === "bsf4oorexx" ? "  (a JDOR sample of BSF4ooRexx, by Rony G. Flatscher, adapted)" : "");
+    companionsLoad(s);
+    note("Press Run.");
+    statusEl.innerHTML = "<span>Not run yet</span>";
+    renderFiles();
+  }
+  function openFile(path) {            // a file of yours into the editor; Run runs it
+    if (run) return;
+    const text = asText(workspace.get(path));
+    if (text === null) return;
+    saveCurrent();
+    const m = mountOf(path);
+    current = { file: path.slice(HOME.length), user: true, ro: !!(m && !m.rw) };
+    src.readOnly = current.ro;
+    remember("orx-pg-open", path);
+    for (const b of nav.querySelectorAll("button")) b.setAttribute("aria-pressed", "false");
+    src.value = text;
+    hlChanged(0);
+    stdinBox.value = "";
+    argsEl.value = "";
+    fname.textContent = path + (m ? `  (folder ${m.name}${m.rw ? "" : ", read-only"})` : "  (your file)");
+    note("Press Run.");
+    statusEl.innerHTML = "<span>Not run yet</span>";
+    renderFiles();
+    src.focus({ preventScroll: true });
+  }
+  for (const [key, label] of Object.entries(data.groups)) {
+    const g = document.createElement("div");
+    g.className = "group";
+    g.innerHTML = `<span>${esc(label)}</span><div></div>`;
+    for (const s of data.samples.filter((x) => x.group === key)) {
+      const b = document.createElement("button");
+      b.type = "button"; b.dataset.file = s.file; b.textContent = s.title;
+      b.addEventListener("click", () => select(s));
+      g.lastChild.appendChild(b);
+    }
+    nav.appendChild(g);
+  }
+
+  // ---- files ----------------------------------------------------------------------
+  function renderFiles() {
+    const open = current && current.user ? HOME + current.file : null;
+    if (open && !workspace.has(open)) saveCurrent();   // a run deleted it: the editor still has it
+    $("zipall").hidden = workspace.size === 0;
+    $("clearfiles").hidden = ![...workspace.keys()].some(isBrowserFile);
+    store.save(workspace); diskSave(workspace);
+    linkUI();
+    renderNote();
+    if (workspace.size === 0) { filelist.innerHTML = '<span class="none">none yet</span>'; return; }
+    filelist.innerHTML = [...workspace].sort(([a], [b]) => a.localeCompare(b)).map(([p, b]) => {
+      const rel = p.startsWith(HOME) ? p.slice(HOME.length) : p, cut = rel.lastIndexOf("/") + 1;
+      const name = esc(rel), shown = (cut ? `<span class="dir">${esc(rel.slice(0, cut))}</span>` : "") + esc(rel.slice(cut));
+      const editable = asText(b) !== null, m = mountOf(p), ro = m && !m.rw;
+      return `<span class="f${p === open ? " on" : ""}${m ? " linked" : ""}" data-path="${esc(p)}">` +
+        (editable ? `<a href="#" class="open" title="Edit and run">${shown}</a>` : `<span>${shown}</span>`) +
+        ` <span>${fmtSize(b.length)}</span>` +
+        `<a href="#" class="dl" title="Download ${name}" aria-label="Download ${name}">&darr;</a>` +
+        (ro ? `<span class="ro" title="read-only folder">ro</span>` :
+          `<button type="button" class="del" title="Delete ${name}" aria-label="Delete ${name}">&times;</button>`) + `</span>`;
+    }).join("");
+  }
+  function renderNote() {
+    const n = $("storenote"), msg = [store.broken, disk.error].filter(Boolean).join("; ");
+    n.hidden = !msg; n.textContent = msg;
+  }
+  function download(p) {
+    const blob = new Blob([workspace.get(p)], { type: "application/octet-stream" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob); link.download = p.slice(p.lastIndexOf("/") + 1);
+    link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  }
+  function dropCurrentIf(pred) {        // the open file of yours is going away: back to the first sample
+    if (current && current.user && pred(HOME + current.file)) { current = null; select(data.samples[0]); }
+  }
+  filelist.addEventListener("click", (e) => {
+    const f = e.target.closest(".f[data-path]");
+    if (!f || run) return;
+    const p = f.dataset.path;
+    if (e.target.closest(".open")) { e.preventDefault(); openFile(p); }
+    else if (e.target.closest(".dl")) { e.preventDefault(); if (current && current.user && p === HOME + current.file) saveCurrent(); download(p); }
+    else if (e.target.closest(".del")) {
+      const m = mountOf(p);
+      if (m && (!m.rw || !confirm(`Delete ${p.slice(HOME.length)} from your folder ${m.handle.name}?`))) return;
+      workspace.delete(p); dropCurrentIf((q) => q === p); renderFiles();
+    }
+  });
+  $("clearfiles").addEventListener("click", () => {
+    if (run) return;
+    const mine = [...workspace.keys()].filter(isBrowserFile);
+    if (!confirm(`Delete all your browser files (${mine.length}) from this browser? Linked folders are not touched.`)) return;
+    for (const p of mine) workspace.delete(p);
+    dropCurrentIf(isBrowserFile); renderFiles();
+  });
+
+  // a path relative to /home/rexx ("lib/util.cls"), normalized, or null if unusable
+  function relPath(n) {
+    if (!n || /[\x00-\x1f]/.test(n)) return null;
+    const parts = n.replace(/\\/g, "/").split("/").filter((x) => x !== "" && x !== ".");
+    if (!parts.length || parts.includes("..")) return null;
+    return parts.join("/");
+  }
+
+  // ---- .zip, without libraries: stored (no compression) out; stored or deflated in
+  const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+  const crc32 = (b) => { let c = 0xffffffff; for (let i = 0; i < b.length; i++) c = CRC[(c ^ b[i]) & 255] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+  function zipBuild(entries) {          // [[name, Uint8Array]] -> Uint8Array
+    const d = new Date(), time = (d.getHours() << 11) | (d.getMinutes() << 5) | (d.getSeconds() >> 1);
+    const date = ((d.getFullYear() - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+    const parts = [], central = []; let off = 0;
+    for (const [name, data] of entries) {
+      const nm = enc.encode(name), crc = crc32(data);
+      const h = new DataView(new ArrayBuffer(30));
+      [[0, 0x04034b50, 4], [4, 20, 2], [6, 0x0800, 2], [8, 0, 2], [10, time, 2], [12, date, 2], [14, crc, 4],
+       [18, data.length, 4], [22, data.length, 4], [26, nm.length, 2], [28, 0, 2]]
+        .forEach(([o, v, n]) => n === 4 ? h.setUint32(o, v, true) : h.setUint16(o, v, true));
+      const c = new DataView(new ArrayBuffer(46));
+      [[0, 0x02014b50, 4], [4, 20, 2], [6, 20, 2], [8, 0x0800, 2], [10, 0, 2], [12, time, 2], [14, date, 2], [16, crc, 4],
+       [20, data.length, 4], [24, data.length, 4], [28, nm.length, 2], [42, off, 4]]
+        .forEach(([o, v, n]) => n === 4 ? c.setUint32(o, v, true) : c.setUint16(o, v, true));
+      parts.push(new Uint8Array(h.buffer), nm, data); central.push(new Uint8Array(c.buffer), nm);
+      off += 30 + nm.length + data.length;
+    }
+    const cdSize = central.reduce((n, x) => n + x.length, 0), e = new DataView(new ArrayBuffer(22));
+    e.setUint32(0, 0x06054b50, true); e.setUint16(8, entries.length, true); e.setUint16(10, entries.length, true);
+    e.setUint32(12, cdSize, true); e.setUint32(16, off, true);
+    const all = [...parts, ...central, new Uint8Array(e.buffer)], out = new Uint8Array(off + cdSize + 22);
+    let at = 0; for (const x of all) { out.set(x, at); at += x.length; }
+    return out;
+  }
+  async function zipRead(buf) {         // Uint8Array -> [[name, Uint8Array]] (throws if not a zip it can read)
+    const v = new DataView(buf.buffer, buf.byteOffset, buf.byteLength), dec = new TextDecoder();
+    let e = buf.length - 22;
+    while (e >= 0 && v.getUint32(e, true) !== 0x06054b50) e--;
+    if (e < 0) throw new Error("not a zip file");
+    const count = v.getUint16(e + 10, true); let c = v.getUint32(e + 16, true);
+    const out = [];
+    for (let i = 0; i < count; i++) {
+      if (v.getUint32(c, true) !== 0x02014b50) throw new Error("bad zip directory");
+      const method = v.getUint16(c + 10, true), csize = v.getUint32(c + 20, true);
+      const nl = v.getUint16(c + 28, true), xl = v.getUint16(c + 30, true), cl = v.getUint16(c + 32, true);
+      const lo = v.getUint32(c + 42, true), name = dec.decode(buf.subarray(c + 46, c + 46 + nl));
+      c += 46 + nl + xl + cl;
+      if (name.endsWith("/") || name.startsWith("__MACOSX/") || /(^|\/)\.DS_Store$/.test(name)) continue;
+      const at = lo + 30 + v.getUint16(lo + 26, true) + v.getUint16(lo + 28, true), raw = buf.subarray(at, at + csize);
+      let data;
+      if (method === 0) data = raw.slice();
+      else if (method === 8) data = new Uint8Array(await new Response(
+        new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer());
+      else throw new Error(`${name}: unsupported compression method ${method}`);
+      out.push([name, data]);
+    }
+    return out;
+  }
+
+  // entries: [{rel, size, bytes: () => Promise<Uint8Array>}] from the pickers or a drop
+  async function addEntries(entries) {
+    if (run || !entries.length) return;
+    const skipped = [], problems = [];
+    let last = null, reopen = null, added = 0;
+    const put = (rel, bytes) => {
+      const r = relPath(rel);
+      if (!r) { skipped.push(rel); return; }
+      const p = HOME + r, m = mountOf(p);
+      if (m && !m.rw) { skipped.push(rel + " (read-only folder)"); return; }
+      workspace.set(p, bytes);
+      if (current && current.user && HOME + current.file === p) { current = null; reopen = p; }  // reload it below
+      last = p; added++;
+    };
+    for (const en of entries) {
+      if (en.size > MAX_FILE) { skipped.push(en.rel); continue; }
+      const bytes = await en.bytes();
+      if (/\.zip$/i.test(en.rel) && entries.length === 1 &&
+          confirm(`Unpack ${en.rel} into your files? (Cancel keeps the .zip as it is.)`)) {
+        try { for (const [n, b] of await zipRead(bytes)) b.length > MAX_FILE ? skipped.push(n) : put(n, b); }
+        catch (err) { problems.push(`${en.rel}: ${err.message}`); }
+      } else put(en.rel, bytes);
+    }
+    renderFiles();
+    // one uploaded program goes straight into the editor
+    if (last && added === 1 && asText(workspace.get(last)) !== null) openFile(last);
+    else if (reopen && asText(workspace.get(reopen)) !== null) openFile(reopen);
+    else if (!current) select(data.samples[0]);
+    if (skipped.length || problems.length)
+      note((skipped.length ? "Not uploaded (bad name, or larger than " + fmtSize(MAX_FILE) + "): " + skipped.join(", ") + ". " : "") + problems.join(". "));
+  }
+  const fromFiles = (files) => [...files].map((f) => ({ rel: f.webkitRelativePath || f.name, size: f.size,
+    bytes: async () => new Uint8Array(await f.arrayBuffer()) }));
+  async function fromDrop(items) {      // folders dropped keep their structure
+    const roots = [...items].map((it) => it.webkitGetAsEntry && it.webkitGetAsEntry()).filter(Boolean);
+    if (!roots.length) return null;
+    const out = [];
+    const fileOf = (fe) => new Promise((ok, ko) => fe.file(ok, ko));
+    const readAll = (dir) => new Promise((ok, ko) => {
+      const r = dir.createReader(), acc = [];
+      const step = () => r.readEntries((batch) => { if (!batch.length) ok(acc); else { acc.push(...batch); step(); } }, ko);
+      step();
+    });
+    async function walk(en) {
+      if (en.isFile) { const f = await fileOf(en); out.push({ rel: en.fullPath.replace(/^\//, ""), size: f.size, bytes: async () => new Uint8Array(await f.arrayBuffer()) }); }
+      else if (en.isDirectory) for (const c of await readAll(en)) await walk(c);
+    }
+    for (const r of roots) await walk(r);
+    return out;
+  }
+  $("upload").addEventListener("click", () => { if (!run) picker.click(); });
+  picker.addEventListener("change", () => { addEntries(fromFiles(picker.files)); picker.value = ""; });
+  const dirpicker = $("dirpicker");
+  if (!("webkitdirectory" in dirpicker)) $("uploaddir").hidden = true;
+  $("uploaddir").addEventListener("click", () => { if (!run) dirpicker.click(); });
+  dirpicker.addEventListener("change", () => { addEntries(fromFiles(dirpicker.files)); dirpicker.value = ""; });
+  $("zipall").addEventListener("click", () => {
+    if (run || !workspace.size) return;
+    if (current && current.user) saveCurrent();
+    const zip = zipBuild([...workspace].sort(([a], [b]) => a.localeCompare(b)).map(([p, b]) => [p.slice(HOME.length), b]));
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([zip], { type: "application/zip" })); link.download = "rexx-files.zip";
+    link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  });
+  let dragDepth = 0;
+  const hasFiles = (e) => e.dataTransfer && [...e.dataTransfer.types].includes("Files");
+  document.addEventListener("dragenter", (e) => { if (hasFiles(e) && !run) { dragDepth++; document.body.classList.add("dragging"); } });
+  document.addEventListener("dragleave", (e) => { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; document.body.classList.remove("dragging"); } });
+  document.addEventListener("dragover", (e) => { if (hasFiles(e)) e.preventDefault(); });
+  document.addEventListener("drop", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault(); dragDepth = 0; document.body.classList.remove("dragging");
+    const items = e.dataTransfer.items, files = [...e.dataTransfer.files];   // read both before any await
+    (items && items.length ? fromDrop(items) : Promise.resolve(null))
+      .catch(() => null).then((list) => addEntries(list || fromFiles(files)));
+  });
+
+  // ---- linked folders (File System Access API: Chrome, Edge) -----------------------
+  // A folder of your computer, mounted as /home/rexx/NAME/ next to your browser files.
+  // It is read when you come back to the page and before every run (so changes made
+  // with other tools show up). Read & write: what you do here is written to it, and
+  // deleting there always asks. Read only: nothing is ever written to it.
+  const DISK_MAX_FILES = 2000, DISK_MAX_BYTES = 64 * 1024 * 1024;
+  async function diskRead(m) {
+    const out = new Map(); let total = 0;
+    async function walk(d, prefix) {
+      for await (const [name, h] of d.entries()) {
+        if (name.startsWith(".")) continue;                  // .git, .DS_Store, ...
+        if (h.kind === "directory") { await walk(h, prefix + name + "/"); continue; }
+        const f = await h.getFile();
+        total += f.size;
+        if (out.size >= DISK_MAX_FILES || total > DISK_MAX_BYTES)
+          throw new Error(`${m.handle.name} is too large for the playground (at most ${DISK_MAX_FILES} files, ${fmtSize(DISK_MAX_BYTES)})`);
+        out.set(prefix + name, new Uint8Array(await f.arrayBuffer()));
+      }
+    }
+    await walk(m.handle, HOME + m.name + "/");
+    return out;
+  }
+  async function diskDirOf(m, path, create) {
+    const parts = path.slice((HOME + m.name + "/").length).split("/"), name = parts.pop();
+    let d = m.handle;
+    for (const x of parts) d = await d.getDirectoryHandle(x, { create });
+    return [d, name];
+  }
+  function diskSave(ws) {               // write what changed in read & write folders, remove what is gone
+    const jobs = [];
+    for (const m of mounts.values()) {
+      if (!m.rw) continue;
+      const puts = [], dels = [];
+      for (const [p, b] of ws) if (mountOf(p) === m && !sameBytes(m.known.get(p), b)) puts.push([p, b]);
+      for (const p of m.known.keys()) if (!ws.has(p)) dels.push(p);
+      if (!puts.length && !dels.length) continue;
+      for (const [p, b] of puts) m.known.set(p, b);
+      for (const p of dels) m.known.delete(p);
+      jobs.push(async () => {
+        if (mounts.get(m.name) !== m) return;
+        for (const [p, b] of puts) {
+          const [d, n] = await diskDirOf(m, p, true);
+          const w = await (await d.getFileHandle(n, { create: true })).createWritable();
+          await w.write(b); await w.close();
+        }
+        for (const p of dels) {
+          try { const [d, n] = await diskDirOf(m, p, false); await d.removeEntry(n); }
+          catch (e) { if (e.name !== "NotFoundError") throw e; }
+        }
+      });
+    }
+    if (!jobs.length) return disk.busy;
+    disk.busy = disk.busy.then(async () => {
+      try { for (const j of jobs) await j(); disk.error = null; }
+      catch (e) { disk.error = `could not write to your folder: ${e.message}`; }
+      renderNote();
+    });
+    return disk.busy;
+  }
+  async function diskPull() {           // every linked folder -> your files
+    if (!mounts.size || run) return;
+    if (current && current.user) saveCurrent();
+    await diskSave(workspace);
+    const got = new Map();
+    for (const m of mounts.values()) {
+      try { got.set(m, await diskRead(m)); }
+      catch (e) { disk.error = `could not read your folder: ${e.message}`; renderNote(); return; }
+    }
+    if (run) return;
+    const open = current && current.user ? HOME + current.file : null;
+    const had = open ? workspace.get(open) : null;
+    for (const [m, files] of got) {
+      if (mounts.get(m.name) !== m) continue;
+      for (const p of [...workspace.keys()]) if (mountOf(p) === m) workspace.delete(p);
+      for (const [p, b] of files) workspace.set(p, b);
+      m.known = new Map(files);
+    }
+    if (open && mountOf(open)) {
+      if (!workspace.has(open)) { current = null; select(data.samples[0]); }        // deleted out there
+      else if (!sameBytes(had, workspace.get(open))) {                                // changed out there
+        const t = asText(workspace.get(open));
+        if (t !== null) { const at = src.selectionStart; src.value = t; src.setSelectionRange(at, at); hlChanged(0); }
+      }
+    }
+    renderFiles();
+  }
+  function mountName(h) {               // the folder's name, unless /home/rexx already has it
+    const base = relPath(h.name.replace(/\//g, "_")) || "folder";
+    const taken = (n) => mounts.has(n) || [...workspace.keys()].some((p) => p.startsWith(HOME + n + "/") || p === HOME + n);
+    let n = base, i = 2;
+    while (taken(n)) n = `${base}-${i++}`;
+    return n;
+  }
+  function saveMounts() {
+    store.meta("mounts", [...mounts.values()].map((m) => ({ handle: m.handle, rw: m.rw })));
+  }
+  async function linkFolder(h, rw = true) {
+    if (run) return false;
+    if (current && current.user) saveCurrent();
+    for (const m of mounts.values()) if (await m.handle.isSameEntry(h).catch(() => false)) { note(`${h.name} is already linked as ${m.name}.`); return false; }
+    const m = { handle: h, rw: !!rw, name: mountName(h), known: new Map() };
+    let files;
+    try { files = await diskRead(m); }
+    catch (e) { note(`Folder not linked: ${e.message}`); return false; }
+    mounts.set(m.name, m);
+    m.known = new Map(files);
+    for (const [p, b] of files) workspace.set(p, b);
+    disk.pending = disk.pending.filter((x) => x.handle !== h);
+    saveMounts();
+    renderFiles();
+    return true;
+  }
+  async function unlinkFolder(name) {
+    const m = mounts.get(name);
+    if (run || !m) return;
+    if (current && current.user) saveCurrent();
+    await diskSave(workspace);
+    mounts.delete(name);
+    for (const p of [...workspace.keys()]) if (p.startsWith(HOME + name + "/")) workspace.delete(p);
+    dropCurrentIf((q) => q.startsWith(HOME + name + "/"));
+    saveMounts();
+    renderFiles();
+  }
+  function linkUI() {
+    const can = "showDirectoryPicker" in window;
+    $("linkdir").hidden = !can || !$("linkmode").hidden;
+    $("relink").hidden = !disk.pending.length;
+    $("relink").textContent = `Reconnect ${disk.pending.map((x) => x.handle.name).join(", ")}`;
+    $("mounts").innerHTML = [...mounts.values()].map((m) =>
+      `<span class="mount" data-name="${esc(m.name)}" title="${esc(m.handle.name)} on your computer">` +
+      `${esc(m.name)}/ <i>${m.rw ? "read & write" : "read only"}</i>` +
+      `<button type="button" class="unlink" title="Unlink ${esc(m.name)}" aria-label="Unlink ${esc(m.name)}">&times;</button></span>`).join("");
+    $("mounts").hidden = !mounts.size;
+  }
+  $("linkdir").addEventListener("click", () => { if (!run) { $("linkmode").hidden = false; linkUI(); $("linkrw").focus(); } });
+  async function pick(rw) {
+    $("linkmode").hidden = true; linkUI();
+    let h;
+    try { h = await window.showDirectoryPicker({ id: "oorexx-playground", mode: rw ? "readwrite" : "read" }); }
+    catch (e) { return; }                                    // cancelled
+    linkFolder(h, rw);
+  }
+  $("linkrw").addEventListener("click", () => pick(true));
+  $("linkro").addEventListener("click", () => pick(false));
+  $("linkcancel").addEventListener("click", () => { $("linkmode").hidden = true; linkUI(); });
+  $("relink").addEventListener("click", async () => {
+    for (const x of [...disk.pending]) {
+      try { if ((await x.handle.requestPermission({ mode: x.rw ? "readwrite" : "read" })) !== "granted") continue; }
+      catch (e) { continue; }
+      await linkFolder(x.handle, x.rw);
+    }
+    linkUI();
+  });
+  $("mounts").addEventListener("click", (e) => {
+    const b = e.target.closest(".unlink");
+    if (b) unlinkFolder(b.closest(".mount").dataset.name);
+  });
+  window.addEventListener("focus", () => { if (mounts.size && !run) diskPull(); });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && mounts.size && !run) diskPull(); });
+  window.OoRexxPlayground = { linkFolder, unlinkFolder, pull: diskPull };   // for tests and the curious
+
+  $("newfile").addEventListener("click", () => {
+    if (run) return;
+    newname.hidden = false; newname.value = ""; newname.focus();
+  });
+  newname.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); newname.hidden = true; }
+    else if (e.key === "Enter") {
+      e.preventDefault();
+      const n = relPath(newname.value.trim());
+      if (!n) { newname.setCustomValidity("A file name, or a path like lib/util.cls"); newname.reportValidity(); return; }
+      const m = mountOf(HOME + n);
+      if (m && !m.rw) { newname.setCustomValidity(`${m.name} is a read-only folder`); newname.reportValidity(); return; }
+      newname.setCustomValidity("");
+      newname.hidden = true;
+      const p = HOME + n;
+      if (!workspace.has(p)) workspace.set(p, new Uint8Array(0));
+      renderFiles(); openFile(p);
+    }
+  });
+  newname.addEventListener("input", () => newname.setCustomValidity(""));
+  newname.addEventListener("blur", () => { newname.hidden = true; });
+
+  // ---- run ------------------------------------------------------------------------
+  function setRunning(on) {
+    runBtn.textContent = on ? "Stop" : "Run";
+    runBtn.classList.toggle("stop", on);
+    for (const b of nav.querySelectorAll("button")) b.disabled = on;
+    for (const b of $("files").querySelectorAll("button")) b.disabled = on;
+    stdinBox.readOnly = on;
+  }
+
+  // a sample's binary companion files (the bitmaps of the JDOR samples) are fetched when needed
+  const binCache = new Map();
+  function companionsLoad(s) {
+    const urls = Object.values((s && s.companions) || {}).filter((v) => typeof v !== "string").map((v) => v.url);
+    return Promise.all(urls.map((u) => binCache.get(u) || (binCache.set(u, fetch(u).then((r) => r.ok ? r.arrayBuffer() : Promise.reject(new Error(u + ": HTTP " + r.status)))
+      .then((b) => new Uint8Array(b))), binCache.get(u))));
+  }
+  const companion = (v) => typeof v === "string" ? enc.encode(v) : binCache.get("=" + v.url);
+
+  let starting = false;
+  async function start() {              // with a linked folder, read it first
+    if (run || !rexx || starting) return;
+    if (current && !current.user && current.companions) {
+      const urls = Object.values(current.companions).filter((v) => typeof v !== "string").map((v) => v.url);
+      if (urls.some((u) => !binCache.has("=" + u))) {
+        starting = true;
+        statusEl.innerHTML = "<span>loading the sample's files…</span>";
+        setRunning(true);
+        try {
+          const bins = await companionsLoad(current);
+          urls.forEach((u, i) => binCache.set("=" + u, bins[i]));
+        } catch (e) { setRunning(false); emit("Could not load the sample's files: " + e.message + "\n", "x"); return; }
+        finally { starting = false; }
+      }
+      if (run) return;
+    }
+    if (mounts.size) {
+      starting = true;
+      try { await diskPull(); } finally { starting = false; }
+      if (run) return;
+    }
+    startNow();
+  }
+  function startNow() {
+    if (run || !rexx) return;
+    saveCurrent();
+    const program = src.value.endsWith("\n") || src.value === "" ? src.value : src.value + "\n";
+    const before = workspace;
+    const injected = new Map(workspace);
+    if (!current.user) {
+      for (const [name, val] of Object.entries(current.companions || {})) injected.set(HOME + name, companion(val));
+      injected.set(HOME + current.file, enc.encode(program));
+    }
+    const ranUser = current.user;
+    const fixed = stdinBox.value;
+    const interactive = fixed === "";
+    out.textContent = "";
+    ansiReset();
+    prompt.classList.add("bol");
+    statusEl.innerHTML = "<span>running…</span>";
+    setRunning(true);
+    prompt.hidden = !interactive;
+    prompt.classList.remove("waiting", "dbg");
+    line.value = "";
+    hpos = history.length; hdraft = "";
+
+    const args = [current.file];
+    if (argsEl.value.trim() !== "") args.push(argsEl.value.trim());
+    jdorClear();
+    for (const p of document.querySelectorAll(".orx-dom-panel")) p.remove();   // ADDRESS DOM's panels
+    const thisRunRef = {};
+    run = thisRunRef.run = rexx.run({
+      args, files: Object.assign({}, parserFiles || {}, Object.fromEntries(injected)), cwd: HOME,
+      env: rexxPath(),
+      stdin: interactive ? undefined : (fixed.endsWith("\n") ? fixed : fixed + "\n"),
+      onOut: (t, kind) => term(t, "", kind),
+      onErr: (t, kind) => term(t, "e", kind),
+      onJdor: (m) => jdorMessage(m, thisRunRef),
+      screen: { width: innerWidth, height: innerHeight },
+      // the user runs their own code: JavaScript objects (js.cls) are allowed
+      js: { worker: true, page: true },
+      // ADDRESS DOM starts with no root: a program makes its panel with NEW (or says ROOT PAGE)
+      dom: { root: null },
+      onInput: (info) => {
+        debugRead = info && typeof info.debug === "boolean" ? info.debug : lastCls === "t";
+        prompt.classList.add("waiting");
+        prompt.classList.toggle("dbg", debugRead);
+        if (document.activeElement !== src && document.activeElement !== argsEl) line.focus({ preventScroll: true });
+        consoleEl.scrollTop = consoleEl.scrollHeight;
+      },
+    });
+    const thisRun = run;
+    run.done.then((r) => {
+      if (run !== thisRun) return;
+      run = null;
+      termFlush(); sgr = {};
+      setRunning(false);
+      prompt.hidden = true;
+      if (r.error) emit((atLineStart() ? "" : "\n") + "Internal error: " + r.error + "\n", "x");
+      if (r.stopped) emit((atLineStart() ? "" : "\n") + "[stopped]\n", "note");
+      // keep what the program left in /home/rexx, except the sample files we put there unchanged
+      // (a file of yours that a sample's file shadowed for this run comes back)
+      if (!r.stopped && !r.error) {
+        const next = new Map();
+        for (const [p, b] of Object.entries(r.files)) {
+          const was = injected.get(p);
+          const same = was && was.length === b.length && was.every((v, i) => v === b[i]);
+          const ours = !ranUser && (p === HOME + current.file || (current.companions && (p.slice(HOME.length) in current.companions)));
+          if (same && ours) { if (before.has(p)) next.set(p, before.get(p)); }
+          else next.set(p, b);
+        }
+        // linked folders: nothing changes in a read-only one; deleting in the others asks
+        const kept = [];
+        for (const m of mounts.values()) {
+          if (m.rw) continue;
+          for (const p of [...next.keys()]) if (mountOf(p) === m && !sameBytes(m.known.get(p), next.get(p))) { next.delete(p); kept.push(p); }
+          for (const [p, b] of m.known) if (!next.has(p)) { next.set(p, b); kept.push(p); }
+        }
+        if (kept.length) emit((atLineStart() ? "" : "\n") + `[not written, read-only folder: ${kept.map((p) => p.slice(HOME.length)).join(", ")}]\n`, "note");
+        const gone = [...before.keys()].filter((p) => !next.has(p) && mountOf(p));
+        if (gone.length && !confirm(`The program deleted ${gone.length} file${gone.length === 1 ? "" : "s"} in a linked folder ` +
+            `(${gone.map((p) => p.slice(HOME.length)).slice(0, 8).join(", ")}${gone.length > 8 ? ", ..." : ""}). ` +
+            `Delete ${gone.length === 1 ? "it" : "them"} on your computer too?`))
+          for (const p of gone) next.set(p, before.get(p));
+        workspace = next;
+      }
+      renderFiles();
+      statusEl.dataset.runs = (+statusEl.dataset.runs || 0) + 1;
+      const rc = r.stopped ? "stopped" : r.error ? "failed" : "exit " + r.rc;
+      const good = !r.stopped && !r.error && r.rc === 0;
+      statusEl.innerHTML = `<span class="${good ? "good" : "bad"}">${esc(rc)}</span>` +
+        `<span>${fmtMs(r.ms)}</span>` +
+        `<span>${errCount} line${errCount === 1 ? "" : "s"} on stderr</span>` +
+        (traceCount ? `<span>${traceCount} trace line${traceCount === 1 ? "" : "s"}</span>` : "");
+    });
+  }
+
+
+  // ---- JDOR windows ----------------------------------------------------------------
+  // JDOR (ADDRESS JDOR) shows each handler's image in a window: here a panel over the page.
+  const jwins = new Map();
+  function jdorClear() { for (const w of jwins.values()) w.el.remove(); jwins.clear(); }
+  function jdorPlace(w, x, y) {           // keep the title bar reachable
+    const r = w.el.getBoundingClientRect();
+    x = Math.max(-r.width + 60, Math.min(innerWidth - 60, x));
+    y = Math.max(0, Math.min(innerHeight - 30, y));
+    w.el.style.left = x + "px"; w.el.style.top = y + "px";
+    w.x = x; w.y = y;
+  }
+  function jdorMessage(m, ref) {
+    let w = jwins.get(m.win);
+    switch (m.op) {
+      case "window": {
+        if (!w) {
+          w = { el: document.createElement("div") };
+          w.el.className = "jdorwin";
+          w.el.innerHTML = `<div class="jt"><span></span><button type="button" title="Close">&times;</button></div><canvas></canvas>`;
+          w.title = w.el.querySelector(".jt span"); w.canvas = w.el.querySelector("canvas");
+          w.ctx = w.canvas.getContext("bitmaprenderer");
+          document.body.append(w.el);
+          jwins.set(m.win, w);
+          w.el.querySelector("button").addEventListener("click", () => {
+            w.el.remove(); jwins.delete(m.win);
+            if (ref.run && ref.run.running) ref.run.jdorEvent({ op: "closed", win: m.win });
+          });
+          let drag = null;
+          const down = (e) => {
+            if (e.button !== 0 || e.target.closest("button")) return;
+            if (e.currentTarget === w.canvas && !w.el.classList.contains("noframe")) return;
+            drag = { dx: e.clientX - w.x, dy: e.clientY - w.y };
+            e.currentTarget.setPointerCapture(e.pointerId);
+            for (const o of jwins.values()) o.el.style.zIndex = "";
+            w.el.style.zIndex = w.el.classList.contains("ontop") ? 46 : 41;
+          };
+          const move = (e) => { if (drag) jdorPlace(w, e.clientX - drag.dx, e.clientY - drag.dy); };
+          const up = () => {
+            if (!drag) return;
+            drag = null;
+            if (ref.run && ref.run.running) ref.run.jdorEvent({ op: "moved", win: m.win, x: Math.round(w.x), y: Math.round(w.y) });
+          };
+          for (const t of [w.el.querySelector(".jt"), w.canvas]) {
+            t.addEventListener("pointerdown", down); t.addEventListener("pointermove", move);
+            t.addEventListener("pointerup", up); t.addEventListener("pointercancel", up);
+          }
+        }
+        w.title.textContent = m.title;
+        w.el.title = m.title;
+        w.el.classList.toggle("noframe", !m.frame);
+        w.el.classList.toggle("ontop", !!m.alwaysOnTop);
+        if (w.canvas.width !== m.width || w.canvas.height !== m.height) { w.canvas.width = m.width; w.canvas.height = m.height; }
+        w.el.hidden = !m.visible;
+        jdorPlace(w, m.x, m.y);
+        break;
+      }
+      case "frame":
+        if (w) w.ctx.transferFromImageBitmap(m.bitmap); else m.bitmap.close();
+        break;
+      case "close":
+        if (w) { w.el.remove(); jwins.delete(m.win); }
+        break;
+      case "toFront": case "toBack":
+        if (w) w.el.style.zIndex = m.op === "toFront" ? 44 : 39;
+        break;
+      case "clipboard": {
+        const c = document.createElement("canvas");
+        c.width = m.bitmap.width; c.height = m.bitmap.height;
+        const x = c.getContext("2d");
+        if (m.withoutAlpha) { x.fillStyle = "#fff"; x.fillRect(0, 0, c.width, c.height); }
+        x.drawImage(m.bitmap, 0, 0); m.bitmap.close();
+        c.toBlob((b) => {
+          const done = navigator.clipboard && window.ClipboardItem ? navigator.clipboard.write([new ClipboardItem({ "image/png": b })]) : Promise.reject();
+          done.then(() => emit((atLineStart() ? "" : "\n") + "[JDOR: the image is on the clipboard]\n", "note"),
+            () => emit((atLineStart() ? "" : "\n") + "[JDOR: the browser did not let the page use the clipboard]\n", "note"));
+        }, "image/png");
+        break;
+      }
+      case "print": {
+        if (!m.bitmap) break;
+        const c = document.createElement("canvas");
+        c.width = m.bitmap.width; c.height = m.bitmap.height;
+        c.getContext("2d").drawImage(m.bitmap, 0, 0); m.bitmap.close();
+        const f = document.createElement("iframe");
+        f.style.cssText = "position:fixed;width:0;height:0;border:0;right:0;bottom:0";
+        document.body.append(f);
+        f.contentDocument.body.innerHTML = `<img src="${c.toDataURL()}" style="${m.scaleToPage ? "max-width:100%;max-height:100vh" : ""}">`;
+        f.contentWindow.onafterprint = () => f.remove();
+        setTimeout(() => { f.contentWindow.print(); setTimeout(() => f.remove(), 60000); }, 100);
+        break;
+      }
+    }
+  }
+
+  // REXX_PATH: the linked folders first (so ::requires "dir/x.cls" finds what is under
+  // them), then the preloaded libraries
+  function rexxPath() {
+    const own = [...mounts.keys()].map((n) => HOME + n);
+    if (!own.length && !parserFiles) return undefined;
+    return { REXX_PATH: own.concat(parserFiles ? [RXPATH] : ["/usr/lib/ooRexx"]).join(":") };
+  }
+
+  function stop() { if (run) run.stop(); }
+
+  line.addEventListener("keydown", (e) => {
+    if (!run) return;
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {   // recall earlier lines, like a shell
+      e.preventDefault();
+      if (hpos === history.length) hdraft = line.value;
+      hpos = Math.max(0, Math.min(history.length, hpos + (e.key === "ArrowUp" ? -1 : 1)));
+      line.value = hpos === history.length ? hdraft : history[hpos];
+      line.setSelectionRange(line.value.length, line.value.length);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      const text = line.value;
+      line.value = "";
+      if (text.trim() !== "" && history[history.length - 1] !== text) history.push(text);
+      if (history.length > 500) history.shift();
+      hpos = history.length; hdraft = "";
+      emit(text + "\n", debugRead ? "dbg" : "in");
+      prompt.classList.remove("waiting", "dbg");
+      run.write(text + "\n");
+    } else if (e.key === "d" && e.ctrlKey) {
+      e.preventDefault();
+      if (line.value) { run.write(line.value); emit(line.value, "in"); line.value = ""; }
+      emit("^D\n", "in");
+      prompt.classList.remove("waiting");
+      run.close();
+      prompt.hidden = true;
+    }
+  });
+  consoleEl.addEventListener("click", () => { if (!prompt.hidden && !window.getSelection().toString()) line.focus(); });
+  runBtn.addEventListener("click", () => (run ? stop() : start()));
+  $("clear").addEventListener("click", () => { out.textContent = ""; });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "F1") { e.preventDefault(); toggleDialog($("help")); return; }
+    if (document.querySelector("dialog[open]")) return;     // Esc closes the dialog
+    if (e.key === "Escape" && run) { e.preventDefault(); stop(); }
+    else if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !run) { e.preventDefault(); start(); }
+  });
+  // ---- dialogs: help (F1) and settings (console colors) -----------------------------
+  function toggleDialog(d) { if (d.open) d.close(); else { for (const o of document.querySelectorAll("dialog[open]")) o.close(); d.showModal(); } }
+  for (const d of document.querySelectorAll("dialog")) {
+    d.addEventListener("click", (e) => { if (e.target === d || e.target.closest("[data-close]")) d.close(); });
+  }
+  $("helpbtn").addEventListener("click", () => toggleDialog($("help")));
+  const STREAMS = [["out", "stdout", ".output", "say 'Hello'"], ["err", "stderr", ".error", "Error 40: Incorrect call"],
+                   ["trace", "trace", ".traceOutput", "     3 *-* x = 1 + 2"], ["in", "you", ".input", "what you type"],
+                   ["dbg", "you, in interactive trace", ".debugInput", "what you type at a TRACE ? pause"]];
+  const COLORS_KEY = "orx-pg-colors";
+  const themeNow = () => document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  function colorPrefs() { try { return JSON.parse(recall(COLORS_KEY)) || {}; } catch { return {}; } }
+  function applyColors() {
+    const mine = colorPrefs()[themeNow()] || {}, root = document.documentElement.style;
+    for (const [k] of STREAMS) mine[k] ? root.setProperty(`--c-${k}`, mine[k]) : root.removeProperty(`--c-${k}`);
+  }
+  function toHex(c) {                   // a computed color as #rrggbb, for <input type=color>
+    const x = document.createElement("canvas").getContext("2d"); x.fillStyle = "#000"; x.fillStyle = c; return x.fillStyle;
+  }
+  function renderColors() {
+    $("settingstheme").textContent = `(${themeNow()} theme)`;
+    const cs = getComputedStyle(document.documentElement);
+    $("colors").innerHTML = STREAMS.map(([k, label, obj, sample]) =>
+      `<input type="color" id="col-${k}" data-k="${k}" value="${toHex(cs.getPropertyValue(`--c-${k}`).trim())}" aria-label="${label} color">` +
+      `<label for="col-${k}">${label} <code>${obj}</code></label><span class="sample" style="color:var(--c-${k})">${esc(sample)}</span>`).join("");
+  }
+  $("colors").addEventListener("input", (e) => {
+    const k = e.target.dataset.k; if (!k) return;
+    const all = colorPrefs(), t = themeNow();
+    (all[t] = all[t] || {})[k] = e.target.value;
+    remember(COLORS_KEY, JSON.stringify(all)); applyColors();
+  });
+  $("colorsreset").addEventListener("click", () => {
+    const all = colorPrefs(); delete all[themeNow()];
+    remember(COLORS_KEY, Object.keys(all).length ? JSON.stringify(all) : null); applyColors(); renderColors();
+  });
+  $("settingsbtn").addEventListener("click", () => { renderColors(); toggleDialog($("settings")); });
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { applyColors(); if ($("settings").open) renderColors(); });
+  applyColors();
+
+  let editTimer = 0;
+  src.addEventListener("input", () => hlChanged(250));
+  src.addEventListener("scroll", hlScroll);
+  src.addEventListener("input", () => {
+    if (!current || !current.user) return;
+    clearTimeout(editTimer);
+    editTimer = setTimeout(() => { if (current && current.user && !run) { saveCurrent(); renderFiles(); } }, 800);
+  });
+  window.addEventListener("pagehide", () => { if (current && current.user && !run) { saveCurrent(); store.save(workspace); diskSave(workspace); } });
+  src.addEventListener("keydown", (e) => {
+    if (e.key === "Tab" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+      e.preventDefault();
+      src.setRangeText("  ", src.selectionStart, src.selectionEnd, "end");
+    }
+  });
+
+  select(data.samples[0]);
+  renderFiles();
+  store.load().then(async (kept) => {
+    for (const [p, b] of workspace) kept.set(p, b);   // anything added while loading wins
+    workspace = kept;
+    const saved = "showDirectoryPicker" in window ? (await store.meta("mounts")) || [] : [];
+    for (const x of saved) {                             // the folders linked last time
+      if (!x || !x.handle || x.handle.kind !== "directory") continue;
+      let perm = "prompt";
+      try { perm = await x.handle.queryPermission({ mode: x.rw ? "readwrite" : "read" }); } catch (e) {}
+      if (!(perm === "granted" && await linkFolder(x.handle, x.rw))) disk.pending.push(x);   // a click asks again
+    }
+    linkUI();
+    const open = recall("orx-pg-open");
+    if (!run && open && workspace.has(open) && asText(workspace.get(open)) !== null && !(current && current.user)) openFile(open);
+    else renderFiles();
+  });
+  if (data.build) $("build").textContent = data.build;
+
+  // ---- runtime ----------------------------------------------------------------------
+  const t0 = performance.now();
+  OoRexx.load().then((r) => {
+    rexx = r;
+    parserLoad.then(hlStart);
+    rstate.dataset.state = "ready";
+    rstate.textContent = "runtime: ready (" + fmtMs(performance.now() - t0) + ")";
+    runBtn.disabled = false;
+  }, (e) => {
+    rstate.dataset.state = "failed";
+    rstate.textContent = "runtime: failed";
+    const f = $("fatal");
+    f.hidden = false;
+    f.textContent = (window.crossOriginIsolated ? "" : "This page is not cross-origin isolated, so the browser does not allow shared memory (the interpreter needs it for its threads). ") + String(e.message || e);
+  });
+})();
+</script>
+</body>
+</html>
