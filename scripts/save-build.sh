@@ -3,7 +3,7 @@
 # built from (scripts/build-manifest.sh), into OUT/oorexxwasm-build.tar.gz.
 # setup-env.sh reuses such a pack, instead of installing Emscripten and
 # compiling, when its MANIFEST matches the current patches: from OUT if it is
-# there, else from the GitHub release made by scripts/publish-build.sh.
+# there, else from the branch saved-build (scripts/publish-build.sh).
 # Run after the final build (and oorexx/wasm/build-node.sh, build-web.sh).
 # Usage: save-build.sh [BUILD_DIR=$ORX_WASM_WORK/build-wasm] [OUT=$ORX_WASM_WORK/saved-build]
 set -euo pipefail
@@ -30,4 +30,4 @@ tar -C "$T" -czf "$OUT/oorexxwasm-build.tar.gz" build
 cp "$S/MANIFEST" "$OUT/MANIFEST"
 rm -rf "$T"
 cat "$OUT/MANIFEST"; ls -l "$OUT/oorexxwasm-build.tar.gz"
-echo "release tag: $("$HERE/build-manifest.sh" --tag)"
+echo "identity: $("$HERE/build-manifest.sh" --tag)"

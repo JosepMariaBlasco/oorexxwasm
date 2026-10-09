@@ -5,8 +5,8 @@
 #   3. If a saved build matches the current patches (MANIFEST, see
 #      save-build.sh), install it into $BUILD/bin, bin-node and bin-web and
 #      stop: no emsdk, no compilation (~1 min total).  The pack is looked for
-#      in $SAVED, then downloaded from this repository's GitHub release
-#      tagged `build-manifest.sh --tag` (publish-build.sh).
+#      in $SAVED, then downloaded from this repository's branch saved-build
+#      as oorexxwasm-`build-manifest.sh --tag`.tar.gz (publish-build.sh).
 #   4. Otherwise install Emscripten via emsdk (skipped if already present)
 #      and build the WASM runtime into $BUILD
 # Everything goes under $ORX_WASM_WORK, by default the directory that
@@ -24,7 +24,7 @@ BUILD=${BUILD:-$ORX_WASM_WORK/build-wasm}
 EMSDK=${EMSDK_DIR:-$ORX_WASM_WORK/emsdk}
 TOOL=$ORX_WASM_WORK/wasmtool
 SAVED=${SAVED:-$ORX_WASM_WORK/saved-build}
-REPO_URL=${REPO_URL:-https://github.com/JosepMariaBlasco/oorexxwasm}
+RAW_URL=${RAW_URL:-https://raw.githubusercontent.com/JosepMariaBlasco/oorexxwasm/saved-build}
 PROJECT=$(cd "$(dirname "$0")/.." && pwd)
 
 command -v svn >/dev/null || { apt-get update -qq >/dev/null; apt-get install -y -q subversion >/dev/null; }
@@ -59,12 +59,12 @@ if [[ "${1:-}" == "" ]]; then
   if [[ -f "$SAVED/oorexxwasm-build.tar.gz" ]] && install_pack "$SAVED/oorexxwasm-build.tar.gz"; then
     echo "== done (from $SAVED; no emsdk, no compilation; use --rebuild to compile)"; exit 0
   fi
-  echo "== looking for the release $TAG"
+  echo "== looking for the saved build $TAG"
   mkdir -p "$SAVED"
-  if curl -fsSL -o "$SAVED/oorexxwasm-build.tar.gz.part" "$REPO_URL/releases/download/$TAG/oorexxwasm-build.tar.gz"; then
+  if curl -fsSL -o "$SAVED/oorexxwasm-build.tar.gz.part" "$RAW_URL/oorexxwasm-$TAG.tar.gz"; then
     mv "$SAVED/oorexxwasm-build.tar.gz.part" "$SAVED/oorexxwasm-build.tar.gz"
     if install_pack "$SAVED/oorexxwasm-build.tar.gz"; then
-      echo "== done (release $TAG; no emsdk, no compilation; use --rebuild to compile)"; exit 0
+      echo "== done (saved build $TAG; no emsdk, no compilation; use --rebuild to compile)"; exit 0
     fi
   fi
   rm -f "$SAVED/oorexxwasm-build.tar.gz.part"

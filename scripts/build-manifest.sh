@@ -2,8 +2,9 @@
 # Print the identity of a build: base revision, toolchain, and the sha256 of
 # every patch in patches/ (in order).  save-build.sh stores it in the pack as
 # MANIFEST; setup-env.sh compares it to decide whether a pack is current.
-# With --tag, print instead the GitHub release tag for that identity:
-# build-<first 12 hex digits of the MANIFEST's sha256>.
+# With --tag, print instead a short name for that identity:
+# build-<first 12 hex digits of the MANIFEST's sha256> (the saved build's file
+# name on the branch saved-build is oorexxwasm-<that>.tar.gz).
 set -euo pipefail
 PROJECT=$(cd "$(dirname "$0")/.." && pwd)
 manifest() {

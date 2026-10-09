@@ -56,9 +56,9 @@ saved-build/   the prebuilt binaries it downloaded
 emsdk/         Emscripten, only when compiling
 ```
 
-If this repository has a [release](../../releases) whose binaries match the
-current patches, `setup-env.sh` downloads it and you are done in about a
-minute. Otherwise, or with `--rebuild`, it installs Emscripten 6.0.9 and
+If the branch [`saved-build`](../../tree/saved-build) has binaries that match
+the current patches, `setup-env.sh` downloads them and you are done in about
+a minute. Otherwise, or with `--rebuild`, it installs Emscripten 6.0.9 and
 compiles (a few minutes).
 
 Then:
@@ -104,7 +104,8 @@ browser, and the native test libraries the API groups need):
 - `patches/`: the series.
 - `scripts/`:
   - `setup-env.sh`;
-  - the saved build: `save-build.sh`, `publish-build.sh`, `build-manifest.sh`;
+  - the saved build (prebuilt binaries on the branch `saved-build`):
+    `save-build.sh`, `publish-build.sh`, `build-manifest.sh`;
   - working on the series as git commits: `series-repo.sh`, `series-export.sh`, `export-patch.sh`;
   - `relink.sh`, `check-method-signatures.py`.
 - `tests/`: `qualify.sh`, probes (Node, browser, recursion, threads), the
