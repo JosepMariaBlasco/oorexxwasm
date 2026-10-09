@@ -79,6 +79,10 @@ jobs:
       PLATFORM: ${{ matrix.platform }}
       REV: ${{ needs.plan.outputs.rev }}
       PATTERN: ${{ inputs.pattern }}
+      # The reference runs in results/ were made in this time zone. With UTC
+      # (the runners' default) RexxInteger fails on the 32-bit WASM builds:
+      # see base/class/RexxInteger in tests/suite-browser/known.tsv.
+      TZ: Europe/Madrid
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
