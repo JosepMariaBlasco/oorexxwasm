@@ -134,4 +134,13 @@ Rony G. Flatscher's (BSF4ooRexx). The playground uses the
 [Rexx Parser](https://github.com/JosepMariaBlasco/rexx-parser) and includes
 JDOR samples from BSF4ooRexx (Apache 2.0, see their `NOTICE`).
 
-License: to be added (the patches are intended for ooRexx under the CPL 1.0).
+**License.** Two licenses, by directory:
+
+- `patches/` is under the **Common Public License 1.0**
+  ([`patches/LICENSE`](patches/LICENSE)), the license of ooRexx itself: the
+  patches are meant for ooRexx, and they derive from Tom Dyer's dev1,
+  contributed under the CPL 1.0.
+- Everything else (scripts, tests, the playground, notes, docs) is under the
+  **Apache License 2.0** ([`LICENSE`](LICENSE)). Third-party parts keep their
+  own licenses: the JDOR samples from BSF4ooRexx (Apache 2.0, `NOTICE`), the
+  Rexx Parser (Apache 2.0), the IBM Plex fonts (SIL Open Font License).
