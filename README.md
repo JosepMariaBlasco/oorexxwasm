@@ -106,6 +106,13 @@ Every difference with native has a known cause (mostly: no processes in the
 browser, and the native test libraries the API groups need):
 [`results/suite-platforms-r13263-series.md`](results/suite-platforms-r13263-series.md).
 
+The suite also runs in GitHub Actions on demand
+([`.github/workflows/suite.yml`](.github/workflows/suite.yml): Actions >
+suite > Run workflow), one job per platform (native, Node, Chromium; Firefox
+and WebKit when asked for). Each job compares its run with the reference CSV
+in `results/` (`tests/suite-check.py`) and fails if a group got worse; the
+run's summary puts all platforms side by side.
+
 ## Repository layout
 
 - `patches/`: the series.

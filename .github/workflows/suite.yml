@@ -1,0 +1,176 @@
+# Runs the official ooRexx test suite (test/trunk at the base revision of the
+# port) on demand, one job per platform, and compares every platform with its
+# reference run in results/ (tests/suite-check.py): the job fails if a group
+# that passed there no longer passes, or fails more.
+#
+#   native    ooRexx built natively from the same patched tree (the reference
+#             that tells port problems from upstream ones)
+#   node      the Node command-line build (build-wasm/bin-node/rexx)
+#   chromium, firefox, webkit
+#             the web build (bin-web) in a headless browser
+#             (tests/suite-browser/run.py)
+#
+# Actions > suite > Run workflow; or
+#   gh api -X POST repos/JosepMariaBlasco/oorexxwasm/actions/workflows/suite.yml/dispatches \
+#     -f ref=main -f 'inputs[platforms]=native node chromium'
+# The summary page of the run shows every platform side by side
+# (tests/suite-browser/compare.py) and each job's comparison with its
+# reference; the CSVs and logs are artifacts of the run.
+name: suite
+
+on:
+  workflow_dispatch:
+    inputs:
+      platforms:
+        description: Platforms (any of native node chromium firefox webkit)
+        type: string
+        default: native node chromium
+      pattern:
+        description: Only test groups matching this regular expression
+        type: string
+        default: '.'
+      test_rev:
+        description: test/trunk revision (empty = the port's base revision)
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+env:
+  EMVER: "6.0.9"
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      platforms: ${{ steps.p.outputs.platforms }}
+      rev: ${{ steps.p.outputs.rev }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: p
+        env:
+          PLATFORMS: ${{ inputs.platforms }}
+          TEST_REV: ${{ inputs.test_rev }}
+        run: |
+          json=$(python3 -c '
+          import json, os, sys
+          ok = ["native", "node", "chromium", "firefox", "webkit"]
+          p = os.environ["PLATFORMS"].replace(",", " ").split()
+          bad = [x for x in p if x not in ok]
+          if bad or not p: sys.exit(f"unknown platform(s): {bad}; choose from {ok}")
+          print(json.dumps(sorted(set(p), key=ok.index)))')
+          echo "platforms=$json" >> "$GITHUB_OUTPUT"
+          rev=${TEST_REV:-$(sed -n 's/^REV=\${OOREXX_REV:-\([0-9]*\)}.*/\1/p' scripts/setup-env.sh)}
+          [[ $rev =~ ^[0-9]+$ ]] || { echo "bad revision '$rev'"; exit 1; }
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+          echo "platforms $json, test/trunk r$rev"
+
+  suite:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(needs.plan.outputs.platforms) }}
+    env:
+      ORX_WASM_WORK: ${{ github.workspace }}/..
+      PLATFORM: ${{ matrix.platform }}
+      REV: ${{ needs.plan.outputs.rev }}
+      PATTERN: ${{ inputs.pattern }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq subversion
+          case $PLATFORM in
+            chromium|firefox|webkit)
+              pip install -q websockets playwright
+              python -m playwright install --with-deps "$PLATFORM" ;;
+          esac
+      - name: Emscripten cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/../emsdk
+          key: emsdk-${{ env.EMVER }}-${{ runner.os }}
+      - name: Set up (ooRexx + patches; saved build, or compile)
+        run: scripts/setup-env.sh
+      - name: Native build
+        if: matrix.platform == 'native'
+        run: |
+          mkdir -p "$ORX_WASM_WORK/build-native" && cd "$ORX_WASM_WORK/build-native"
+          cmake -S ../oorexx -B . -DCMAKE_BUILD_TYPE=Release > cmake.log
+          make -j"$(nproc)" > make.log 2>&1 || { tail -50 make.log; exit 1; }
+          D=$PWD
+          printf '#!/bin/sh\nPATH=%s/bin:$PATH LD_LIBRARY_PATH=%s/lib:%s/bin exec %s/bin/rexx "$@"\n' "$D" "$D" "$D" "$D" > rexx-native
+          chmod +x rexx-native
+          ./rexx-native -e 'parse version v; say v'
+      - name: Test suite checkout (test/trunk r${{ env.REV }})
+        run: svn checkout -q -r "$REV" https://svn.code.sf.net/p/oorexx/code-0/test/trunk "$ORX_WASM_WORK/oorexx-test"
+      - name: Run the suite
+        run: |
+          OUT=$RUNNER_TEMP/suite-$PLATFORM
+          J=$(nproc)
+          case $PLATFORM in
+            native) tests/run-suite.sh "$ORX_WASM_WORK/build-native/rexx-native" "$OUT" "$J" 300 "$PATTERN" ;;
+            node)   tests/run-suite.sh "$ORX_WASM_WORK/build-wasm/bin-node/rexx" "$OUT" "$J" 300 "$PATTERN" ;;
+            *)      PW_EXTRA=$HOME/.cache/ms-playwright python tests/suite-browser/run.py "$PLATFORM" \
+                      "$ORX_WASM_WORK/build-wasm/bin-web" "$OUT" --jobs 2 --timeout 300 \
+                      --pattern "$PATTERN" --retry-timeouts ;;
+          esac
+          rm -rf "$OUT/www"
+      - name: Compare with the reference run
+        run: |
+          OUT=$RUNNER_TEMP/suite-$PLATFORM
+          case $PLATFORM in node) ref=wasm ;; native) ref=native ;; *) ref=web-$PLATFORM ;; esac
+          BASE=results/suite-$ref-r$REV-series.csv
+          { echo "## $PLATFORM (test/trunk r$REV)"; echo; } >> "$GITHUB_STEP_SUMMARY"
+          if [[ ! -f $BASE ]]; then
+            echo "No reference run $BASE: nothing to compare with." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "Reference: \`$BASE\`" >> "$GITHUB_STEP_SUMMARY"; echo >> "$GITHUB_STEP_SUMMARY"
+          python tests/suite-check.py "$BASE" "$OUT/results.csv" --pattern "$PATTERN" --md "$OUT/check.md"; rc=$?
+          cat "$OUT/check.md" >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
+      - name: Keep the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: suite-${{ matrix.platform }}
+          path: ${{ runner.temp }}/suite-${{ matrix.platform }}
+          if-no-files-found: ignore
+
+  report:
+    needs: [plan, suite]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: runs
+          pattern: suite-*
+      - name: All platforms side by side
+        run: |
+          args=()
+          for p in native node chromium firefox webkit; do
+            f=runs/suite-$p/results.csv
+            [[ -f $f ]] && args+=("$p=$f")
+          done
+          [[ ${#args[@]} -gt 0 ]] || { echo "no results"; exit 0; }
+          python3 tests/suite-browser/compare.py "${args[@]}" --md compare.md --csv compare.csv > /dev/null
+          { echo "## All platforms (test/trunk r${{ needs.plan.outputs.rev }})"; echo; cat compare.md; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: suite-compare
+          path: compare.*
+          if-no-files-found: ignore
