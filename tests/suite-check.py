@@ -10,8 +10,9 @@ tests/suite-browser/run.py) with a reference run of the same platform
   missing      a group of the reference that did not run (a crash of the
                runner, a pattern that is too narrow is fine: see --pattern)
 
-Groups whose category in known.tsv includes "flaky" are reported but never
-fail the check.  Improvements and new groups are reported too.
+Groups whose category in known.tsv includes "flaky" (intermittent) or
+"stack" (the recursion depth depends on the engine build) are reported but
+never fail the check.  Improvements and new groups are reported too.
 
   --pattern RE  only compare groups matching RE (the run used a pattern)
 """
@@ -37,7 +38,7 @@ flaky = set()
 for line in open(known_path):
     if line.startswith('#') or not line.strip(): continue
     cat, grp, _ = line.rstrip('\n').split('\t')
-    if 'flaky' in cat: flaky.add('ooRexx/' + grp + '.testGroup')
+    if 'flaky' in cat or 'stack' in cat: flaky.add('ooRexx/' + grp + '.testGroup')
 
 SEVERITY = {'ok': 0, 'fail': 1, 'noresult': 2, 'crash': 2, 'timeout': 2}
 def bad(r): return int(r['failures'] or 0) + int(r['errors'] or 0)
@@ -68,7 +69,7 @@ if worse or better:
     out.append('| group | reference | this run | |')
     out.append('|---|---|---|---|')
     for g in worse:
-        out.append(f"| {short(g)} | {cell(base[g])} | {cell(new[g])} | {'worse (flaky, ignored)' if g in flaky else '**worse**'} |")
+        out.append(f"| {short(g)} | {cell(base[g])} | {cell(new[g])} | {'worse (flaky/stack, ignored)' if g in flaky else '**worse**'} |")
     for g in better:
         out.append(f"| {short(g)} | {cell(base[g])} | {cell(new[g])} | better |")
     out.append('')

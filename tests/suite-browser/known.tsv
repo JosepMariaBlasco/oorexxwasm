@@ -56,7 +56,7 @@ api-libs	API/oo/ProcessInvocation	native test library
 api-libs	API/oo/ProcessRexxStart	native test library
 api-libs	API/oo/RexxStart	native test library
 sockets	extensions/rxsock/socketClass	server/client tests (no listen) and socket options (.nil)
-stack	base/keyword/CALL	TEST_STACKSIZE: Error 11 at ~900 (Chromium), ~1300 (Firefox) levels; WebKit passes (~5000)
+stack	base/keyword/CALL	TEST_STACKSIZE: Error 11 at ~900 (Chromium), ~1300 (Firefox) levels; WebKit passes (~5000) or not (3614 with the WebKit of the GitHub runners): it depends on the engine build
 upstream	base/class/MutexSemaphore	hangs at interpreter termination under load, as natively (todo 10)
 flaky	base/keyword/TRACE	TEST_TRACE_LABEL_WITH_FORWARD: trace line count depends on thread timing (also seen under Node)
 test-bug	base/class/DateTime	TEST_FROMCIVILTIME uses "0:00am", which TIME()/DateTime reject since trunk r13250 (as TIME.testGroup itself expects: 40.19 for "00:00am"): 1 error on every platform, native too. Also, WebKit only: occasionally no output after "Executing automated test suite"; passes when retried
