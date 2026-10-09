@@ -1,0 +1,79 @@
+# Sets up the port (ooRexx SVN trunk at the base revision + the patches) and
+# runs tests/qualify.sh: Node, the Node CLI, headless Chromium, the web build
+# and the playground page.
+#
+# The binaries come from the branch saved-build when they match the patches
+# (scripts/build-manifest.sh). When they do not (the patches changed), the job
+# compiles them, and on a push to main it publishes them there
+# (scripts/save-build.sh + publish-build.sh), so the next run and every
+# working copy can skip the compilation.
+#
+# Every week, and on demand (Actions > qualify > Run workflow > rebuild), it
+# compiles from scratch whatever saved-build has, to check that the build
+# itself still works (Emscripten download, SVN, the patches).
+name: qualify
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 4 * * 1'        # Mondays 04:17 UTC
+  workflow_dispatch:
+    inputs:
+      rebuild:
+        description: Compile from scratch (ignore saved-build)
+        type: boolean
+        default: false
+
+permissions:
+  contents: write               # publish-build.sh pushes the branch saved-build
+
+concurrency:
+  group: qualify-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  EMVER: "6.0.9"
+
+jobs:
+  qualify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ORX_WASM_WORK: ${{ github.workspace }}/..
+      REBUILD: ${{ github.event_name == 'schedule' || inputs.rebuild == true }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Tools (svn, websockets, Playwright + Chromium)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq subversion
+          pip install -q websockets playwright
+          python -m playwright install --with-deps chromium
+      - name: Emscripten cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/../emsdk
+          key: emsdk-${{ env.EMVER }}-${{ runner.os }}
+      - name: Set up (saved build, or compile)
+        run: |
+          if [[ $REBUILD == true ]]; then scripts/setup-env.sh --rebuild; else scripts/setup-env.sh; fi | tee "$RUNNER_TEMP/setup.log"
+          grep -q '^== done (from\|^== done (saved build' "$RUNNER_TEMP/setup.log" && echo "COMPILED=false" >> "$GITHUB_ENV" || echo "COMPILED=true" >> "$GITHUB_ENV"
+      - run: $ORX_WASM_WORK/build-wasm/bin-node/rexx -e 'parse version v; say v; say .RexxInfo~platform'
+      - name: Qualification
+        run: tests/qualify.sh
+      - name: Publish the saved build
+        if: env.COMPILED == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch -q origin saved-build || true
+          scripts/save-build.sh
+          scripts/publish-build.sh

@@ -1,5 +1,7 @@
 # ooRexx for WebAssembly
 
+[![qualify](https://github.com/JosepMariaBlasco/oorexxwasm/actions/workflows/qualify.yml/badge.svg)](https://github.com/JosepMariaBlasco/oorexxwasm/actions/workflows/qualify.yml)
+
 [Open Object Rexx](https://www.oorexx.org/) (ooRexx) compiled to WebAssembly
 with Emscripten, so that the real interpreter runs in the browser and under
 Node.js: threads, the RexxAPI, external commands, sockets, and access from
@@ -77,7 +79,12 @@ The in-tree documentation is in the patched tree: `oorexx/wasm/README.md`.
 tests/qualify.sh            # one command: Node, the Node CLI, Chromium, the web build and the playground
 ```
 
-`qualify.sh` asserts every check and exits non-zero on any failure. It needs
+`qualify.sh` asserts every check and exits non-zero on any failure. GitHub
+Actions runs it on every push and pull request
+([`.github/workflows/qualify.yml`](.github/workflows/qualify.yml)); when the
+patches change, the workflow compiles them and, on `main`, publishes the new
+binaries to the branch `saved-build`. Every week it also compiles from
+scratch. It needs
 `pip install websockets playwright` (Chromium for the browser part). The
 in-tree tests it runs are `wasm/tests/qualify-node.sh`,
 `wasm/tests/qualify-node-cli.sh` and `wasm/tests/web-api.py`.
