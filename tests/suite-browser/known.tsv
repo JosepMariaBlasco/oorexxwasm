@@ -1,48 +1,24 @@
-# Test groups that do not pass in the browser build, and why (first written
-# 05/10/2026, test/trunk r13248).  category<TAB>group<TAB>what the log shows
-# Categories:
-#   processes   the test runs an external command (rexx, rexxc, rxqueue,
-#               rxsubcom, sh, echo, id...): a browser has no processes, so
-#               ADDRESS to a shell/command environment ends with RC 127
-#   install     .RexxInfo~executable is .nil in the browser: the executable
-#               (rexx.wasm) comes from a URL, not from the program's file
-#               system, so there is no File for it (libraryPath is
-#               /usr/lib/ooRexx/ since 06/10)
-#   test-bug    the test group itself is wrong: json_02/yaml failed when
-#               executable is .nil (bug #2097, fixed in test/trunk r13249);
-#               DateTime expects "0:00am" to be valid, which trunk r13250
-#               made invalid on purpose (every platform)
-#   api-libs    needs the native test libraries (orxclassic, orxmethod...),
-#               not built for WASM (as under Node)
-#   sockets     RxSock in the browser goes over WebSockets: no listening
-#               sockets, socket options not available
-#   stack       recursion depth bounded by the engine's native stack (Error 11
-#               is raised cleanly; the test wants >= 5000 levels)
-#   memfs       Emscripten's MEMFS: stat() goes through a JS Date, so file
-#               times read back in whole milliseconds (like FAT, which the
-#               tests allow for elsewhere)
-#   flaky       intermittent, passes when rerun (timing between threads)
-#   upstream    ooRexx itself (not the port): see notes
+category	group	why
 processes	base/bif/ARG	TEST_EXTERNAL_CALLS: RC 127 for an external command
-processes	base/bif/CHAROUT	"rexx delMe...rex" failed with RC 127
+processes	base/bif/CHAROUT	'rexx delMe...rex' failed with RC 127
 processes	base/bif/CONDITION	external command raises FAILURE (RC 127), test expects ERROR
 processes	base/bif/LINEIN	'echo hello hello>' file: no command
-processes	base/bif/STREAM	"id -u" failed with RC 127
-processes, memfs	base/class/File	searchPath("sh"): no shell on PATH; *_FRACTIONS: MEMFS file times read back in whole ms
+processes	base/bif/STREAM	'id -u' failed with RC 127
+processes, memfs	base/class/File	searchPath('sh'): no shell on PATH; *_FRACTIONS: MEMFS file times read back in whole ms
 processes	base/class/Method	rexxc: RC 127
-processes	base/class/RexxQueue	"rexx -e ..." RC 127
+processes	base/class/RexxQueue	'rexx -e ...' RC 127
 processes	base/class/Routine	rexxc: RC 127
-processes	base/class/Stream	"id -u" / "rexx ..." RC 127
+processes	base/class/Stream	'id -u' / 'rexx ...' RC 127
 processes	base/directives/OPTIONS	command results RC 127
 processes	base/keyword/ADDRESS	shell commands (cd, exit, cat, sort...) RC 127
 processes	base/keyword/PARSE	external command RC 127
 processes	base/keyword/SIGNAL	command FAILURE
-processes	base/rexxutil/Macrospace	"rexx -e ..." RC 127
-processes	base/rexxutil/SysSearchPath	SysSearchPath("PATH", "sh"): no shell
-processes	base/runtime.objects/environmentEntries	address "" "exit": .rs -1
-processes	base/source.file/incorrectCharacters	"rexx ..." RC 127
+processes	base/rexxutil/Macrospace	'rexx -e ...' RC 127
+processes	base/rexxutil/SysSearchPath	SysSearchPath('PATH', 'sh'): no shell
+processes	base/runtime.objects/environmentEntries	address '' 'exit': .rs -1
+processes	base/source.file/incorrectCharacters	'rexx ...' RC 127
 processes	base/special.variables/RESULT_RC_SIGL	external rexx RC 127
-processes	regressions/bug2003_guard_when	"rexx guard_when.rex" RC 127
+processes	regressions/bug2003_guard_when	'rexx guard_when.rex' RC 127
 processes	utilities/rexx/rexx_command	runs rexx as a command
 processes	utilities/rexxc/rexxc	runs rexxc as a command
 processes	utilities/rxqueue/rxQueue	runs rxqueue as a command
@@ -59,10 +35,10 @@ sockets	extensions/rxsock/socketClass	server/client tests (no listen) and socket
 stack	base/keyword/CALL	TEST_STACKSIZE: Error 11 at ~900 (Chromium), ~1300 (Firefox) levels; WebKit passes (~5000) or not (3614 with the WebKit of the GitHub runners): it depends on the engine build
 upstream, flaky	base/class/MutexSemaphore	hangs at interpreter termination under load, as natively (todo 10)
 flaky	base/keyword/TRACE	TEST_TRACE_LABEL_WITH_FORWARD: trace line count depends on thread timing (also seen under Node)
-test-bug	base/class/DateTime	TEST_FROMCIVILTIME uses "0:00am", which TIME()/DateTime reject since trunk r13250 (as TIME.testGroup itself expects: 40.19 for "00:00am"): 1 error on every platform, native too. Also, WebKit only: occasionally no output after "Executing automated test suite"; passes when retried
+test-bug	base/class/DateTime	TEST_FROMCIVILTIME uses '0:00am', which TIME()/DateTime reject since trunk r13250 (as TIME.testGroup itself expects: 40.19 for '00:00am'): 1 error on every platform, native too. Also, WebKit only: occasionally no output after 'Executing automated test suite'; passes when retried
 install	base/class/RexxInfo	TEST_REXXINFO_EXECUTABLE: executable expected to be a File (it is .nil)
 test-bug	extensions/json/json_02	init: filespec('location', .rexxInfo~executable) with executable .nil; no test runs (227 pass with the fix); bug #2097, fixed in test/trunk r13249
 test-bug	extensions/yaml/yaml	same as json_02 (54 pass with the fix); bug #2097, fixed in test/trunk r13249
 processes	samples/samples	the samples are run as a rexx process (and are not in the browser's file system)
-flaky	base/class/RexxContext	TEST_INTERPRETER_THREAD_INVOCATION: compares with a value a START thread records, read before that thread wrote it (".nil"); once in Chromium (r13254 run), 6 reruns pass
+flaky	base/class/RexxContext	TEST_INTERPRETER_THREAD_INVOCATION: compares with a value a START thread records, read before that thread wrote it ('.nil'); once in Chromium (r13254 run), 6 reruns pass
 upstream	base/class/RexxInteger	TEST_INTEGER_TIME with TZ=UTC: on 32-bit builds (wasm32) TIME('O') is a String, never a RexxInteger; the test expects one when the offset is 0. Any other time zone passes

@@ -35,10 +35,8 @@ def load(p):
 
 base, new = load(pos[0]), load(pos[1])
 flaky = set()
-for line in open(known_path):
-    if line.startswith('#') or not line.strip(): continue
-    cat, grp, _ = line.rstrip('\n').split('\t')
-    if 'flaky' in cat or 'stack' in cat: flaky.add('ooRexx/' + grp + '.testGroup')
+for r in csv.DictReader(open(known_path, newline=''), delimiter='\t', quoting=csv.QUOTE_NONE):
+    if 'flaky' in r['category'] or 'stack' in r['category']: flaky.add('ooRexx/' + r['group'] + '.testGroup')
 
 SEVERITY = {'ok': 0, 'fail': 1, 'noresult': 2, 'crash': 2, 'timeout': 2}
 def bad(r): return int(r['failures'] or 0) + int(r['errors'] or 0)

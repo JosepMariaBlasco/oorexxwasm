@@ -21,10 +21,8 @@ while i < len(args):
 
 data = {n: {r['group']: r for r in csv.DictReader(open(p))} for n, p in plats}
 known = {}
-for line in open(known_path):
-    if line.startswith('#') or not line.strip(): continue
-    cat, grp, note = line.rstrip('\n').split('\t')
-    known['ooRexx/' + grp + '.testGroup'] = (cat, note)
+for r in csv.DictReader(open(known_path, newline=''), delimiter='\t', quoting=csv.QUOTE_NONE):
+    known['ooRexx/' + r['group'] + '.testGroup'] = (r['category'], r['why'])
 names = [n for n, _ in plats]
 browsers = [n for n in names if n in ('chromium', 'firefox', 'webkit')]
 groups = sorted(set().union(*[set(d) for d in data.values()]))

@@ -19,7 +19,36 @@ on Linux, and say exactly what works on this platform.
   (`group,status,ran,assertions,failures,errors,seconds`), logs per group.
   A watchdog retries runs that do not start, `--retry-timeouts` also runs
   that time out; every retry goes to `hangs.csv`.
-- `known.tsv`: every group that does not pass in a browser, with its cause.
+- `known.tsv`: every group that does not pass in a browser, with its cause
+  (and the intermittent or environment-dependent failures seen on other
+  platforms). Columns `category`, `group` (path under `ooRexx/`, without
+  `.testGroup`) and `why` (what the log shows). Categories, several
+  separated by commas:
+  - `processes`: the test runs an external command (rexx, rexxc, rxqueue,
+    rxsubcom, sh, echo, id...); a browser has no processes, so ADDRESS to a
+    shell or command environment ends with RC 127.
+  - `install`: `.RexxInfo~executable` is `.nil` in the browser: the
+    executable (rexx.wasm) comes from a URL, not from the program's file
+    system, so there is no File for it.
+  - `test-bug`: the test group itself is wrong (json_02 and yaml when the
+    executable is `.nil`, bug #2097, fixed in test/trunk r13249; DateTime
+    expects `0:00am` to be valid, which trunk r13250 made invalid on
+    purpose, on every platform).
+  - `api-libs`: needs the native test libraries (orxclassic, orxmethod...),
+    not built for WASM (as under Node).
+  - `sockets`: RxSock in the browser goes over WebSockets: no listening
+    sockets, no socket options.
+  - `stack`: recursion depth bounded by the engine's native stack (Error 11
+    is raised cleanly; the test wants at least 5000 levels). Depends on the
+    engine build.
+  - `memfs`: Emscripten's MEMFS reads file times back in whole
+    milliseconds (like FAT, which the tests allow for elsewhere).
+  - `flaky`: intermittent, passes when rerun.
+  - `upstream`: ooRexx itself, not the port.
+
+  `tests/suite-check.py` (the comparison with a reference run, used by the
+  `suite` workflow) reports groups in `flaky` or `stack` but does not count
+  them as regressions.
 - `compare.py NAME=csv...`: platforms side by side; groups failing in a
   browser without a known cause are listed as UNEXPLAINED.
 - `reasons.py LOGDIR GROUP...`: one line per failure/error of a log.
