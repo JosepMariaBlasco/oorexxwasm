@@ -8,7 +8,7 @@
 set -euo pipefail
 PROJECT=$(cd "$(dirname "$0")/.." && pwd)
 manifest() {
-  echo "ooRexx SVN trunk r${OOREXX_REV:-13263}"
+  echo "ooRexx SVN trunk r${OOREXX_REV:-13268}"
   echo "Emscripten ${EMVER:-6.0.9}"
   for p in "$PROJECT"/patches/*.patch; do
     echo "patch $(basename "$p") $(sha256sum "$p" | cut -c1-64)"

@@ -18,7 +18,7 @@ Patches 0001–0005 are proposed for inclusion in ooRexx in
 
 ## The patch series
 
-Applied in order on top of ooRexx SVN trunk **r13263**
+Applied in order on top of ooRexx SVN trunk **r13268**
 (`https://svn.code.sf.net/p/oorexx/code-0/main/trunk`):
 
 | Patch | What it adds |
@@ -52,7 +52,7 @@ and installs a build. Everything goes into the directory that contains your
 clone (`$ORX_WASM_WORK`, overridable), next to it:
 
 ```
-oorexx/        ooRexx trunk r13263 + patches
+oorexx/        ooRexx trunk r13268 + patches
 build-wasm/    bin/ (Node and browser, MEMFS), bin-node/ (Node CLI), bin-web/ (pages)
 saved-build/   the prebuilt binaries it downloaded
 emsdk/         Emscripten, only when compiling

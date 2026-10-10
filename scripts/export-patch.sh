@@ -8,7 +8,7 @@
 ORX_WASM_WORK=${ORX_WASM_WORK:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)}   # where oorexx/, build-wasm/ ... live
 set -euo pipefail
 NAME=${1:?usage: export-patch.sh NNNN-name.patch}
-REV=${OOREXX_REV:-13263}
+REV=${OOREXX_REV:-13268}
 SRC=${OOREXX:-$ORX_WASM_WORK/oorexx}
 PROJECT=$(cd "$(dirname "$0")/.." && pwd)
 BASE=$(mktemp -d)/base
