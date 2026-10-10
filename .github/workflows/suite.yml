@@ -47,7 +47,7 @@ jobs:
       platforms: ${{ steps.p.outputs.platforms }}
       rev: ${{ steps.p.outputs.rev }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: p
         env:
           PLATFORMS: ${{ inputs.platforms }}
@@ -84,11 +84,11 @@ jobs:
       # see base/class/RexxInteger in tests/suite-browser/known.tsv.
       TZ: Europe/Madrid
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Tools
@@ -101,7 +101,7 @@ jobs:
               python -m playwright install --with-deps "$PLATFORM" ;;
           esac
       - name: Emscripten cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: ${{ github.workspace }}/../emsdk
           key: emsdk-${{ env.EMVER }}-${{ runner.os }}
@@ -147,7 +147,7 @@ jobs:
           exit $rc
       - name: Keep the results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: suite-${{ matrix.platform }}
           path: ${{ runner.temp }}/suite-${{ matrix.platform }}
@@ -158,8 +158,8 @@ jobs:
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: runs
           pattern: suite-*
@@ -173,7 +173,7 @@ jobs:
           [[ ${#args[@]} -gt 0 ]] || { echo "no results"; exit 0; }
           python3 tests/suite-browser/compare.py "${args[@]}" --md compare.md --csv compare.csv > /dev/null
           { echo "## All platforms (test/trunk r${{ needs.plan.outputs.rev }})"; echo; cat compare.md; } >> "$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: suite-compare
           path: compare.*
