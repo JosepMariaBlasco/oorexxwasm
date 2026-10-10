@@ -81,7 +81,7 @@ jobs:
       PATTERN: ${{ inputs.pattern }}
       # The reference runs in results/ were made in this time zone. With UTC
       # (the runners' default) RexxInteger fails on the 32-bit WASM builds:
-      # see base/class/RexxInteger in tests/suite-browser/known.tsv.
+      # see base/class/RexxInteger in tests/suite-browser/known.tsv (bug #2110).
       TZ: Europe/Madrid
     steps:
       - uses: actions/checkout@v7

@@ -41,4 +41,4 @@ test-bug	extensions/json/json_02	init: filespec('location', .rexxInfo~executable
 test-bug	extensions/yaml/yaml	same as json_02 (54 pass with the fix); bug #2097, fixed in test/trunk r13249
 processes	samples/samples	the samples are run as a rexx process (and are not in the browser's file system)
 flaky	base/class/RexxContext	TEST_INTERPRETER_THREAD_INVOCATION: compares with a value a START thread records, read before that thread wrote it ('.nil'); once in Chromium (r13254 run), 6 reruns pass
-upstream	base/class/RexxInteger	TEST_INTEGER_TIME with TZ=UTC: on 32-bit builds (wasm32) TIME('O') is a String, never a RexxInteger; the test expects one when the offset is 0. Any other time zone passes
+upstream	base/class/RexxInteger	TEST_INTEGER_TIME with TZ=UTC (bug #2110): on 32-bit builds (wasm32) TIME('O') is a String, never a RexxInteger; the test expects one when the offset is 0. Any other time zone passes
