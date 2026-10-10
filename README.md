@@ -92,19 +92,20 @@ in-tree tests it runs are `wasm/tests/qualify-node.sh`,
 The **official ooRexx test suite** (test/trunk at the same revision as the
 interpreter) runs with `tests/run-suite.sh` under Node and with
 `tests/suite-browser/run.py` in Chromium, Firefox and WebKit. Results on
-r13263, 402 test groups:
+r13268, 402 test groups (GitHub Actions runners, Ubuntu 24.04):
 
 | | groups passing |
 |---|---:|
-| native (same series) | 397 |
-| Node | 388 |
-| Chromium | 365 |
+| native (same series) | 400 |
+| Node | 391 |
+| Chromium | 366 |
 | Firefox | 366 |
-| WebKit | 367 |
+| WebKit | 366 |
 
 Every difference with native has a known cause (mostly: no processes in the
 browser, and the native test libraries the API groups need):
-[`results/suite-platforms-r13263-series.md`](results/suite-platforms-r13263-series.md).
+[`results/suite-platforms-r13268-series.md`](results/suite-platforms-r13268-series.md).
+The results on r13263, the previous base, are kept next to them.
 
 The suite also runs in GitHub Actions on demand
 ([`.github/workflows/suite.yml`](.github/workflows/suite.yml): Actions >
