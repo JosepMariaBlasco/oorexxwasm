@@ -15,4 +15,5 @@ the test results and a link to the patches at the commit they describe.
 | 2026-10-07 | [Patches 1–4 are in trunk; five patches on r13254](2026-10-07/update.md) |
 | 2026-10-06 (2) | [json/yaml fixed, macOS build, a correction](2026-10-06-2/update.md) |
 | 2026-10-06 | [The test suite in Chromium, Firefox and WebKit](2026-10-06/update.md) |
+| 2026-10-05 | [Patch 0009 marks trace, error and plain output for web pages](2026-10-05/update.md) |
 | 2026-10-04 | [The request](2026-10-04/request.md) |
