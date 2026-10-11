@@ -35,7 +35,7 @@ sessions by pid).  qualify-node-cli.sh checks queues across processes.
  create mode 100644 wasm/rxsubcom-main.cpp
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 5c639db..52e3ccb 100644
+index 7d4af4f..58983f3 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -682,12 +682,15 @@ else ()
@@ -1162,7 +1162,7 @@ index 6d0b5ff..e78f195 100644
  #endif
  
 diff --git a/wasm/README.md b/wasm/README.md
-index 2f537c3..68af31d 100644
+index 7ae0127..afc5a3d 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -13,9 +13,11 @@ transport for stream sockets.
@@ -1180,7 +1180,7 @@ index 2f537c3..68af31d 100644
  * user identity: Emscripten has no passwd database, so `getpwnam()` and
    `getpwuid()` are wrapped to return the user the process runs as (the host
    user under Node, the synthetic user `wasm` in the browser), for `USERID()`,
-@@ -103,6 +105,14 @@ entry of the same `rexx.js` (`wasm/rexxc-main.cpp`).  Error numbers seen by
+@@ -104,6 +106,14 @@ entry of the same `rexx.js` (`wasm/rexxc-main.cpp`).  Error numbers seen by
  Rexx programs (RC of CD, stream `ERROR:n`, SysMkDir, ...) are the Linux ones,
  not the WASI ones of the Emscripten libc (`HOST_ERRNO`).
  

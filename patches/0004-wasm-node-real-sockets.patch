@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
-Date: Sun, 4 Oct 2026 12:06:20 +0200
+Date: Sun, 11 Oct 2026 11:18:26 +0200
 Subject: [PATCH 4/5] WebAssembly port, Node: real TCP/UDP sockets and name
  resolution
 
@@ -8,23 +8,24 @@ The Node command-line build (wasm/build-node.sh, now with NODERAWSOCKETS)
 gives rxsock real host sockets: listening sockets, UDP, blocking
 accept/recv/recvfrom with SO_RCVTIMEO, socket options
 (wasm/node-sockets-pre.js), and real name resolution through the host
-(orxNodeResolve in wasm/emscripten-dns-proxy.js).  The MEMFS build keeps
+(orxNodeResolve in wasm/node-resolve.js).  The MEMFS build keeps
 the WebSocket transport.  qualify-node-cli.sh checks TCP between processes
 and threads, SO_RCVTIMEO, interoperation with a non-Rexx peer, UDP and
 name resolution.
 ---
- CMakeLists.txt                 |   2 +
+ CMakeLists.txt                 |   4 +
  extensions/rxsock/rxsockfn.cpp | 186 +++++++++++++++++++++++++++++++--
  wasm/README.md                 |  40 ++++---
  wasm/build-node.sh             |  10 +-
- wasm/emscripten-dns-proxy.js   |  51 +++++++++
- wasm/node-sockets-pre.js       |  97 +++++++++++++++++
+ wasm/node-resolve.js           |  89 ++++++++++++++++
+ wasm/node-sockets-pre.js       |  99 ++++++++++++++++++
  wasm/tests/qualify-node-cli.sh |  90 ++++++++++++++++
- 7 files changed, 448 insertions(+), 28 deletions(-)
+ 7 files changed, 490 insertions(+), 28 deletions(-)
+ create mode 100644 wasm/node-resolve.js
  create mode 100644 wasm/node-sockets-pre.js
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 52e3ccb..3942aae 100644
+index 58983f3..800ba2c 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -1152,6 +1152,8 @@ if (EMSCRIPTEN)
@@ -32,12 +33,21 @@ index 52e3ccb..3942aae 100644
        # passwd entry of the current user (see SysProcess.cpp)
        -Wl,--wrap=getpwnam,--wrap=getpwuid
 +      # rxsock (whole-archive librexx) imports orxNodeResolve
-+      "SHELL:--js-library ${CMAKE_CURRENT_SOURCE_DIR}/wasm/emscripten-dns-proxy.js"
++      "SHELL:--js-library ${CMAKE_CURRENT_SOURCE_DIR}/wasm/node-resolve.js"
        -sEXIT_RUNTIME=1
        -sSTACK_SIZE=8388608
        -sINITIAL_MEMORY=67108864
+@@ -1231,6 +1233,8 @@ if (EMSCRIPTEN)
+       # (each new worker loads the whole module); timing-sensitive tests
+       # (GUARD, TRACE of REPLY) depend on it
+       -sPTHREAD_POOL_SIZE=4
++      # rxsock (whole-archive librexx) imports orxNodeResolve
++      "SHELL:--js-library ${CMAKE_CURRENT_SOURCE_DIR}/wasm/node-resolve.js"
+       -sFORCE_FILESYSTEM=1
+       -sEXIT_RUNTIME=1
+       -sSTACK_SIZE=8388608
 diff --git a/extensions/rxsock/rxsockfn.cpp b/extensions/rxsock/rxsockfn.cpp
-index fd47f6b..247ac33 100644
+index fd47f6b..b459669 100644
 --- a/extensions/rxsock/rxsockfn.cpp
 +++ b/extensions/rxsock/rxsockfn.cpp
 @@ -80,6 +80,153 @@
@@ -92,7 +102,7 @@ index fd47f6b..247ac33 100644
 +// Name resolution.  Emscripten's resolver is a fake (synthetic 172.29.x.y
 +// addresses that only its WebSocket emulation understands, lookups never
 +// fail, no reverse names, host name "emscripten").  With real sockets under
-+// Node, orxNodeResolve (wasm/emscripten-dns-proxy.js) asks the host instead;
++// Node, orxNodeResolve (wasm/node-resolve.js) asks the host instead;
 +// elsewhere it returns -2 and the libc functions are used.  Results live in
 +// static storage, like the libc functions they replace.
 +extern "C" int orxNodeResolve(int mode, const char *arg, char *out, int outLen);
@@ -263,7 +273,7 @@ index fd47f6b..247ac33 100644
      // set the errno information
      setErrno(context, rc >= 0);
 diff --git a/wasm/README.md b/wasm/README.md
-index 68af31d..f80cd62 100644
+index afc5a3d..c2c2a0f 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -6,7 +6,8 @@ This development port compiles the ooRexx interpreter and API statically to
@@ -289,9 +299,9 @@ index 68af31d..f80cd62 100644
 +syscalls are proxied to the main thread); `SO_RCVTIMEO` ends a blocking
 +accept/recv with `EWOULDBLOCK` as natively.
  Nonblocking sockets preserve `EINPROGRESS` and readiness/SO_ERROR completion
- semantics. `wasm/emscripten-dns-proxy.js` makes Emscripten's fake-DNS lookup
- run on the main thread too, so host names resolve consistently.
-@@ -96,10 +99,11 @@ connection refusal, DNS/localhost, and the unchanged `.StreamSocket` wrapper.
+ semantics. Emscripten's fake-DNS lookup (`gethostbyname`) also runs on the
+ main thread (proxied since Emscripten 6.0.12), so host names resolve
+@@ -97,10 +100,11 @@ connection refusal, DNS/localhost, and the unchanged `.StreamSocket` wrapper.
  
  `wasm/build-node.sh [BUILD_DIR]` relinks the runtime (no recompilation) into
  `BUILD_DIR/bin-node` as a Node-only command-line ooRexx (`-sNODERAWFS=1
@@ -307,7 +317,7 @@ index 68af31d..f80cd62 100644
  `bin-node/rexx` and `bin-node/rexxc` are launchers; `rexxc` is a multi-call
  entry of the same `rexx.js` (`wasm/rexxc-main.cpp`).  Error numbers seen by
  Rexx programs (RC of CD, stream `ERROR:n`, SysMkDir, ...) are the Linux ones,
-@@ -113,6 +117,16 @@ server in-process (not shared), which is also the fallback when the daemon
+@@ -114,6 +118,16 @@ server in-process (not shared), which is also the fallback when the daemon
  cannot be reached; `ORX_WASM_RXAPI_DEBUG=1` traces the transport.
  `bin-node/rxqueue` and `bin-node/rxsubcom` are multi-call entries as well.
  
@@ -319,12 +329,12 @@ index 68af31d..f80cd62 100644
 +reported back).  Host names are resolved by the host (`dns.lookup`, so
 +`/etc/hosts` and the system resolver; reverse names with `getnameinfo`), the
 +host name and interface address come from `node:os`
-+(`orxNodeResolve` in `wasm/emscripten-dns-proxy.js`, used by RxSock).
++(`orxNodeResolve` in `wasm/node-resolve.js`, used by RxSock).
 +
      ./wasm/build-node.sh /tmp/oorexx-wasm-build
      ./wasm/tests/qualify-node-cli.sh /tmp/oorexx-wasm-build/bin-node
  
-@@ -130,11 +144,11 @@ browser; see the limits below).
+@@ -131,11 +145,11 @@ browser; see the limits below).
  
  ## Known limitations / deliberate non-claims
  
@@ -369,18 +379,53 @@ index e693ea1..9aca691 100755
  cp "$BUILD/bin/rexx.img" "$OUT/"
  # rexxtry, as native installs have it next to rexx (rexx rexxtry)
  cp "$SRC/samples/rexxtry.rex" "$OUT/"
-diff --git a/wasm/emscripten-dns-proxy.js b/wasm/emscripten-dns-proxy.js
-index fe09488..6d38c01 100644
---- a/wasm/emscripten-dns-proxy.js
-+++ b/wasm/emscripten-dns-proxy.js
-@@ -54,4 +54,55 @@ addToLibrary({
-     var nameString = UTF8ToString(name);
-     return inetPton4(DNS.lookup_name(nameString));
-   },
-+
+diff --git a/wasm/node-resolve.js b/wasm/node-resolve.js
+new file mode 100644
+index 0000000..48e4f02
+--- /dev/null
++++ b/wasm/node-resolve.js
+@@ -0,0 +1,89 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++addToLibrary({
 +  /*
-+   * Real name resolution for the Node build with real sockets
-+   * (-sNODERAWSOCKETS, see wasm/node-sockets-pre.js): Emscripten's fake DNS
++   * ooRexx/WASM: real name resolution for the Node build with real sockets
++   * (-sNODERAWSOCKETS, see wasm/node-sockets-pre.js).  gethostbyname() still
++   * uses Emscripten's fake DNS there (emscripten-core/emscripten#27887): it
 +   * would hand out 172.29.x.y addresses that node:net cannot use, never fails
 +   * and knows no reverse names.  Used by rxsock instead of gethostbyname,
 +   * gethostbyaddr and gethostname (wasmGetHostByName etc. in rxsockfn.cpp).
@@ -428,13 +473,13 @@ index fe09488..6d38c01 100644
 +      }
 +    });
 +  },
- });
++});
 diff --git a/wasm/node-sockets-pre.js b/wasm/node-sockets-pre.js
 new file mode 100644
-index 0000000..741715c
+index 0000000..adbabc1
 --- /dev/null
 +++ b/wasm/node-sockets-pre.js
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,99 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -473,7 +518,7 @@ index 0000000..741715c
 +/*----------------------------------------------------------------------------*/
 +// --pre-js for the Node command-line build linked with -sNODERAWSOCKETS (real
 +// TCP/UDP through node:net/node:dgram instead of WebSocket emulation).
-+// Completes Emscripten 6.0.9's backend where ooRexx needs more:
++// Completes Emscripten 6.0.12's backend where ooRexx needs more:
 +//  - SO_RCVTIMEO / SO_SNDTIMEO: the backend accepts and drops them, and
 +//    getsockopt fails with ENOPROTOOPT.  Store them per socket; rxsock's
 +//    blocking loops (wasmBlockingRetry) honour SO_RCVTIMEO like the kernel.
@@ -484,6 +529,8 @@ index 0000000..741715c
 +//    SO_OOBINLINE, SO_RCVLOWAT, SO_SNDLOWAT) and SO_REUSEADDR (libuv forces
 +//    it on at bind; the backend always reports 1): remember the value set and
 +//    report it back with the Linux defaults, so programs see what they set.
++//    Emscripten after 6.0.12 refuses unmodelled options with ENOPROTOOPT in
++//    setsockopt too (emscripten-core/emscripten#27921): that is ignored here.
 +Module['preRun'] = (Module['preRun'] || []).concat([function() {
 +  if (typeof nodeSockOps == 'undefined') return;
 +  var setsockopt = nodeSockOps.setsockopt, getsockopt = nodeSockOps.getsockopt;
@@ -496,7 +543,7 @@ index 0000000..741715c
 +    if (st) {
 +      if (optlen < 4) return -28;                        // EINVAL
 +      var rc = setsockopt.apply(this, arguments);
-+      if (rc) return rc;
++      if (rc && rc != -50) return rc;                    // -50: ENOPROTOOPT
 +      var val = HEAP32[optval >> 2];
 +      sock.opts ||= {};
 +      (sock.opts.stored ||= {})[optname] = st[1] ? (val ? 1 : 0) : val;

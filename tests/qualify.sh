@@ -219,7 +219,8 @@ else
   BR() { printf '%s' "timeout 40 python3 '$HERE/browser_run.py' $(printf '%q' "$1")"; }
   check "browser: hello"     'hello from the browser \| 1267650600228229401496703205376' 'exited rc=0' -- "$(BR 'numeric digits 50; say "hello from the browser"; say 2**100')"
   check "browser: START"     'thread ok' 'exited rc=0'          -- "$(BR 'say .o~new~start("f")~result; ::class o; ::method f; return "thread ok"')"
-  check "browser: REPLY"     'early \| post-reply \| after' -- "$(BR 'say .t~new~go; call syssleep 0.2; say "after"; ::class t; ::method go; reply "early"; say "post-reply"')"
+  # the replying thread and the caller run concurrently: any order
+  check "browser: REPLY"     'early' 'post-reply' 'after' 'exited rc=0' -- "$(BR 'say .t~new~go; call syssleep 0.2; say "after"; ::class t; ::method go; reply "early"; say "post-reply"')"
   check "browser: .Alarm"    'alarm fired \| DONE'           -- "$(BR 'a=.alarm~new(0.2, .message~new(.stdout,"lineout","I","alarm fired")); call syssleep 0.6; say done')"
   check "browser: 10 concurrent START" 'sum=55'             -- "$(BR 'do i=1 to 10; m.i=.obj~new~start("hi",i); end; s=0; do i=1 to 10; s=s+m.i~result; end; say "sum="s; ::class obj; ::method hi; use arg k; return k')"
   check "browser: SysSleep"  'slept 0\.[5-7]'               -- "$(BR 'call time "R"; call syssleep 0.5; say "slept" format(time("E"),,1)')"

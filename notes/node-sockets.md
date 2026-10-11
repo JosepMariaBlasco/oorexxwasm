@@ -4,7 +4,7 @@
 (`patches/0004-wasm-node-real-sockets.patch`).*
 
 Files: `extensions/rxsock/rxsockfn.cpp`, `wasm/node-sockets-pre.js` (new),
-`wasm/emscripten-dns-proxy.js`, `CMakeLists.txt`, `wasm/build-node.sh`,
+`wasm/node-resolve.js` (was `wasm/emscripten-dns-proxy.js`), `CMakeLists.txt`, `wasm/build-node.sh`,
 `wasm/README.md`, `wasm/tests/qualify-node-cli.sh`. `wasm/build-node.sh`
 links the Node CLI (`bin-node`) with real sockets.
 
@@ -60,8 +60,11 @@ not describe the generated code: `__syscall_*` are proxied with
    - SO_DEBUG, SO_DONTROUTE, SO_OOBINLINE, SO_RCVLOWAT, SO_SNDLOWAT (Node
      cannot apply them) and SO_REUSEADDR (libuv forces it on at bind; the
      backend always reported 1): the value set is remembered and reported,
-     with Linux defaults (0, lowat 1).
-3. **Name resolution** (`orxNodeResolve` in `wasm/emscripten-dns-proxy.js`
+     with Linux defaults (0, lowat 1). Emscripten after 6.0.12 refuses
+     unmodelled options in setsockopt with ENOPROTOOPT
+     (emscripten-core/emscripten#27921); the wrapper ignores that error for
+     these options.
+3. **Name resolution** (`orxNodeResolve` in `wasm/node-resolve.js`
    + wrappers in rxsockfn.cpp). Emscripten's DNS is a fake: names map to
    172.29.x.y, which the WebSocket backend maps back to the name for the URL.
    With node:net that breaks (`.inetaddress~new('localhost', ...)` → bind
@@ -108,6 +111,8 @@ not describe the generated code: `__syscall_*` are proxied with
 - SO_SNDTIMEO is stored but has nothing to act on: send never blocks
   (Node buffers; `writeBlocked` only gates POLLOUT).
 - IPv6: the backend supports it, rxsock is IPv4-only (`sockaddr_in`).
-- Upstream (Emscripten) candidates: SO_RCVTIMEO/SO_SNDTIMEO in the
-  NODERAWSOCKETS backend; fake DNS kept under NODERAWSOCKETS (names should be
-  resolved for real); settings.js threading comment.
+- Upstream (Emscripten): SO_RCVTIMEO/SO_SNDTIMEO readable in the
+  NODERAWSOCKETS backend (emscripten-core/emscripten#27888, fixed by #27921,
+  after 6.0.12; our wrapper still stores them, since the backend's timeouts
+  never fire); fake DNS kept for `gethostbyname` under NODERAWSOCKETS
+  (#27887, open); settings.js threading comment.

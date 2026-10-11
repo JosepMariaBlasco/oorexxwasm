@@ -45,7 +45,9 @@ proxied to the main thread but `_emscripten_lookup_name` (used by
 `gethostbyname`) is not, so the name→fake-IP mapping was made in the worker's
 table and `connect()` on the main thread could not map it back. Fixed with
 `wasm/emscripten-dns-proxy.js` (`--js-library`) redefining it with
-`__proxy: 'sync'`. **Upstream candidate (Emscripten).**
+`__proxy: 'sync'`. Fixed upstream in Emscripten 6.0.12
+(emscripten-core/emscripten#27889, which also proxies `getnameinfo`); the
+workaround was dropped with the move to 6.0.12.
 
 ## 3. Recursion: -fwasm-exceptions + native stack probe → clean Error 11
 
@@ -118,8 +120,9 @@ A relink script (now `wasm/build-node.sh`, patch 0002) builds, without
 recompilation, a Node-only runtime with NODERAWFS (host files), the host
 environment copied into `ENV`, and a `rexx` launcher. It works around an
 Emscripten 6.0.9 NODERAWFS bug: `FS.fstat()` dereferences `stream.node`, which
-NODERAWFS streams lack (TypeError on `node_ops`). **Upstream candidate
-(Emscripten).**
+NODERAWFS streams lack (TypeError on `node_ops`). Fixed upstream in
+Emscripten 6.0.10 (emscripten-core/emscripten#27632); the workaround was
+dropped with the move to 6.0.12.
 
 ## 7. External data queue (and the rest of the RexxAPI): in-process server
 

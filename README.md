@@ -60,7 +60,7 @@ emsdk/         Emscripten, only when compiling
 
 If the branch [`saved-build`](../../tree/saved-build) has binaries that match
 the current patches, `setup-env.sh` downloads them and you are done in about
-a minute. Otherwise, or with `--rebuild`, it installs Emscripten 6.0.9 and
+a minute. Otherwise, or with `--rebuild`, it installs Emscripten 6.0.12 and
 compiles (a few minutes).
 
 Then:

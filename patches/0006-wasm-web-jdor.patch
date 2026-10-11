@@ -98,10 +98,10 @@ index 5efe0eb..8b8e190 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index 728f384..f9c2f43 100644
+index 746ba5b..6cbda68 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -194,7 +194,58 @@ const { rc, files, stopped, ms } = await run.done;
+@@ -195,7 +195,58 @@ const { rc, files, stopped, ms } = await run.done;
  isolated (see above).  `wasm/tests/web-api.py BIN_WEB` runs assertions over the
  API in headless Chromium (Python Playwright): output, interactive and fixed
  stdin, EOF, stop, threads, files in and out, extension classes, rexxtry,
@@ -161,7 +161,7 @@ index 728f384..f9c2f43 100644
  
  ## Known limitations / deliberate non-claims
  
-@@ -203,7 +254,8 @@ trace and error marks, debug input.
+@@ -204,7 +255,8 @@ trace and error marks, debug input.
    with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.

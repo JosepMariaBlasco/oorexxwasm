@@ -49,7 +49,7 @@ for s in m["samples"]:
             comp[f] = read(f"{base if s.get('from') == 'bsf4oorexx' else oorexx + '/samples'}/{f}")
     s["companions"] = comp
 m["build"] = (f"This build: ooRexx 5.3.0 (SVN r{rev} with the WebAssembly patches), "
-              f"Emscripten 6.0.9, {datetime.date.today().isoformat()}.")
+              f"Emscripten 6.0.12, {datetime.date.today().isoformat()}.")
 
 # rexx-parser.json: {path: text}, written into every run under /usr/lib/rexx-parser
 # (REXX_PATH gets /usr/lib/rexx-parser/bin), plus the editor's highlighting server

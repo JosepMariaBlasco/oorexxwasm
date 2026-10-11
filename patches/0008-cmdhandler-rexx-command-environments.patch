@@ -39,7 +39,7 @@ of the posted RFE.
  create mode 100644 wasm/tests/cmdhandler.rex
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 3942aae..f8a5d0d 100644
+index 800ba2c..0f843d3 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -559,6 +559,7 @@ set (build_extensions_dateparser_dir ${build_extensions_dir}/dateparser)
@@ -58,7 +58,7 @@ index 3942aae..f8a5d0d 100644
                ${build_extensions_hostemu_platform_dir}/hostemu.cpp
                ${build_extensions_hostemu_dir}/cmdparse.cpp
                ${build_extensions_platform_dir}/rxunixsys/rxunixsys.cpp)
-@@ -1243,7 +1245,8 @@ if (EMSCRIPTEN)
+@@ -1244,7 +1246,8 @@ if (EMSCRIPTEN)
        "SHELL:--preload-file ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img@/rexx.img"
        "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/${build_extensions_rxsock_dir}/socket.cls@/socket.cls"
        "SHELL:--preload-file ${CMAKE_CURRENT_SOURCE_DIR}/${build_extensions_rxsock_dir}/streamsocket.cls@/streamsocket.cls"
@@ -68,7 +68,7 @@ index 3942aae..f8a5d0d 100644
  endif ()
  install(PROGRAMS ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img COMPONENT Core DESTINATION ${INSTALL_LIB_DIR} PERMISSIONS OWNER_EXECUTE GROUP_EXECUTE WORLD_EXECUTE OWNER_WRITE OWNER_READ GROUP_READ WORLD_READ)
  
-@@ -1464,6 +1467,22 @@ create_install_symlink(rxsock)
+@@ -1465,6 +1468,22 @@ create_install_symlink(rxsock)
  endif ()
  
  
@@ -91,7 +91,7 @@ index 3942aae..f8a5d0d 100644
  #################### librxregexp.so ################
  # additional source files required by specific platforms
  if (WIN32)
-@@ -1860,6 +1879,7 @@ copy_build_file(socket.cls       ${build_extensions_rxsock_dir})
+@@ -1861,6 +1880,7 @@ copy_build_file(socket.cls       ${build_extensions_rxsock_dir})
  copy_build_file(streamsocket.cls ${build_extensions_rxsock_dir})
  copy_build_file(mime.cls         ${build_extensions_rxsock_dir})
  copy_build_file(smtp.cls         ${build_extensions_rxsock_dir})
@@ -99,7 +99,7 @@ index 3942aae..f8a5d0d 100644
  copy_samples_file(complex.cls       ${build_samples_dir})
  copy_samples_file(pipe.cls          ${build_samples_dir})
  copy_samples_file(semcls.cls        ${build_samples_dir})
-@@ -1921,6 +1941,7 @@ add_custom_target(class_files ALL DEPENDS
+@@ -1922,6 +1942,7 @@ add_custom_target(class_files ALL DEPENDS
      ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/mime.cls
      ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/smtp.cls
      ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/dateparser.cls
@@ -107,7 +107,7 @@ index 3942aae..f8a5d0d 100644
      ${CMAKE_SAMPLES_OUTPUT_DIRECTORY}/complex.cls
      ${CMAKE_SAMPLES_OUTPUT_DIRECTORY}/pipe.cls
      ${CMAKE_SAMPLES_OUTPUT_DIRECTORY}/semcls.cls
-@@ -1932,6 +1953,7 @@ add_custom_target(class_files ALL DEPENDS
+@@ -1933,6 +1954,7 @@ add_custom_target(class_files ALL DEPENDS
  install(FILES ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rxregexp.cls COMPONENT Core DESTINATION ${INSTALL_CLS_DIR})
  
  install(FILES ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/rxftp.cls COMPONENT Core DESTINATION ${INSTALL_CLS_DIR})

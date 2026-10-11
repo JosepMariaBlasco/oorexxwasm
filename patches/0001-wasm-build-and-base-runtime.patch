@@ -3,8 +3,8 @@ From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
 Date: Sun, 4 Oct 2026 11:46:20 +0200
 Subject: [PATCH 1/5] WebAssembly port: build and base runtime
 
-Build ooRexx for WebAssembly with Emscripten 6.0.9 (wasm/build-wasm.sh,
-cmake/wasm-emscripten-6.0.9-cache.cmake).  Everything is under
+Build ooRexx for WebAssembly with Emscripten 6.0.12 (wasm/build-wasm.sh,
+cmake/wasm-emscripten-6.0.12-cache.cmake).  Everything is under
 if (EMSCRIPTEN) / #if defined(__EMSCRIPTEN__); native builds are unchanged.
 
 - static librexx (linked --whole-archive so the _rexx_init() constructor
@@ -32,9 +32,9 @@ if (EMSCRIPTEN) / #if defined(__EMSCRIPTEN__); native builds are unchanged.
 Based on Tom Dyer's (Alchemy) dev1 WebAssembly port, contributed under the
 Common Public License 1.0.
 ---
- CMakeLists.txt                                | 161 ++++++++++++++++--
+ CMakeLists.txt                                | 160 ++++++++++++++++--
  api/oorexxapi.h                               |   7 +
- cmake/wasm-emscripten-6.0.9-cache.cmake       |  84 +++++++++
+ cmake/wasm-emscripten-6.0.12-cache.cmake      |  84 +++++++++
  common/platform/unix/SysProcess.cpp           |  75 ++++++++
  extensions/rxsock/rxsockfn.cpp                | 108 ++++++++++++
  interpreter/concurrency/Activity.cpp          |  93 ++++++++++
@@ -51,21 +51,19 @@ Common Public License 1.0.
  .../platform/unix/SysLoopbackConnection.hpp   |  47 +++++
  rexxapi/server/APIServer.cpp                  |  41 +++++
  rexxapi/server/APIServer.hpp                  |   3 +
- wasm/README.md                                | 117 +++++++++++++
+ wasm/README.md                                | 118 +++++++++++++
  wasm/build-wasm.sh                            |  79 +++++++++
- wasm/emscripten-dns-proxy.js                  |  57 +++++++
  wasm/node-ws-compat/index.js                  |  73 ++++++++
  wasm/tests/browser-index.html                 |  76 +++++++++
  wasm/tests/http_isolated.py                   |  48 ++++++
- wasm/tests/qualify-node.sh                    | 100 +++++++++++
+ wasm/tests/qualify-node.sh                    | 111 ++++++++++++
  wasm/tests/ws_echo.py                         |  46 +++++
- 27 files changed, 1510 insertions(+), 20 deletions(-)
- create mode 100644 cmake/wasm-emscripten-6.0.9-cache.cmake
+ 26 files changed, 1464 insertions(+), 20 deletions(-)
+ create mode 100644 cmake/wasm-emscripten-6.0.12-cache.cmake
  create mode 100644 rexxapi/common/platform/unix/SysLoopbackConnection.cpp
  create mode 100644 rexxapi/common/platform/unix/SysLoopbackConnection.hpp
  create mode 100644 wasm/README.md
  create mode 100755 wasm/build-wasm.sh
- create mode 100644 wasm/emscripten-dns-proxy.js
  create mode 100644 wasm/node-ws-compat/index.js
  create mode 100644 wasm/tests/browser-index.html
  create mode 100755 wasm/tests/http_isolated.py
@@ -73,7 +71,7 @@ Common Public License 1.0.
  create mode 100755 wasm/tests/ws_echo.py
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 84d7946..3806165 100644
+index 84d7946..03e6fa6 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -183,7 +183,12 @@ if (WIN32)
@@ -237,7 +235,7 @@ index 84d7946..3806165 100644
  
  # handy macro for copying files from the source into the build directory.
  macro (copy_build_file name source)
-@@ -1104,12 +1190,48 @@ if (WIN32)
+@@ -1104,12 +1190,47 @@ if (WIN32)
  endif ()
  
  # Build the rexx.img file
@@ -275,7 +273,6 @@ index 84d7946..3806165 100644
 +      # (each new worker loads the whole module); timing-sensitive tests
 +      # (GUARD, TRACE of REPLY) depend on it
 +      -sPTHREAD_POOL_SIZE=4
-+      "SHELL:--js-library ${CMAKE_CURRENT_SOURCE_DIR}/wasm/emscripten-dns-proxy.js"
 +      -sFORCE_FILESYSTEM=1
 +      -sEXIT_RUNTIME=1
 +      -sSTACK_SIZE=8388608
@@ -290,7 +287,7 @@ index 84d7946..3806165 100644
  install(PROGRAMS ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img COMPONENT Core DESTINATION ${INSTALL_LIB_DIR} PERMISSIONS OWNER_EXECUTE GROUP_EXECUTE WORLD_EXECUTE OWNER_WRITE OWNER_READ GROUP_READ WORLD_READ)
  
  #################### rxapi (executable) #########################
-@@ -1309,6 +1431,8 @@ set_target_properties(rxmath PROPERTIES SOVERSION ${ORX_API_LEVEL})
+@@ -1309,6 +1430,8 @@ set_target_properties(rxmath PROPERTIES SOVERSION ${ORX_API_LEVEL})
  create_install_symlink(rxmath)
  
  #################### librxsock.so ################
@@ -299,7 +296,7 @@ index 84d7946..3806165 100644
  # additional source files required by specific platforms
  if (WIN32)
     set (platform_rxsock_sources ${build_platform_dir}/verinfo.rc)
-@@ -1324,6 +1448,7 @@ install(TARGETS rxsock RUNTIME COMPONENT Core DESTINATION ${INSTALL_LIB_DIR}
+@@ -1324,6 +1447,7 @@ install(TARGETS rxsock RUNTIME COMPONENT Core DESTINATION ${INSTALL_LIB_DIR}
                         LIBRARY DESTINATION ${INSTALL_LIB_DIR} COMPONENT Core)
  set_target_properties(rxsock PROPERTIES SOVERSION ${ORX_API_LEVEL})
  create_install_symlink(rxsock)
@@ -307,7 +304,7 @@ index 84d7946..3806165 100644
  
  
  #################### librxregexp.so ################
-@@ -1390,7 +1515,7 @@ install(TARGETS rxunixsys RUNTIME DESTINATION ${INSTALL_LIB_DIR}
+@@ -1390,7 +1514,7 @@ install(TARGETS rxunixsys RUNTIME DESTINATION ${INSTALL_LIB_DIR}
  endif ()
  
  #################### liborxncurses.so ################
@@ -338,11 +335,11 @@ index f5e2df2..997f682 100644
  
  
  typedef void (RexxEntry *RexxPackageLoader)(RexxThreadContext *);
-diff --git a/cmake/wasm-emscripten-6.0.9-cache.cmake b/cmake/wasm-emscripten-6.0.9-cache.cmake
+diff --git a/cmake/wasm-emscripten-6.0.12-cache.cmake b/cmake/wasm-emscripten-6.0.12-cache.cmake
 new file mode 100644
 index 0000000..4c24522
 --- /dev/null
-+++ b/cmake/wasm-emscripten-6.0.9-cache.cmake
++++ b/cmake/wasm-emscripten-6.0.12-cache.cmake
 @@ -0,0 +1,84 @@
 +#/*----------------------------------------------------------------------------*/
 +#/*                                                                            */
@@ -1436,13 +1433,13 @@ index e448335..ec9e137 100644
  
 diff --git a/wasm/README.md b/wasm/README.md
 new file mode 100644
-index 0000000..fe34342
+index 0000000..b0942ef
 --- /dev/null
 +++ b/wasm/README.md
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,118 @@
 +# ooRexx 5.3 WebAssembly / RxSock development port
 +
-+Baseline: ooRexx 5.3.0, trunk r13254.  Toolchain qualification: Emscripten 6.0.9.
++Baseline: ooRexx 5.3.0, trunk r13254.  Toolchain qualification: Emscripten 6.0.12.
 +
 +This development port compiles the ooRexx interpreter and API statically to
 +WebAssembly, builds `rexx.img` with the WASM `rexximage` executable, embeds the
@@ -1492,13 +1489,14 @@ index 0000000..fe34342
 +RxSock contract by polling Emscripten readiness with zero-time syscalls and
 +sleeping between attempts (socket syscalls are proxied to the main thread).
 +Nonblocking sockets preserve `EINPROGRESS` and readiness/SO_ERROR completion
-+semantics. `wasm/emscripten-dns-proxy.js` makes Emscripten's fake-DNS lookup
-+run on the main thread too, so host names resolve consistently.
++semantics. Emscripten's fake-DNS lookup (`gethostbyname`) also runs on the
++main thread (proxied since Emscripten 6.0.12), so host names resolve
++consistently.
 +
 +## Build
 +
-+With Emscripten 6.0.9 installed through emsdk
-+(`./emsdk install 6.0.9 && ./emsdk activate 6.0.9`):
++With Emscripten 6.0.12 installed through emsdk
++(`./emsdk install 6.0.12 && ./emsdk activate 6.0.12`):
 +
 +    ./wasm/build-wasm.sh /path/to/emsdk/upstream /tmp/oorexx-wasm-build
 +
@@ -1506,7 +1504,7 @@ index 0000000..fe34342
 +(whose top level contains `install/`).  The runtime is built into
 +`/tmp/oorexx-wasm-build/bin` (`rexx.js`, `rexx.wasm`, `rexx.data`).
 +
-+The initial CMake cache `cmake/wasm-emscripten-6.0.9-cache.cmake` records the
++The initial CMake cache `cmake/wasm-emscripten-6.0.12-cache.cmake` records the
 +qualified Emscripten libc capabilities and avoids slow generic Unix probes.
 +
 +## Node qualification
@@ -1559,7 +1557,7 @@ index 0000000..fe34342
 +  correctness-first development setting, not a final performance profile.
 diff --git a/wasm/build-wasm.sh b/wasm/build-wasm.sh
 new file mode 100755
-index 0000000..469a79f
+index 0000000..6d8aec7
 --- /dev/null
 +++ b/wasm/build-wasm.sh
 @@ -0,0 +1,79 @@
@@ -1634,7 +1632,7 @@ index 0000000..469a79f
 +export PATH="$TC/bin:$TC/emscripten:$PATH"
 +
 +emcmake cmake -S "$SRC" -B "$BUILD" \
-+  -C "$SRC/cmake/wasm-emscripten-6.0.9-cache.cmake" \
++  -C "$SRC/cmake/wasm-emscripten-6.0.12-cache.cmake" \
 +  -DCMAKE_BUILD_TYPE=Release \
 +  -DORX_ENABLE_IPO=OFF
 +cmake --build "$BUILD" --target rexx_exe -j"${JOBS:-4}"
@@ -1642,69 +1640,6 @@ index 0000000..469a79f
 +echo
 +echo "WASM runtime built in $BUILD/bin"
 +ls -lh "$BUILD/bin/rexx.js" "$BUILD/bin/rexx.wasm" "$BUILD/bin/rexx.data" "$BUILD/bin/rexx.img"
-diff --git a/wasm/emscripten-dns-proxy.js b/wasm/emscripten-dns-proxy.js
-new file mode 100644
-index 0000000..fe09488
---- /dev/null
-+++ b/wasm/emscripten-dns-proxy.js
-@@ -0,0 +1,57 @@
-+/*----------------------------------------------------------------------------*/
-+/*                                                                            */
-+/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
-+/*                                                                            */
-+/* This program and the accompanying materials are made available under       */
-+/* the terms of the Common Public License v1.0 which accompanies this         */
-+/* distribution. A copy is also available at the following address:           */
-+/* https://www.oorexx.org/license.html                                        */
-+/*                                                                            */
-+/* Redistribution and use in source and binary forms, with or                 */
-+/* without modification, are permitted provided that the following            */
-+/* conditions are met:                                                        */
-+/*                                                                            */
-+/* Redistributions of source code must retain the above copyright             */
-+/* notice, this list of conditions and the following disclaimer.              */
-+/* Redistributions in binary form must reproduce the above copyright          */
-+/* notice, this list of conditions and the following disclaimer in            */
-+/* the documentation and/or other materials provided with the distribution.   */
-+/*                                                                            */
-+/* Neither the name of Rexx Language Association nor the names                */
-+/* of its contributors may be used to endorse or promote products             */
-+/* derived from this software without specific prior written permission.      */
-+/*                                                                            */
-+/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
-+/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
-+/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
-+/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
-+/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
-+/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
-+/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
-+/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
-+/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
-+/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
-+/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
-+/*                                                                            */
-+/*----------------------------------------------------------------------------*/
-+/*
-+ * ooRexx/WASM: run gethostbyname()'s name lookup on the main thread.
-+ *
-+ * Emscripten's SOCKFS fakes DNS: a host name is mapped to a synthetic IPv4
-+ * address in a JS table ($DNS), and connect() maps it back to the name to
-+ * build the WebSocket URL.  With -sPROXY_TO_PTHREAD the interpreter runs on a
-+ * worker, while socket syscalls (and getaddrinfo) are proxied to the main
-+ * thread.  _emscripten_lookup_name, used by gethostbyname(), is not proxied,
-+ * so the mapping was created in the worker's own $DNS table and connect() on
-+ * the main thread could not translate the synthetic address back
-+ * (.StreamSocket~new("localhost", port) -> ECONNREFUSED).  Proxying the lookup
-+ * keeps a single $DNS table on the main thread.
-+ */
-+addToLibrary({
-+  _emscripten_lookup_name__deps: ['$UTF8ToString', '$DNS', '$inetPton4'],
-+  _emscripten_lookup_name__proxy: 'sync',
-+  _emscripten_lookup_name: (name) => {
-+    var nameString = UTF8ToString(name);
-+    return inetPton4(DNS.lookup_name(nameString));
-+  },
-+});
 diff --git a/wasm/node-ws-compat/index.js b/wasm/node-ws-compat/index.js
 new file mode 100644
 index 0000000..a3ff269
@@ -1922,10 +1857,10 @@ index 0000000..2affc11
 +ThreadingHTTPServer(('127.0.0.1',8000),Handler).serve_forever()
 diff --git a/wasm/tests/qualify-node.sh b/wasm/tests/qualify-node.sh
 new file mode 100755
-index 0000000..8d3c7f7
+index 0000000..dfabf1b
 --- /dev/null
 +++ b/wasm/tests/qualify-node.sh
-@@ -0,0 +1,100 @@
+@@ -0,0 +1,111 @@
 +#!/usr/bin/env bash
 +#/*----------------------------------------------------------------------------*/
 +#/*                                                                            */
@@ -1979,7 +1914,18 @@ index 0000000..8d3c7f7
 +OOREXX_WASM_TEST_PORT="$PORT" python3 "$ROOT/wasm/tests/ws_echo.py" >"$BUILD/ws_echo.log" 2>&1 &
 +SERVER=$!
 +trap 'kill "$SERVER" 2>/dev/null || true' EXIT
-+sleep 0.5
++# wait until the echo server accepts connections (slow on a loaded machine)
++python3 - "$PORT" <<'PY' || { echo 'WebSocket echo server did not start' >&2; cat "$BUILD/ws_echo.log" >&2; exit 2; }
++import socket, sys, time
++deadline = time.time() + 15
++while True:
++    try:
++        socket.create_connection(('127.0.0.1', int(sys.argv[1])), 0.5).close()
++        break
++    except OSError:
++        if time.time() > deadline: sys.exit(1)
++        time.sleep(0.1)
++PY
 +cd "$BIN"
 +
 +# check TITLE REGEX... -- COMMAND...

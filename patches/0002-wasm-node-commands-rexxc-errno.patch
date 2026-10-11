@@ -38,17 +38,17 @@ command-line ooRexx that sees the host file system and environment
  wasm/README.md                               |  21 +-
  wasm/build-node.sh                           |  84 ++++++
  wasm/build-wasm.sh                           |   4 +-
- wasm/node-pre.js                             |  91 +++++++
+ wasm/node-pre.js                             |  78 ++++++
  wasm/rexxc-main.cpp                          |  46 ++++
  wasm/tests/qualify-node-cli.sh               | 105 ++++++++
- 16 files changed, 876 insertions(+), 35 deletions(-)
+ 16 files changed, 863 insertions(+), 35 deletions(-)
  create mode 100755 wasm/build-node.sh
  create mode 100644 wasm/node-pre.js
  create mode 100644 wasm/rexxc-main.cpp
  create mode 100755 wasm/tests/qualify-node-cli.sh
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 3806165..5c639db 100644
+index 03e6fa6..7d4af4f 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -1066,6 +1066,10 @@ endif ()
@@ -885,7 +885,7 @@ index 7ebfbe0..6d0b5ff 100644
                                           /* is this option a switch?          */
          if (program_name == NULL && (*(cp=*(argv+i)) == '-')) {
 diff --git a/wasm/README.md b/wasm/README.md
-index fe34342..2f537c3 100644
+index b0942ef..7ae0127 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -11,7 +11,8 @@ transport for stream sockets.
@@ -898,7 +898,7 @@ index fe34342..2f537c3 100644
  * no external rxapi daemon: the API server (external data queues, function
    and subcom registration, macrospace) is linked in and reached through an
    in-process transport (`rexxapi/common/platform/unix/SysLoopbackConnection`);
-@@ -89,6 +90,22 @@ connect/send/recv, 5,000-byte partial stream reads, arbitrary binary strings,
+@@ -90,6 +91,22 @@ connect/send/recv, 5,000-byte partial stream reads, arbitrary binary strings,
  finite select timeout/readiness, nonblocking EINPROGRESS completion,
  connection refusal, DNS/localhost, and the unchanged `.StreamSocket` wrapper.
  
@@ -921,7 +921,7 @@ index fe34342..2f537c3 100644
  ## Browser status
  
  The generated `rexx.js/rexx.wasm/rexx.data` target `node,web,worker`. A pthread
-@@ -108,7 +125,7 @@ browser; see the limits below).
+@@ -109,7 +126,7 @@ browser; see the limits below).
  * UDP/datagram semantics are not qualified.
  * Native TCP servers need a WebSocket-facing endpoint/proxy; a real WebSocket
    server can be addressed directly.
@@ -1021,11 +1021,11 @@ index 0000000..c30f77e
 +done
 +ls -l "$OUT" | awk 'NR>1 && $9 !~ /\.cls$/ {print $5, $9}'
 diff --git a/wasm/build-wasm.sh b/wasm/build-wasm.sh
-index 469a79f..33431aa 100755
+index 6d8aec7..fb9d3f9 100755
 --- a/wasm/build-wasm.sh
 +++ b/wasm/build-wasm.sh
 @@ -72,7 +72,9 @@ emcmake cmake -S "$SRC" -B "$BUILD" \
-   -C "$SRC/cmake/wasm-emscripten-6.0.9-cache.cmake" \
+   -C "$SRC/cmake/wasm-emscripten-6.0.12-cache.cmake" \
    -DCMAKE_BUILD_TYPE=Release \
    -DORX_ENABLE_IPO=OFF
 -cmake --build "$BUILD" --target rexx_exe -j"${JOBS:-4}"
@@ -1037,10 +1037,10 @@ index 469a79f..33431aa 100755
  echo "WASM runtime built in $BUILD/bin"
 diff --git a/wasm/node-pre.js b/wasm/node-pre.js
 new file mode 100644
-index 0000000..8079eb7
+index 0000000..bc83e87
 --- /dev/null
 +++ b/wasm/node-pre.js
-@@ -0,0 +1,91 @@
+@@ -0,0 +1,78 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -1081,19 +1081,6 @@ index 0000000..8079eb7
 +Module['preRun'] = (Module['preRun'] || []).concat([function() {
 +  // the host environment is the environment of the Rexx process
 +  for (var k in process.env) ENV[k] = process.env[k];
-+  // Emscripten 6.0.9 NODERAWFS: FS.fstat() dereferences stream.node, which
-+  // the streams of the standard handles (fd 0-2) opened by NODERAWFS do not
-+  // have (TypeError on node_ops); ask Node directly for those.
-+  var origFstat = FS.fstat;
-+  FS.fstat = function(fd) {
-+    var st = FS.getStream(fd);
-+    if (st && !st.stream_ops && !st.node && st.nfd !== undefined) {
-+      try { return fs.fstatSync(st.nfd); }
-+      catch (e) { if (e.code) throw new FS.ErrnoError(ERRNO_CODES[e.code]); throw e; }
-+    }
-+    return origFstat(fd);
-+  };
-+
 +  // LINES()/CHARS() on STDIN: SysFile::hasData() asks ioctl(FIONREAD), which
 +  // Emscripten answers 0 (success) without writing the count, so the caller
 +  // saw whatever its variable held (LINES() was always 1).  Answer it for the

@@ -18,7 +18,7 @@ ORX_WASM_WORK=${ORX_WASM_WORK:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." &
 set -euo pipefail
 
 REV=${OOREXX_REV:-13268}
-EMVER=${EMVER:-6.0.9}
+EMVER=${EMVER:-6.0.12}
 OOREXX=${OOREXX:-$ORX_WASM_WORK/oorexx}
 BUILD=${BUILD:-$ORX_WASM_WORK/build-wasm}
 EMSDK=${EMSDK_DIR:-$ORX_WASM_WORK/emsdk}

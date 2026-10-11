@@ -34,7 +34,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  EMVER: "6.0.9"
+  EMVER: "6.0.12"
 
 jobs:
   qualify:
