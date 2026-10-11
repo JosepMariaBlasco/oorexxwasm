@@ -407,6 +407,47 @@ of the specification on the developers' list. That review also confirmed two
 choices that stay: the lower-case tie-break for names that differ only in
 case, and whole-realm grants.
 
+## Arrays from 1, box and unbox (11/10/2026)
+
+For the bridges to agree with each other (BSF4ooRexx for Java, oorexxnet for
+.NET), as Rony G. Flatscher asked:
+
+- **`o[i]` and `o[i] = v` on an array or typed array count from 1**, as a
+  Rexx Array and as BSF4ooRexx's `BSF_ARRAY_REFERENCE` and oorexxnet's
+  `.NetArray`: `o[1]` is JavaScript's `o[0]`; 0 or a negative index is an
+  error; past the end reads `.js~undefined` and `o[n + 1] = v` appends, as
+  in JavaScript. Only whole numbers are shifted: `o["length"]` is still the
+  property. JavaScript's methods keep their own convention (`o~slice(1)`,
+  `o~at(0)`, `o~indexOf(x)` gives 0-based positions): only the Rexx syntax
+  counts from 1.
+- **`DO WITH INDEX i ITEM v OVER o`** agrees with `o[i]`: an array gives
+  1..n; a list (an iterable with a `length` that is not an array:
+  NodeList, HTMLCollection) keeps JavaScript's `o[0]` and gives 0..n-1, as
+  oorexxnet does for .NET lists; any other iterable 1..n; a Map its keys.
+- **`.js~box(type, x)`** with BSF4ooRexx's type indicators, caseless and
+  shortened down to their capitals (`"bo"` is `"Boolean"`): `BOolean`,
+  `BYte`, `Char`, `Double`, `Float`, `Int`, `Long`, `Object`, `SHort`,
+  `STring`, and JavaScript's own `Number` and `BIgint`. JavaScript has no
+  boxes for its primitives worth having, so `box` gives the value of that
+  type, as `.js~num` and friends: Byte, Short, Int and Long are numbers whose
+  range is checked as Java's (`Long` within JavaScript's safe integers;
+  `BIgint` for more), Float and Double numbers, Char a one-character string,
+  Object a `.JSObject` (or `.nil`, `.js~undefined`) left as it is.
+  **`.js~unbox(o)`** gives the Rexx value of a box, or of a JavaScript
+  `Number`, `String`, `Boolean` or `BigInt` object; anything else comes back
+  unchanged.
+- **Bug fixed on the way**: Array's own methods (`a~join`, `a~push`,
+  `a~indexOf`...) were not found by name, because `Array.prototype` is an
+  array for `Array.isArray`, and arrays expose only their own names (so that
+  an index is never taken for a name). An array is now an object that
+  `Array.isArray` accepts and that has no own `constructor`.
+- Tests: qualify-node-cli.sh 22 (+1: arrays from 1, DO WITH, index 0,
+  typed array, Array methods, box and unbox, errors); web-api.py's js core
+  case now reads `a[1]` as the first element. `fetch.cls` (patch 0009)
+  reads the headers' `[name, value]` pairs as `pair[1]`, `pair[2]`.
+- The specification posted on 8 October still says `o[0]`: its second
+  version must say all this.
+
 ## Guarantees
 
 Properties of the implementation worth stating in the specification:

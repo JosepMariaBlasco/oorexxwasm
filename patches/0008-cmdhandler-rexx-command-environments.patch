@@ -1058,10 +1058,10 @@ index 0000000..5f3bf34
 +  address t "RETURN thread ok"
 +  return rc
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e8af171..58bdb5a 100755
+index 83b451f..bf1afad 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -274,6 +274,10 @@ check "JavaScript iteration (DO OVER, DO WITH), event options latest and max, re
+@@ -298,6 +298,10 @@ check "JavaScript arrays from 1, Array methods, box and unbox" '^get: a c 1 3$'
  check "JavaScript events: HTTP server in Rexx, threads, release, exit" '^rexx answered GET /q\?i=1$' \
    '^rexx answered GET /q\?i=3$' '^taken=15 after release: The NIL object$' -- "$X jsev.rex"
  
@@ -1073,7 +1073,7 @@ index e8af171..58bdb5a 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index f43b363..90643a8 100755
+index 735f1b4..0df2192 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -93,6 +93,9 @@ CASES = [

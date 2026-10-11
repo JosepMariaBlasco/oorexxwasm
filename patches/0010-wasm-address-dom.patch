@@ -307,7 +307,7 @@ index 860e798..6fc868b 100644
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
        if (inputs.length) run.write(inputs.shift() + '\n'); else run.close(); },
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index da8cd5e..a6d88cf 100755
+index f3b0d86..b77e824 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -171,6 +171,17 @@ CASES = [

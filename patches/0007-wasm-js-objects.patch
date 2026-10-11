@@ -24,7 +24,10 @@ Objects, functions, arrays and Promises are .JSObjects, by reference; strings, n
 bigints come back as Rexx strings, null as .nil, undefined as
 .js~undefined (a single object; a missing property reads as it).  Rexx
 strings always go as strings (.js~num, .js~bool, .js~bigint, .js~bytes,
-.js~undefined force a type); Arrays and Directories/StringTables are
+.js~undefined force a type, and .js~box(type, x) with the type indicators
+of BSF4ooRexx's box(): BOolean, BYte, Char, Double, Float, Int, Long,
+Object, SHort, STring, Number, BIgint, shortened down to their capitals;
+.js~unbox gives the Rexx value back); Arrays and Directories/StringTables are
 copied as arrays and plain objects.
 
 - Message names arrive uppercased, so they are resolved case-insensitively
@@ -33,10 +36,13 @@ copied as arrays and plain objects.
   error).  o~name gets a property and calls it if it is a function (not a
   constructor: .js~Map~new); o~name(args) calls; o~name = v sets an
   existing property.  Exact access: o["name"], o["name"] = v,
-  o~invoke("name", args...).  Also ~new, ~await, ~typeOf, ~className,
+  o~invoke("name", args...).  o[i] and o[i] = v on an array or typed
+  array count from 1, as a Rexx Array and BSF4ooRexx's Java arrays
+  (o[1] is JavaScript's o[0]); a list (NodeList...) keeps 0.  Also ~new, ~await, ~typeOf, ~className,
   ~instanceOf, ~hasProperty, ~propertyNames, ~makeArray (DO OVER: an
   iterable's values), ~supplier (DO WITH INDEX i ITEM v OVER: a Map's keys
-  and values, an iterable's 1..n, an object's properties), ~byteString; names that do not hide common JavaScript ones (Map's
+  and values, an array's 1..n (as o[i]), a list's 0..n-1, another
+  iterable's 1..n, an object's properties), ~byteString; names that do not hide common JavaScript ones (Map's
   get/set/has/keys, Response's bytes).
 - A JavaScript exception, or a rejected Promise under ~await, is SYNTAX
   98.900 "JavaScript error: ..." with what was thrown in ADDITIONAL[2].
@@ -84,21 +90,21 @@ copied as arrays and plain objects.
   iteration, options latest and max, release).  Documented in wasm/README.md.
 ---
  interpreter/package/PackageManager.cpp |   6 +-
- wasm/README.md                         |  92 ++++
+ wasm/README.md                         | 104 ++++
  wasm/build-node.sh                     |  17 +-
  wasm/build-web.sh                      |  18 +-
  wasm/extra-packages.cpp                |  69 +++
  wasm/js-bridge.js                      | 166 ++++++
- wasm/js-realm.js                       | 439 +++++++++++++++
- wasm/tests/qualify-node-cli.sh         |  74 +++
+ wasm/js-realm.js                       | 457 ++++++++++++++++
+ wasm/tests/qualify-node-cli.sh         |  98 ++++
  wasm/tests/web-api.html                |   2 +-
  wasm/tests/web-api.py                  |  66 +++
  wasm/web-jdor.cpp                      |  12 +-
  wasm/web-js.cpp                        | 709 +++++++++++++++++++++++++
- wasm/web/js.cls                        | 343 ++++++++++++
+ wasm/web/js.cls                        | 413 ++++++++++++++
  wasm/web/ooRexx-worker.js              |  15 +-
  wasm/web/ooRexx.js                     |  52 ++
- 15 files changed, 2057 insertions(+), 23 deletions(-)
+ 15 files changed, 2181 insertions(+), 23 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -123,10 +129,10 @@ index 8b8e190..9c17231 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index f9c2f43..feeca01 100644
+index f9c2f43..9fc6285 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -247,6 +247,96 @@ newImage 300 200; color red; moveTo 10 10; fillRect 100 50; winShow
+@@ -247,6 +247,108 @@ newImage 300 200; color red; moveTo 10 10; fillRect 100 50; winShow
    logical fonts map to CSS families, as on Windows); XOR mode is
    approximated; text antialiasing cannot be turned off.
  
@@ -161,19 +167,31 @@ index f9c2f43..feeca01 100644
 +  function, except constructors (Capitalized, with a prototype:
 +  `.js~Map~new`); `o~name(args)` calls a method; `o~name = v` sets an
 +  existing property.  Exact: `o["name"]`, `o["name"] = v`,
-+  `o~invoke("name", args...)` (`o~invoke(.nil, ...)` calls o itself).  Also
++  `o~invoke("name", args...)` (`o~invoke(.nil, ...)` calls o itself).
++  `o[i]` and `o[i] = v` on an array or typed array count **from 1**, as a
++  Rexx Array and BSF4ooRexx's Java arrays (`o[1]` is JavaScript's `o[0]`;
++  0 is an error); a list (NodeList, HTMLCollection) keeps JavaScript's
++  `o[0]`, and JavaScript's methods keep their own (`o~slice(1)`).  Also
 +  `o~new(...)`, `o~await`, `o~typeOf`, `o~className`, `o~instanceOf(c)`,
 +  `o~hasProperty(n)`, `o~propertyNames`, `o~makeArray` (`DO x OVER o`: an
 +  iterable's values, as `for...of`, so a Map's `[key, value]` pairs; an error
 +  for anything else), `o~supplier` (`DO WITH INDEX i ITEM v OVER o`: a Map's
-+  keys and values, an iterable's 1..n and values, other objects' own
++  keys and values, an array's 1..n and items (as `o[i]`), a list's 0..n-1
++  (as its `o[i]`), another iterable's 1..n and values, other objects' own
 +  properties), `o~byteString`; names chosen not to hide common JavaScript ones (a Map's
 +  get/set/has/keys).  Rexx's own Object methods (send, start, copy, ...)
 +  are not passed on: `o~invoke("send", x)`.
 +* Rexx strings always go as strings; `.js~num(x)`, `.js~bool(x)`,
 +  `.js~true`, `.js~false`, `.js~bigint(x)`, `.js~bytes(x)` (a Uint8Array),
-+  `.js~undefined` force a type; an Array goes as an array, a Directory or
-+  StringTable as a plain object (copies), .nil as null.
++  `.js~undefined` force a type; so does `.js~box(type, x)` with the type
++  indicators of BSF4ooRexx's `box()` (`BOolean`, `BYte`, `Char`, `Double`,
++  `Float`, `Int`, `Long`, `Object`, `SHort`, `STring`, and JavaScript's
++  `Number` and `BIgint`; caseless, shortened down to their capitals: `"bo"`
++  is `"Boolean"`; whole numbers checked against Java's ranges, `Long` within
++  JavaScript's safe integers), and `.js~unbox(o)` gives the Rexx value back
++  (also of a JavaScript `Number`, `String`, `Boolean` or `BigInt` object).
++  An Array goes as an array, a Directory or StringTable as a plain object
++  (copies), .nil as null.
 +* A JavaScript exception (or a rejected Promise under `~await`) is SYNTAX
 +  98.900 "JavaScript error: TypeError: ..."; what was thrown is
 +  `condition("O")~additional[2]`.
@@ -223,7 +241,7 @@ index f9c2f43..feeca01 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -256,6 +346,8 @@ newImage 300 200; color red; moveTo 10 10; fillRect 100 50; winShow
+@@ -256,6 +358,8 @@ newImage 300 200; color red; moveTo 10 10; fillRect 100 50; winShow
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127);
    ADDRESS JDOR draws (see above).
@@ -579,10 +597,10 @@ index 0000000..31f8729
 +})();
 diff --git a/wasm/js-realm.js b/wasm/js-realm.js
 new file mode 100644
-index 0000000..97ac6d5
+index 0000000..7982786
 --- /dev/null
 +++ b/wasm/js-realm.js
-@@ -0,0 +1,439 @@
+@@ -0,0 +1,457 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -826,15 +844,18 @@ index 0000000..97ac6d5
 +
 +  // ---- case-insensitive names --------------------------------------------
 +  const nameCache = new WeakMap();
++  // an array, but not Array.prototype (an array too, for Array.isArray), which
++  // holds the methods: join, push, indexOf...
++  const isArray = (o) => Array.isArray(o) && !Object.prototype.hasOwnProperty.call(o, 'constructor');
 +  function namesOf(o, fresh) {
 +    const cacheable = (typeof o === 'object' || typeof o === 'function') &&
-+      !Array.isArray(o) && !ArrayBuffer.isView(o) &&
++      !isArray(o) && !ArrayBuffer.isView(o) &&
 +      !(Object.getPrototypeOf(o) === Object.prototype || Object.getPrototypeOf(o) === null);
 +    let m = cacheable && !fresh ? nameCache.get(o) : undefined;
 +    if (m) return m;
 +    m = new Map();
 +    // an array's own names are its indexes (and length): an index is never resolved here
-+    const keys = Array.isArray(o) ? ['length'] : ArrayBuffer.isView(o) ? [] : Reflect.ownKeys(o);
++    const keys = isArray(o) ? ['length'] : ArrayBuffer.isView(o) ? [] : Reflect.ownKeys(o);
 +    for (const k of keys) {
 +      if (typeof k !== 'string') continue;
 +      const u = k.toUpperCase();
@@ -843,6 +864,18 @@ index 0000000..97ac6d5
 +    }
 +    if (cacheable) nameCache.set(o, m);
 +    return m;
++  }
++  // o[i], o[i] = v: an array or typed array counts from 1, as a Rexx Array
++  // (and as BSF4ooRexx's Java arrays); any other name is a property, as is
++  const fromOne = (t) => isArray(t) || (ArrayBuffer.isView(t) && !(t instanceof DataView));
++  function slot(t, name) {
++    if (!fromOne(t) || !/^\s*[+-]?[0-9]+(\.0*)?\s*$/.test(name)) return name;
++    const n = Number(name);
++    if (!Number.isSafeInteger(n) || n < 1) {
++      throw new RangeError(name.trim() + ' is not an index of ' + an(className(t)) +
++        ': arrays count from 1 here, as Rexx Arrays (o~invoke("at", i) is JavaScript\'s own)');
++    }
++    return String(n - 1);
 +  }
 +  function resolve(t, upper) {
 +    if (/^(0|[1-9][0-9]*)$/.test(upper)) return upper;          // an index
@@ -896,12 +929,15 @@ index 0000000..97ac6d5
 +        return new RexxArray(Array.from(t));
 +      }
 +      case 'supplier': {
-+        // [indexes, items]: a Map's keys and values; an iterable's 1..n and
++        // [indexes, items]: a Map's keys and values; an array's 1..n and
++        // items (as o[i]); a list (NodeList, HTMLCollection...: iterable, with
++        // a length) 0..n-1 and items, as its o[i]; any other iterable 1..n and
 +        // values; anything else, its own enumerable properties
 +        let idx, items;
 +        if (t instanceof Map) { idx = Array.from(t.keys()); items = Array.from(t.values()); }
 +        else if (t !== null && t !== undefined && typeof t[Symbol.iterator] === 'function') {
-+          items = Array.from(t); idx = items.map((_, i) => i + 1);
++          const base = !fromOne(t) && typeof t.length === 'number' ? 0 : 1;
++          items = Array.from(t); idx = items.map((_, i) => i + base);
 +        } else { idx = Object.keys(t); items = idx.map((k) => t[k]); }
 +        return new RexxArray([new RexxArray(idx), new RexxArray(items)]);
 +      }
@@ -943,8 +979,8 @@ index 0000000..97ac6d5
 +        throw new Error('there is no JavaScript realm "' + realm + '" here (this is realm "' + REALM + '")');
 +      }
 +      case 2: { const t = val(r), name = r.str(), args = val(r); return message(t, name, args); }
-+      case 3: { const t = val(r), name = r.str(); return t[name]; }
-+      case 4: { const t = val(r), name = r.str(), v = val(r); t[name] = v; return undefined; }
++      case 3: { const t = val(r), name = r.str(); return t[slot(t, name)]; }
++      case 4: { const t = val(r), name = r.str(), v = val(r); t[slot(t, name)] = v; return undefined; }
 +      case 5: {
 +        const t = val(r), upper = r.str(), v = val(r);
 +        const name = resolve(t, upper);
@@ -1023,10 +1059,10 @@ index 0000000..97ac6d5
 +  };
 +})();
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..e8af171 100755
+index e1c1cd8..83b451f 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -200,6 +200,80 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
+@@ -200,6 +200,104 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
  check "name resolution (host resolver)" '^localhost=1 127\.0\.0\.1$' '^invalid=0$' '^reverse=1 ' "^hostname=$(hostname)\$" '^hostid=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' -- \
    "$X dns.rex"
  
@@ -1101,6 +1137,30 @@ index e1c1cd8..e8af171 100755
 +check "JavaScript iteration (DO OVER, DO WITH), event options latest and max, release" '^a=1 b=2 $' '^1=x 2=y $' '^p=7$' \
 +  '^over object: 1$' '^latest detail=5 then: The NIL object$' '^max 2: 4 5$' '^max 0: 1$' '^after release: 5$' -- "$X jsover.rex"
 +
++# arrays count from 1 (o[i], o[i] = v, DO WITH); Array's own methods found
++# case-insensitively; box/unbox with BSF4ooRexx's type indicators
++cat > "$T/jsarr.rex" <<'EOF'
++a = .js~newArray("a", "b", "c")
++say "get:" a[1] a[3] (a[4] == .js~undefined) a~length
++a[2] = "X"; a[4] = "d"; say "put:" a~join("-") a~indexOf("X") a~slice(1)~join("")
++call charout , "with:"; do with index i item v over a; call charout , "" i"="v"="a[i]; end; say
++signal on syntax; say a[0]
++syntax: say "index 0:" (condition("O")~message~pos("count from 1") > 0)
++say "typed:" .js~Uint8Array~of(7, 8, 9)[3] "methods:" a~includes("d") a~reverse~join("") a~at(0)
++tf = .js~eval("(...v) => v.map((x) => typeof x).join(' ')")
++say "box:" tf~invoke(.nil, .js~box("bo", 1), .js~box("Int", 7), .js~box("BIG", "123456789012345678901"), -
++  .js~box("st", 5), .js~box("n", "1.5"), .js~box("Ch", "z"), .js~box("o", .nil), 5)
++say "unbox:" .js~unbox(.js~box("BOOLEAN", "true")) .js~unbox(.js~box("sh", -5)) .js~unbox(.js~Number~new(3)) .js~unbox("plain")
++signal on syntax name b1; x = .js~box("BYTE", 300)
++b1: say "byte 300:" (condition("O")~message~pos("cannot be a BYte") > 0)
++signal on syntax name b2; x = .js~box("B", 1)
++b2: say "type B:" (condition("O")~message~pos("unknown type") > 0)
++::requires "js.cls"
++EOF
++check "JavaScript arrays from 1, Array methods, box and unbox" '^get: a c 1 3$' '^put: a-X-c-d 1 Xcd$' \
++  '^with: 1=a=a 2=X=X 3=c=c 4=d=d$' '^index 0: 1$' '^typed: 9 methods: 1 dcXa d$' \
++  '^box: boolean number bigint string number string object string$' '^unbox: 1 -5 3 plain$' '^byte 300: 1$' '^type B: 1$' -- "$X jsarr.rex"
++
 +check "JavaScript events: HTTP server in Rexx, threads, release, exit" '^rexx answered GET /q\?i=1$' \
 +  '^rexx answered GET /q\?i=3$' '^taken=15 after release: The NIL object$' -- "$X jsev.rex"
 +
@@ -1121,7 +1181,7 @@ index 19d0aeb..860e798 100644
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
        if (inputs.length) run.write(inputs.shift() + '\n'); else run.close(); },
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index f368988..f43b363 100755
+index f368988..735f1b4 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -162,6 +162,72 @@ CASES = [
@@ -1137,7 +1197,7 @@ index f368988..f43b363 100755
 +              'say (.js~Math == .js~Math) (.js~Math == .js~JSON) (o~nothing == .js~undefined) .js~eval("0.1+0.2") .js~eval("true")\n'
 +              'say (o~nothing == .nil) (.js~JSON~parse("null") == .nil) o~hasProperty("x") o~hasProperty("nothing") .js~undefined (.js~eval("undefined") == .js~undefined)\n'
 +              '::requires "js.cls"', {"js": {"worker": True}},
-+     lambda r: r["out"] == "a JSObject (global, worker) 7 2\n1 1 0\n{\"x\":\"1\",\"y\":2}\n2 20 Array\n10\n20\n"
++     lambda r: r["out"] == "a JSObject (global, worker) 7 2\n1 1 0\n{\"x\":\"1\",\"y\":2}\n2 10 Array\n10\n20\n"
 +                           "1 0 1 0.30000000000000004 1\n0 1 1 0 undefined 1\n" and r["rc"] == 0),
 +  ("js await", 'say .js~fetch("web-api.html")~await~text~await~pos("rexxRun") > 0\n'
 +               'say .js~eval("new Promise(r => setTimeout(() => r(42), 50))")~await\n'
@@ -1936,10 +1996,10 @@ index 0000000..f75e48e
 +}
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
 new file mode 100644
-index 0000000..62cbf9f
+index 0000000..d45c4fc
 --- /dev/null
 +++ b/wasm/web/js.cls
-@@ -0,0 +1,343 @@
+@@ -0,0 +1,413 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -2006,7 +2066,9 @@ index 0000000..62cbf9f
 + *   o~name(a, b)    method name called with a, b
 + *   o~name = v      property name set (it must exist; else o["name"] = v)
 + Names are case-insensitive (ooRexx uppercases them); exact, with no guessing:
-+ *   o["name"]       property name (also o[0] for an array's first element)
++ *   o["name"]       property name; o[i] for an array's (or typed array's)
++ *                   element i, from 1 as in a Rexx Array (o[1] is JavaScript's
++ *                   o[0]); a list (NodeList...) keeps JavaScript's o[0]
 + *   o["name"] = v   property name set (created if need be)
 + *   o~invoke("name", args...)   method name called; o~invoke(.nil, args...)
 + *                   calls o itself (a function)
@@ -2015,7 +2077,8 @@ index 0000000..62cbf9f
 + * o~propertyNames (Object.keys), o~makeArray (DO x OVER o: the values of an
 + * iterable, as JavaScript's for...of, so a Map's [key, value] pairs; an error
 + * for anything else), o~supplier (DO WITH INDEX i ITEM v OVER o: a Map's keys
-+ * and values, an iterable's 1..n and values, any other object's own
++ * and values, an array's 1..n and items (as o[i]), a list's 0..n-1 (as its
++ * o[i]), any other iterable's 1..n and values, any other object's own
 + * properties), o~byteString (an ArrayBuffer's or typed array's bytes as a
 + * Rexx string).  These names were
 + * chosen not to hide common JavaScript ones (Map's get/set/has/keys, ...).
@@ -2027,7 +2090,11 @@ index 0000000..62cbf9f
 + * x == .js~undefined; a property that does not exist gives it, and
 + * o~hasProperty("name") tells the two apart).  Rexx strings go as strings,
 + * always (also "42"); .js~num(x), .js~bool(x), .js~true, .js~false,
-+ * .js~bigint(x), .js~bytes(x) (a Uint8Array), .js~undefined force a type; an
++ * .js~bigint(x), .js~bytes(x) (a Uint8Array), .js~undefined force a type, and
++ * so does .js~box(type, x) with BSF4ooRexx's type indicators (BOolean, BYte,
++ * Char, Double, Float, Int, Long, Object, SHort, STring; also Number, BIgint;
++ * caseless, shortened down to the capitals; whole numbers checked against
++ * Java's ranges); .js~unbox(o) gives a box's Rexx value back; an
 + * Array goes as an array, a Directory or StringTable as a plain object (copies),
 + * .nil as null; .js~newArray(items...) and .js~newObject(directory) make them
 + * in JavaScript (.js~Array and .js~Object are JavaScript's own).  A JavaScript exception is SYNTAX 98.900 "JavaScript error:
@@ -2173,6 +2240,69 @@ index 0000000..62cbf9f
 +::method str unguarded              -- x as a string
 +  use strict arg x
 +  return x~string
++::method box unguarded              -- .js~box(type, x): x as a JavaScript value of that type
++  -- the type indicators of BSF4ooRexx's box(), caseless and shortened down
++  -- to their capitals (BOolean, BYte, Char, Double, Float, Int, Long, Object,
++  -- SHort, STring), and JavaScript's own Number and BIgint
++  signal on syntax
++  use strict arg type, x
++  t = type~strip~upper
++  names = .array~of("BOolean", "BYte", "Char", "Double", "Float", "Int", "Long", -
++                    "Object", "SHort", "STring", "Number", "BIgint")
++  name = ""
++  do n over names
++    if abbrev(n~upper, t, n~verify("ABCDEFGHIJKLMNOPQRSTUVWXYZ") - 1) then do
++      name = n; leave
++    end
++  end
++  if name == "" then raise syntax 98.900 array(".js~box: unknown type" type"; one of" -
++    names~makeString("L", ", "))
++  whole = .array~of("BYte", -128, 127, "SHort", -32768, 32767, -
++                    "Int", -2147483648, 2147483647, "Long", -9007199254740991, 9007199254740991)
++  select
++    when name == "Object" then do
++      if x == .nil | x~isA(.JSObject) | x == .JSTyped~undefined then return x
++      raise syntax 98.900 array(".js~box: an Object must be a JSObject, .nil or .js~undefined")
++    end
++    when name == "BOolean" then return self~bool(x)
++    when name == "STring" then return x~string
++    when name == "Char" then do
++      -- one character: one byte, or one UTF-8 sequence
++      if x~string~length > 0 & x~string~substr(2)~verify(xrange("80"x, "BF"x)) == 0 -
++         & (x~string~length == 1 | x~string~left(1) >= "C0"x) then return x~string
++      raise syntax 98.900 array(".js~box:" x "cannot be a Char")
++    end
++    when name == "BIgint" then do
++      if datatype(x, "W") then return self~bigint(x)
++      numeric digits 40
++      if datatype(x, "W") then return self~bigint(x)
++      raise syntax 98.900 array(".js~box:" x "cannot be a BigInt")
++    end
++    when name == "Number" | name == "Double" | name == "Float" then do
++      if datatype(x, "N") | wordpos(x~string~strip~upper, "NAN INFINITY +INFINITY -INFINITY") > 0 then
++        return self~num(x)
++      raise syntax 98.900 array(".js~box:" x "cannot be a" name)
++    end
++    otherwise do                      -- BYte, SHort, Int, Long: a whole number in range
++      i = whole~index(name)
++      numeric digits 20
++      if datatype(x, "W") then if x >= whole[i + 1] & x <= whole[i + 2] then return self~num(x)
++      raise syntax 98.900 array(".js~box:" x "cannot be a" name -
++        "(a whole number from" whole[i + 1] "to" whole[i + 2]")")
++    end
++  end
++syntax: raise propagate
++::method unbox unguarded            -- .js~unbox(o): the Rexx value of a box or of a JavaScript wrapper
++  use strict arg o
++  if o~isA(.JSTyped) then do
++    if o~kind == "B" then return wordpos(o~value~string~strip~lower, "1 true") > 0
++    return o~string
++  end
++  if o~isA(.JSObject) then do
++    c = o~className
++    if wordpos(c, "Number String Boolean BigInt") > 0 then return o~invoke("valueOf")
++  end
++  return o
 +::method newArray unguarded         -- a new JavaScript array of the arguments
 +  signal on syntax
 +  return JsValue(arg(1, "A"))

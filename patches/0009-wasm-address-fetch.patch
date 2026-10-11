@@ -247,10 +247,10 @@ index 0000000..01451f3
 +
 +::requires "fetch.cls"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 58bdb5a..3f0baad 100755
+index bf1afad..be602d0 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -278,6 +278,13 @@ check "JavaScript events: HTTP server in Rexx, threads, release, exit" '^rexx an
+@@ -302,6 +302,13 @@ check "JavaScript events: HTTP server in Rexx, threads, release, exit" '^rexx an
  check "command handlers in Rexx (cmdhandler.cls)" '^[0-9]+ passed, 0 failed$' '!^FAIL ' -- \
    "$X '$(cd "$(dirname "$0")" && pwd)/cmdhandler.rex'"
  
@@ -265,7 +265,7 @@ index 58bdb5a..3f0baad 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 90643a8..da8cd5e 100755
+index 0df2192..f3b0d86 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -64,6 +64,9 @@ class H(SimpleHTTPRequestHandler):
@@ -427,7 +427,7 @@ index 0000000..6ee0c5f
 +  return words~copy
 diff --git a/wasm/web/fetch.cls b/wasm/web/fetch.cls
 new file mode 100644
-index 0000000..b0a71d9
+index 0000000..8f7614e
 --- /dev/null
 +++ b/wasm/web/fetch.cls
 @@ -0,0 +1,353 @@
@@ -737,7 +737,7 @@ index 0000000..b0a71d9
 +  end
 +  all = .stringTable~new
 +  do pair over response~headers            -- [name, value] pairs, as for...of
-+    all[pair[0]] = pair[1]
++    all[pair[1]] = pair[2]
 +  end
 +  return self~give(context, into, all)
 +
