@@ -22,12 +22,12 @@ wasm/tests/dom.rex (64 checks) and three more cases in web-api.py.  Not
 part of the posted RFE.
 ---
  wasm/build-web.sh       |    4 +-
- wasm/tests/dom.rex      |  238 +++++++++
+ wasm/tests/dom.rex      |  259 ++++++++++
  wasm/tests/web-api.html |    2 +-
  wasm/tests/web-api.py   |   11 +
- wasm/web/dom.cls        | 1032 +++++++++++++++++++++++++++++++++++++++
+ wasm/web/dom.cls        | 1046 +++++++++++++++++++++++++++++++++++++++
  wasm/web/ooRexx.js      |   14 +-
- 6 files changed, 1298 insertions(+), 3 deletions(-)
+ 6 files changed, 1333 insertions(+), 3 deletions(-)
  create mode 100644 wasm/tests/dom.rex
  create mode 100644 wasm/web/dom.cls
 
@@ -51,10 +51,10 @@ index 2f58d6f..ba05446 100755
            "--preload-file" "$SRC/wasm/web/BSF.CLS@/usr/lib/ooRexx/bsf.cls")
 diff --git a/wasm/tests/dom.rex b/wasm/tests/dom.rex
 new file mode 100644
-index 0000000..02342de
+index 0000000..4e2e5e2
 --- /dev/null
 +++ b/wasm/tests/dom.rex
-@@ -0,0 +1,238 @@
+@@ -0,0 +1,259 @@
 +/* dom.rex: tests of ADDRESS DOM (wasm/web/dom.cls), in the browser.         */
 +/* Run with the page realm granted and no root to start with:                */
 +/*   run option js: {page: true}, dom: {root: null}                          */
@@ -78,20 +78,40 @@ index 0000000..02342de
 +host = panels~item(0)
 +call check "NEW: a Shadow DOM with the title", host~shadowRoot~querySelector(".title")~textContent == "Test panel"
 +
-+-- CREATE does not move the current element; labels
++-- CREATE does not move the current element; one-off targets
 +'CREATE h h2 "A title"'
 +'CREATE out p'
-+'out: TEXT "hello world"'
-+'h: TEXT INTO t'
-+call check "CREATE + label by nickname", t == "A title"
-+'h2: TEXT INTO t'
-+call check "label by selector", t == "A title"
-+'"p, h2": TEXT INTO t'
-+call check "quoted label (a selector with blanks)", t == "A title"
++'out TEXT "hello world"'
++'h TEXT INTO t'
++call check "CREATE + target by nickname", t == "A title"
++'h2 TEXT INTO t'
++call check "target by selector", t == "A title"
++'"p, h2" TEXT INTO t'
++call check "quoted target (a selector with blanks)", t == "A title"
 +'TEXT INTO t'
 +call check "CREATE did not move the current element (the body)", t == "A titlehello world"
-+address dom "out: TEXT" with output stem o.
++address dom "out TEXT" with output stem o.
 +call check "TEXT without INTO: to WITH OUTPUT", o.0 == 1 & o.1 == "hello world"
++-- the target first, written as Rexx clauses with few quotes
++out TEXT '"plain Rexx"'
++'out TEXT INTO t'
++call check "unquoted clause: target, command, value", t == "plain Rexx"
++'"out" TEXT INTO t'
++call check "a quoted first word is a target", t == "plain Rexx"
++out
++'TEXT INTO t'
++call check "a target alone is LOCATE", rc == 0 & t == "plain Rexx"
++'h INTO el'
++call check "a target alone with INTO: the element", rc == 0 & el~tagName == "H2"
++call expect "nosuch", 2, "ERROR", "a target alone, not found: RC 2, ERROR (as LOCATE)"
++call expect "nosuch INTO el", 2, "ERROR", "a target alone with INTO, not found: RC 2"
++call expect "out NEW", -3, "FAILURE", "a target before NEW: RC -3"
++call expect "out LOCATE h", -3, "FAILURE", "a target before LOCATE: RC -3"
++call expect "out FROB", -3, "FAILURE", "a target and an unknown command: RC -3"
++call expect "CREATE text p", -3, "FAILURE", "a command name as a nickname: RC -3"
++call expect "FIELD value", -3, "FAILURE", "a command name as a FIELD nickname: RC -3"
++'TOP'
++'out TEXT "hello world"'
 +call check "the panel's elements are in the Shadow DOM", host~shadowRoot~querySelector("p")~textContent == "hello world"
 +call check "and not in the page", doc~body~textContent~pos("hello world") = 0
 +
@@ -110,58 +130,59 @@ index 0000000..02342de
 +'TOP'
 +'CREATE INTO e2 tmp span "x"'
 +call check "INTO anywhere: CREATE INTO el nick tag text", e2~textContent == "x" & e2~parentElement == body
-+'tmp: REMOVE' 
++'tmp REMOVE' 
 +'LOCATE h'; 'TOP'; 'TEXT INTO t'
 +call check "TOP", t~left(7) == "A title"
 +
 +-- wrong programs: FAILURE
-+call expect "zzz: TEXT a", -4, "FAILURE", "unknown label: RC -4"
-+call expect '"[[": TEXT a', -3, "FAILURE", "bad selector: RC -3"
-+call expect "FROB", -3, "FAILURE", "unknown command: RC -3"
++call expect "zzz TEXT a", -4, "FAILURE", "unknown target: RC -4"
++call expect '"[[" TEXT a', -3, "FAILURE", "bad selector: RC -3"
++call expect "FROB", 2, "ERROR", "an unknown word alone is a target alone: RC 2"
++call expect "FROB x", -4, "FAILURE", "an unknown word with more: RC -4"
 +call expect 'TEXT "unclosed', -3, "FAILURE", "quote not closed: RC -3"
 +call expect "TEXT a b", -3, "FAILURE", "two values: RC -3"
 +drop nothing
 +call expect "TEXT FROM nothing", -3, "FAILURE", "FROM an unset variable: RC -3"
 +call expect 'CREATE x "bad tag"', -5, "FAILURE", "a JavaScript error: RC -5"
 +
-+call expect "h: TEXT INTO a INTO b", -3, "FAILURE", "two INTO: RC -3"
-+'out: TEXT "INTO"'
-+'out: TEXT INTO t'
++call expect "h TEXT INTO a INTO b", -3, "FAILURE", "two INTO: RC -3"
++'out TEXT "INTO"'
++'out TEXT INTO t'
 +call check "a quoted INTO is a word, not a keyword", t == "INTO"
 +
 +-- attributes, styles, classes, visibility
-+'out: ATTR title "two words"'
-+'out: ATTR title INTO v'
++'out ATTR title "two words"'
++'out ATTR title INTO v'
 +call check "ATTR set and get", v == "two words" & el~getAttribute("title") == "two words"
-+'out: ATTR nothing INTO v'
++'out ATTR nothing INTO v'
 +call check "ATTR absent: empty", v == ""
-+'out: STYLE color "rgb(255, 0, 0)"'
-+'out: STYLE color INTO v'
++'out STYLE color "rgb(255, 0, 0)"'
++'out STYLE color INTO v'
 +call check "STYLE set and get", v == "rgb(255, 0, 0)"
-+'out: CLASS +a b c'
-+'out: CLASS -a'
-+'out: CLASS INTO v'
++'out CLASS +a b c'
++'out CLASS -a'
++'out CLASS INTO v'
 +call check "CLASS +, -, plain", v == "b c"
-+'out: HIDE'
++'out HIDE'
 +call check "HIDE", el~hidden == 1
-+'out: SHOW'
++'out SHOW'
 +call check "SHOW", el~hidden == 0
 +
 +-- fields and buttons
 +'FIELD name "Your name" INTO f'
 +call check "FIELD: an input with a label", f~tagName == "INPUT" & f~parentElement~querySelector("label")~textContent == "Your name"
-+'name: VALUE Ana'
-+'name: VALUE INTO v'
++'name VALUE Ana'
++'name VALUE INTO v'
 +call check "VALUE set and get", v == "Ana" & f~value == "Ana"
 +'FIELD agree "I agree" CHECKBOX'
-+'agree: VALUE 1'
-+'agree: VALUE INTO v'
++'agree VALUE 1'
++'agree VALUE INTO v'
 +call check "FIELD CHECKBOX: VALUE 1/0", v == 1
 +'FIELD notes "" TEXTAREA INTO ta'
 +call check "FIELD TEXTAREA", ta~tagName == "TEXTAREA"
-+'name: DISABLE'
++'name DISABLE'
 +call check "DISABLE", f~disabled == 1
-+'name: ENABLE'
++'name ENABLE'
 +call check "ENABLE", f~disabled == 0
 +'BUTTON go "Go on" GO INTO b'
 +call check "BUTTON", b~tagName == "BUTTON" & b~textContent == "Go on"
@@ -174,17 +195,17 @@ index 0000000..02342de
 +errorRaised = 0
 +'WAIT 0.2 INTO ev'
 +call check "WAIT: time over, RC 1, no ERROR", rc == 1 & errorRaised == 0 & \var("ev")
-+'name: ON input TYPED'
++'name ON input TYPED'
 +f~value = "Bob"
 +f~dispatchEvent(w["Event"]~new("input"))
 +'WAIT 2 INTO ev'
 +call check "ON input: the event and the value", ev~name == "TYPED" & ev~value == "Bob" & ev~target == "NAME"
-+'name: ON enter ENTERED'
++'name ON enter ENTERED'
 +f~dispatchEvent(w["KeyboardEvent"]~new("keydown", w~eval("({key: 'a'})")))
 +f~dispatchEvent(w["KeyboardEvent"]~new("keydown", w~eval("({key: 'Enter'})")))
 +'WAIT 2 INTO ev'
 +call check "ON enter: only the Enter key", ev~name == "ENTERED" & ev~key == "Enter"
-+'name: OFF enter'
++'name OFF enter'
 +f~dispatchEvent(w["KeyboardEvent"]~new("keydown", w~eval("({key: 'Enter'})")))
 +'WAIT 0.3'
 +call check "OFF", rc == 1
@@ -217,23 +238,23 @@ index 0000000..02342de
 +
 +-- CSS: the panel's own; the page's does not get in
 +'CSS ".b { color: rgb(1, 2, 3) }"'
-+'out: STYLE color "" '
-+'out: STYLE color INTO v'
++'out STYLE color "" '
++'out STYLE color INTO v'
 +call check "CSS: rules for the panel", v == "rgb(1, 2, 3)"
 +pageStyle = doc~createElement("style"); pageStyle~textContent = "h2 { color: rgb(9, 9, 9) !important }"
 +doc~head~appendChild(pageStyle)
-+'h: STYLE color INTO v'
++'h STYLE color INTO v'
 +call check "the page's CSS does not reach the panel", v \== "rgb(9, 9, 9)"
 +pageStyle~remove
 +
 +-- REMOVE, CLEAR
-+'out: REMOVE'
-+call expect "out: TEXT a", -4, "FAILURE", "REMOVE: the nickname is gone"
++'out REMOVE'
++call expect "out TEXT a", -4, "FAILURE", "REMOVE: the nickname is gone"
 +'CREATE box div'
-+'box: CREATE - span one'
-+'box: CREATE - span two'
-+'box: CLEAR'
-+'box: TEXT INTO v'
++'box CREATE - span one'
++'box CREATE - span two'
++'box CLEAR'
++'box TEXT INTO v'
 +call check "CLEAR", v == ""
 +
 +-- the close button: CLOSE, and no root any more
@@ -258,8 +279,8 @@ index 0000000..02342de
 +'ROOT PAGE'
 +'CREATE pg div "on the page" INTO d'
 +call check "ROOT PAGE: on the page itself", d~parentElement == doc~body
-+'pg: REMOVE'
-+'b: CLOSE'
++'pg REMOVE'
++'b CLOSE'
 +
 +say
 +say .ok "passed," .bad "failed"
@@ -307,7 +328,7 @@ index 860e798..6fc868b 100644
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
        if (inputs.length) run.write(inputs.shift() + '\n'); else run.close(); },
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index f3b0d86..b77e824 100755
+index f3b0d86..cb28506 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -171,6 +171,17 @@ CASES = [
@@ -316,13 +337,13 @@ index f3b0d86..b77e824 100755
       lambda r: "44 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # ADDRESS DOM (wasm/web/dom.cls over cmdhandler.cls and js.cls): the portable test
 +  ("dom", open(f"{SRC}/wasm/tests/dom.rex").read(), {"js": {"page": True}, "dom": {"root": None}},
-+     lambda r: "64 passed, 0 failed" in r["out"] and r["rc"] == 0),
++     lambda r: "76 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  ("dom no page", 'call on failure name f; address dom "TEXT x"; say rc; exit; f: return\n::requires "dom.cls"', {},
 +     lambda r: r["out"] == "-1\n" and "js: {page: true}" in r["err"]),
-+  ("dom default root", 'address dom "CREATE x span hi INTO s"; say s~parentElement~tagName; address dom "x: REMOVE"\n'
++  ("dom default root", 'address dom "CREATE x span hi INTO s"; say s~parentElement~tagName; address dom "x REMOVE"\n'
 +                       '::requires "dom.cls"', {"js": {"page": True}},
 +     lambda r: r["out"] == "BODY\n"),
-+  ("dom root option", 'address dom "CREATE x span hi INTO s"; say s~parentElement~id; address dom "x: REMOVE"\n'
++  ("dom root option", 'address dom "CREATE x span hi INTO s"; say s~parentElement~id; address dom "x REMOVE"\n'
 +                      '::requires "dom.cls"', {"js": {"page": True}, "dom": {"root": "#log"}},
 +     lambda r: r["out"] == "log\n"),
    # .JSObject: JavaScript objects as Rexx objects (wasm/web-js.cpp, wasm/js-bridge.js, wasm/web/js.cls)
@@ -330,10 +351,10 @@ index f3b0d86..b77e824 100755
       lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
 diff --git a/wasm/web/dom.cls b/wasm/web/dom.cls
 new file mode 100644
-index 0000000..9166315
+index 0000000..84ffe1c
 --- /dev/null
 +++ b/wasm/web/dom.cls
-@@ -0,0 +1,1032 @@
+@@ -0,0 +1,1046 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -352,13 +373,13 @@ index 0000000..9166315
 + *
 + *    ::requires "dom.cls"
 + *    address dom
-+ *    'NEW "Hello"'                         -- a panel, where the rest goes
-+ *    'FIELD name "Your name"'
-+ *    'BUTTON ok "Say hello" OK'            -- a click is the event OK
-+ *    'CREATE answer p'
-+ *    'WAIT INTO ev'                        -- until something happens
-+ *    'name: VALUE INTO who'                -- the field's value
-+ *    'answer: TEXT FROM msg'               -- msg: a variable
++ *    NEW "Hello"                           -- a panel, where the rest goes
++ *    FIELD name '"Your name"'              -- in quotes: it has a blank
++ *    BUTTON ok '"Say hello"' OK            -- a click is the event OK
++ *    CREATE answer p
++ *    WAIT INTO 'ev'                        -- until something happens
++ *    name VALUE INTO 'who'                 -- the field's value
++ *    answer TEXT FROM msg                  -- msg: a variable
 + *
 + * Commands: words separated by blanks, case does not matter; a word in
 + * quotes ("..." or '...', the quote doubled inside) may hold blanks.  Where
@@ -378,23 +399,32 @@ index 0000000..9166315
 + * Which element: like XEDIT, there is a CURRENT ELEMENT, and commands act on
 + * it.  LOCATE moves it, UP and TOP too; NEW and ROOT put it at the root;
 + * CREATE, FIELD, BUTTON, TABLE and LIST add to it without moving it (so a
-+ * panel is filled without going up and down).  For a one-off target, a
-+ * LABEL before the command:
++ * panel is filled without going up and down).  For a one-off target, the
++ * target goes first; it does not move the current element:
 + *
-+ *    'out: TEXT hola'              an element's nickname (CREATE gives them)
-+ *    '#total: TEXT 42'             or a CSS selector
-+ *    '"#form input": VALUE ""'     in quotes if it has blanks
++ *    out TEXT "hola"                an element's nickname (CREATE gives them)
++ *    "#total TEXT 42"               or a CSS selector
++ *    '"#form input" VALUE ""'       in quotes if it has blanks
 + *
-+ * The label is the first word, up to its last ":" (so li:first-child: TEXT x
-+ * works); a nickname is looked up first, then a selector.  A label never
-+ * moves the current element.  Careful: the label goes INSIDE the quotes; in
-+ * out: 'TEXT hola' the out: is a Rexx label, and the command goes to the
-+ * current element.
++ * A target alone is a LOCATE, as in XEDIT: out alone is LOCATE out.  The
++ * first word is a target when it is in quotes or is not a command, so a
++ * nickname cannot be a command's name (CREATE text p is refused) and a
++ * selector that is one goes in quotes ('"table" CLASS wide').  A nickname is
++ * looked up first, then a selector.
++ *
++ * Writing the commands: Rexx needs no quotes around them, but it evaluates
++ * whatever is not quoted.  So quote the names of variables (after INTO and
++ * FROM: WAIT INTO 'ev', as from the second time on ev has a value), a word
++ * that is also a variable you do not mean (a nickname, or a command: with a
++ * variable text, TEXT is its value), what Rexx would upper-case (values,
++ * CSS selectors and classes; FROM avoids the question for values), and words
++ * with characters Rexx would compute (font-size, "-").  Or quote it all.
 + *
 + *   NEW [title] [AS nickname] [INTO el]   a panel (a nickname for ROOT)
 + *   ROOT PAGE | ref                       the root: the whole page, or an
 + *                                         element (a panel by its nickname)
 + *   LOCATE ref [INTO el]                  the current element (RC 2: none)
++ *   ref [INTO el]                         the same: a target alone
 + *   UP, TOP                               to the parent (RC 2 at the root);
 + *                                         to the root
 + *   CLOSE                                 the panel of the element goes away
@@ -458,7 +488,7 @@ index 0000000..9166315
 + * Negative, and the FAILURE condition, when the program is wrong: -1 no page
 + * (the page did not grant it: js: {page: true}, or not in a browser); -2 no
 + * root or no current element (NEW, or ROOT PAGE, first); -3 an unknown
-+ * command or wrong arguments; -4 a label or reference that names no element;
++ * command or wrong arguments; -4 a target or reference that names no element;
 + * -5 a JavaScript error.  The reason goes to WITH ERROR or the console.
 + *
 + * In the browser only: the commands work on the page's DOM through the
@@ -508,42 +538,41 @@ index 0000000..9166315
 +  expose root current
 +  use strict arg command, context
 +  if \self~setup(context) then return context~raiseFailure(-1)
-+  -- a label: 'ref: CMD ...'
-+  label = .nil
-+  cmd = command~strip("L")
-+  q = cmd~left(1)
-+  if q == '"' | q == "'" then do
-+    -- the label is the first word if a ":" follows its closing quote
-+    k = self~quotedEnd(cmd)
-+    if k > 0, cmd~subchar(k + 1) == ":" then do
-+      label = cmd~substr(2, k - 2)~changeStr(q || q, q)
-+      cmd = cmd~substr(k + 2)
-+    end
-+  end
-+  else do
-+    first = cmd~word(1)
-+    p = first~lastPos(":")
-+    if p > 1 then do
-+      label = first~left(p - 1)
-+      cmd = first~substr(p + 1) cmd~subword(2)
-+    end
-+  end
-+  words = .CommandWords~new(cmd)
++  words = .CommandWords~new(command)
 +  if words~error \== .nil then return self~bad(context, words~error)
-+  verb = words~take
-+  if verb == .nil then return self~bad(context, "a command is needed")
-+  verb = verb~upper
-+  into = words~takeInto
++  if words~items = 0 then return self~bad(context, "a command is needed")
++  -- a target first: a word in quotes, or one that is not a command
 +  target = .nil
-+  if label \== .nil then do
++  if words~quoted(1) | \self~isCommand(words[1]) then do
 +    if root == .nil then return self~noRoot(context)
-+    target = self~find(label, context)
++    ref = words~take
++    target = self~find(ref, context)
 +    if target == "" then return context~raiseFailure(-3)      -- a bad selector
 +    if target == .nil then do
-+      context~error("DOM: no element" label)
++      -- a target alone is a LOCATE: not found is RC 2, as LOCATE's
++      if words~items = 0 | (words~items = 2 & words~isKeyword(1, "INTO")) then
++        return context~raiseError(2)
++      context~error("DOM: not a command, and no element:" ref)
 +      return context~raiseFailure(-4)
 +    end
 +  end
++  if target \== .nil then do                  -- INTO may follow a target alone
++    into = words~takeInto
++    verb = words~take
++  end
++  else do
++    verb = words~take
++    into = words~takeInto
++  end
++  if verb == .nil then do                     -- a target alone: LOCATE it
++    current = target
++    if into \== .nil then return self~give(context, into, target)
++    return 0
++  end
++  if \self~isCommand(verb) then return self~bad(context, "unknown command" verb)
++  verb = verb~upper
++  if target \== .nil, "NEW ROOT LOCATE UP TOP WAIT CSS"~caselessWordPos(verb) > 0 then
++    return self~bad(context, verb "takes no target")
 +  signal on syntax name jsError
 +  select
 +    when verb == "NEW"    then return self~new(words, into, context)
@@ -587,18 +616,20 @@ index 0000000..9166315
 +  context~error("DOM" verb":" reason)
 +  return context~raiseFailure(-5)
 +
-+-- where the quoted word that starts s ends (0: not closed)
-+::method quotedEnd private
-+  use strict arg s
-+  q = s~left(1); j = 2
-+  do forever
-+    k = s~pos(q, j)
-+    if k = 0 then return 0
-+    if s~subchar(k + 1) \== q then return k
-+    j = k + 2
-+  end
-+
 +-- ---- helpers ---------------------------------------------------------------
++
++-- the commands, for telling them from targets and keeping them out of nicknames
++::method isCommand private
++  use strict arg word
++  return ("NEW ROOT LOCATE UP TOP CLOSE CREATE REMOVE CLEAR TEXT VALUE ATTR STYLE",
++          "CLASS SHOW HIDE ENABLE DISABLE FOCUS FIELD BUTTON TABLE LIST CSS ON OFF WAIT")~caselessWordPos(word) > 0
++
++-- a nickname that is a command name could not be a target: refused
++::method badNick private
++  use strict arg nick, context, verb
++  if \self~isCommand(nick) then return .false
++  self~bad(context, verb": a command name cannot be a nickname:" nick)
++  return .true
 +
 +::method bad private
 +  use strict arg context, why
@@ -709,6 +740,7 @@ index 0000000..9166315
 +    words~take
 +    nick = words~take
 +    if nick == .nil then return self~bad(context, "NEW: AS needs a nickname")
++    if self~badNick(nick, context, "NEW") then return context~raiseFailure(-3)
 +    nick = nick~upper
 +  end
 +  if \self~noMore(words, context, "NEW [title] [AS nickname] [INTO el]") then return context~raiseFailure(-3)
@@ -794,6 +826,7 @@ index 0000000..9166315
 +  use strict arg target, words, into, context
 +  nick = words~take; tag = words~take
 +  if nick == .nil | tag == .nil then return self~bad(context, "CREATE nickname tag [text] [INTO el]")
++  if nick \== "-", self~badNick(nick, context, "CREATE") then return context~raiseFailure(-3)
 +  text = .nil
 +  if words~items > 0 then do
 +    text = self~takeValue(words, context)
@@ -917,6 +950,7 @@ index 0000000..9166315
 +  usage = "FIELD nickname [label] [type] [INTO el]"
 +  nick = words~take
 +  if nick == .nil then return self~bad(context, usage)
++  if self~badNick(nick, context, "FIELD") then return context~raiseFailure(-3)
 +  label = .nil; type = "TEXT"
 +  types = "TEXT PASSWORD NUMBER EMAIL DATE CHECKBOX TEXTAREA"
 +  if words~items > 0 then do
@@ -962,6 +996,7 @@ index 0000000..9166315
 +  usage = "BUTTON nickname text [NAME] [INTO el]"
 +  nick = words~take
 +  if nick == .nil | words~items = 0 then return self~bad(context, usage)
++  if self~badNick(nick, context, "BUTTON") then return context~raiseFailure(-3)
 +  text = self~takeValue(words, context)
 +  if text == .nil then return context~raiseFailure(-3)
 +  name = words~take

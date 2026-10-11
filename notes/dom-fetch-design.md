@@ -142,7 +142,7 @@ bridge to .JSObject), Arrays for collections, json.cls objects for JSON.
 0 ok; **positive** = the command was right but the outcome is not the
 expected one, raises ERROR (LOCATE not found = 2, as XEDIT; an HTTP status);
 **negative** = the program is wrong (unknown command, bad arguments, unknown
-element in a label), raises FAILURE (in line with JDOR's -1 / -3).
+element as a target), raises FAILURE (in line with JDOR's -1 / -3).
 
 ### WITH belongs to the ADDRESS instruction
 
@@ -215,15 +215,15 @@ under Node work.
 
 ```rexx
 address dom
-'NEW "My panel"'                   -- a floating panel, the root
-'CREATE out p'                     -- an element with the nickname OUT
-'out: TEXT "Hola desde Rexx"'
-'out: STYLE color red'
-'BUTTON ok "Press me" OK'          -- a button; its click is event OK
-'FIELD name "Your name"'
-'WAIT INTO ev'                     -- waits for an event
+NEW '"My panel"'                   -- a floating panel, the root
+CREATE out p                       -- an element with the nickname OUT
+out TEXT '"Hola desde Rexx"'       -- a target first: that element
+out STYLE color red
+BUTTON ok '"Press me"' OK          -- a button; its click is event OK
+FIELD name '"Your name"'
+WAIT INTO 'ev'                     -- waits for an event
 if ev~name = "OK" then do
-  'name: VALUE INTO v'; say "you typed" v
+  name VALUE INTO 'v'; say "you typed" v
 end
 ```
 
@@ -251,13 +251,28 @@ environment variable ORX_DOM_ROOT ("none" for null). The playground uses
 There is a *current element*; an element can be referred to by nickname or
 by CSS selector, and `LOCATE` moves the current element there.
 
-**Label syntax for a one-off target**: `'out: TEXT hola'`,
-`'#id: TEXT hola'`, `'"#form input": TEXT x'`. The label is the first token,
-ending at its last `:` before the first blank (so `li:first-child: TEXT x`
-works); a nickname is looked up first, else it is a selector; **the label
-does not move the current element** (LOCATE does). To be documented
-prominently: a label written outside the quotes (`out: 'TEXT hola'`) is a
-real Rexx label, and the command silently goes to the current element.
+**A one-off target goes first**: `out TEXT hola`, `'#id TEXT hola'`,
+`'"#form input" VALUE x'`. The first word is a target when it is in quotes
+or is not a command; a nickname is looked up first, else it is a selector;
+**a one-off target does not move the current element** (LOCATE does). **A
+target alone is a LOCATE**, as a target is in XEDIT: `out` = `LOCATE out`
+(not found: RC 2, as LOCATE). So nicknames cannot be command names (CREATE,
+FIELD, BUTTON and NEW ... AS refuse them, -3), and a selector that is a
+command name goes in quotes (`'"table" CLASS wide'`). A target before NEW,
+ROOT, LOCATE, UP, TOP, WAIT or CSS is refused (-3). A first word that is
+neither a command nor an element: -4 with more words, RC 2 alone (a
+misspelt command alone reads as a target).
+
+This replaced a label syntax (`'out: TEXT hola'`, the target up to its last
+`:`), because it forced the quotes: written unquoted, `out: TEXT hola` is a
+Rexx label followed by a command that silently goes to the current element.
+With the target first, most commands can be written as plain Rexx clauses,
+as Rony G. Flatscher suggested. What still needs quotes is what Rexx would
+evaluate: the names of variables (after INTO and FROM, and a nickname that
+is also a variable), a command word when a variable of that name exists
+(with a variable `text`, unquoted TEXT is its value), what Rexx would upper
+case (values, CSS selectors and classes) and words with operator characters
+(`font-size`, `-`).
 
 Nicknames are upper case, as Rexx words are.
 
@@ -344,17 +359,18 @@ removed when the next run starts.
 
 0 ok; 1 WAIT time over (no condition); 2 LOCATE not found / UP at the root
 (ERROR); -1 no page realm, -2 no root / current element, -3 wrong command
-or arguments (including a bad selector), -4 a label / ref that names
+or arguments (including a bad selector), -4 a target / ref that names
 nothing, -5 a JavaScript error (FAILURE).
 
 ### Tests and samples
 
-`wasm/tests/dom.rex`, 64 checks in Chromium (events made from Rexx, so
+`wasm/tests/dom.rex`, 76 checks in Chromium (events made from Rexx, so
 nobody is needed at the page), plus 3 cases in `web-api.py` (no page realm
 → RC -1; default root = body; `dom: {root: "#log"}`). The playground has a
 group "The page, the classic way (ADDRESS)" with three samples: A form
 (`dom-form.rex`), To do (`dom-todo.rex`) and Weather, DOM + FETCH
-(`fetch-weather.rex`, Open-Meteo geocoding + forecast, a table of 5 days).
+(`fetch-weather.rex`, Open-Meteo geocoding + forecast, a table of 5 days),
+written with as few quotes as Rexx allows.
 The `.JSObject` to-do sample ("Events from the page") remains alongside the
 ADDRESS DOM one.
 
@@ -367,5 +383,6 @@ ADDRESS DOM one.
 - A Directory built with `d~method = x` has upper-case keys: JavaScript
   options objects need `d["method"] = x`.
 - Rexx `|` and `&` evaluate both sides.
-- A Rexx label outside the quotes (`out: 'TEXT hola'`) is not a DOM label
-  (see above), and `WITH` outside the ADDRESS instruction is just text.
+- Unquoted words are expressions: a variable with the name of a nickname,
+  of a command word or of the name after INTO / FROM changes the command
+  (see above). `WITH` outside the ADDRESS instruction is just text.
