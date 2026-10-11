@@ -14,7 +14,8 @@ current Chrome, Edge, Firefox or Safari).
 This repository is not a fork of ooRexx. It holds a **series of patches** on
 top of ooRexx SVN trunk, plus the scripts, tests and pages built around them.
 Patches 0001–0005 are proposed for inclusion in ooRexx in
-[RFE #879](https://sourceforge.net/p/oorexx/feature-requests/879/).
+[RFE #879](https://sourceforge.net/p/oorexx/feature-requests/879/); the
+updates to that request are now published in [`rfe/`](rfe/).
 
 ## The patch series
 
