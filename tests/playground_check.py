@@ -190,7 +190,22 @@ with sync_playwright() as p:
 
     # your files survive a reload (IndexedDB), with edits; the open file reopens
     pg.set_input_files("#picker", [{"name": "keep.rex", "mimeType": "text/plain", "buffer": b"say 'kept'\n"}])
-    pg.fill("#src", "say 'kept and edited'"); time.sleep(1.5)
+    pg.fill("#src", "say 'kept and edited'")
+    # wait until the edit is in IndexedDB (debounced, then an asynchronous
+    # transaction: a fixed sleep was too short on a loaded machine)
+    kept = """() => new Promise((ok) => {
+        const r = indexedDB.open("oorexx-playground");
+        r.onerror = () => ok(null);
+        r.onsuccess = () => {
+          try {
+            const g = r.result.transaction("files").objectStore("files").get("/home/rexx/keep.rex");
+            g.onsuccess = () => { r.result.close(); ok(g.result ? new TextDecoder().decode(g.result) : null); };
+            g.onerror = () => { r.result.close(); ok(null); };
+          } catch (e) { r.result.close(); ok(null); }
+        };
+      })"""
+    t = time.time()
+    while pg.evaluate(kept) != "say 'kept and edited'" and time.time() - t < 15: time.sleep(0.25)
     pg.reload(); pg.wait_for_selector("#rstate[data-state=ready]", timeout=20000)
     pg.wait_for_function("document.getElementById('fname').textContent.includes('keep.rex')", timeout=5000)
     fl = pg.locator("#filelist").inner_text()
