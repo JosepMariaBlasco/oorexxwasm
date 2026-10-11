@@ -247,10 +247,10 @@ index 0000000..01451f3
 +
 +::requires "fetch.cls"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index bf1afad..be602d0 100755
+index f8d87cb..4fdf81c 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -302,6 +302,13 @@ check "JavaScript events: HTTP server in Rexx, threads, release, exit" '^rexx an
+@@ -303,6 +303,13 @@ check "JavaScript events: HTTP server in Rexx, threads, release, exit" '^rexx an
  check "command handlers in Rexx (cmdhandler.cls)" '^[0-9]+ passed, 0 failed$' '!^FAIL ' -- \
    "$X '$(cd "$(dirname "$0")" && pwd)/cmdhandler.rex'"
  

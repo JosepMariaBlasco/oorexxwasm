@@ -38,7 +38,9 @@ copied as arrays and plain objects.
   existing property.  Exact access: o["name"], o["name"] = v,
   o~invoke("name", args...).  o[i] and o[i] = v on an array or typed
   array count from 1, as a Rexx Array and BSF4ooRexx's Java arrays
-  (o[1] is JavaScript's o[0]); a list (NodeList...) keeps 0.  Also ~new, ~await, ~typeOf, ~className,
+  (o[1] is JavaScript's o[0]); a list (NodeList...) keeps 0.  ~at(i)
+  and ~put(v, i) are the same as o[i] and o[i] = v, as in Rexx's
+  collections.  Also ~new, ~await, ~typeOf, ~className,
   ~instanceOf, ~hasProperty, ~propertyNames, ~makeArray (DO OVER: an
   iterable's values), ~supplier (DO WITH INDEX i ITEM v OVER: a Map's keys
   and values, an array's 1..n (as o[i]), a list's 0..n-1, another
@@ -96,15 +98,15 @@ copied as arrays and plain objects.
  wasm/extra-packages.cpp                |  69 +++
  wasm/js-bridge.js                      | 166 ++++++
  wasm/js-realm.js                       | 457 ++++++++++++++++
- wasm/tests/qualify-node-cli.sh         |  98 ++++
+ wasm/tests/qualify-node-cli.sh         |  99 ++++
  wasm/tests/web-api.html                |   2 +-
  wasm/tests/web-api.py                  |  66 +++
  wasm/web-jdor.cpp                      |  12 +-
  wasm/web-js.cpp                        | 709 +++++++++++++++++++++++++
- wasm/web/js.cls                        | 413 ++++++++++++++
+ wasm/web/js.cls                        | 417 +++++++++++++++
  wasm/web/ooRexx-worker.js              |  15 +-
  wasm/web/ooRexx.js                     |  52 ++
- 15 files changed, 2181 insertions(+), 23 deletions(-)
+ 15 files changed, 2186 insertions(+), 23 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -1059,10 +1061,10 @@ index 0000000..7982786
 +  };
 +})();
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..83b451f 100755
+index e1c1cd8..2f5eb61 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -200,6 +200,104 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
+@@ -200,6 +200,105 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
  check "name resolution (host resolver)" '^localhost=1 127\.0\.0\.1$' '^invalid=0$' '^reverse=1 ' "^hostname=$(hostname)\$" '^hostid=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' -- \
    "$X dns.rex"
  
@@ -1137,7 +1139,7 @@ index e1c1cd8..83b451f 100755
 +check "JavaScript iteration (DO OVER, DO WITH), event options latest and max, release" '^a=1 b=2 $' '^1=x 2=y $' '^p=7$' \
 +  '^over object: 1$' '^latest detail=5 then: The NIL object$' '^max 2: 4 5$' '^max 0: 1$' '^after release: 5$' -- "$X jsover.rex"
 +
-+# arrays count from 1 (o[i], o[i] = v, DO WITH); Array's own methods found
++# arrays count from 1 (o[i], o[i] = v, AT, PUT, DO WITH); Array's own methods found
 +# case-insensitively; box/unbox with BSF4ooRexx's type indicators
 +cat > "$T/jsarr.rex" <<'EOF'
 +a = .js~newArray("a", "b", "c")
@@ -1146,7 +1148,8 @@ index e1c1cd8..83b451f 100755
 +call charout , "with:"; do with index i item v over a; call charout , "" i"="v"="a[i]; end; say
 +signal on syntax; say a[0]
 +syntax: say "index 0:" (condition("O")~message~pos("count from 1") > 0)
-+say "typed:" .js~Uint8Array~of(7, 8, 9)[3] "methods:" a~includes("d") a~reverse~join("") a~at(0)
++say "typed:" .js~Uint8Array~of(7, 8, 9)[3] "methods:" a~includes("d") a~reverse~join("") a~invoke("at", -1)
++a~put("e", 5); say "at/put:" a~at(1) a~at(5) a[5] a~length (a~at(6) == .js~undefined)
 +tf = .js~eval("(...v) => v.map((x) => typeof x).join(' ')")
 +say "box:" tf~invoke(.nil, .js~box("bo", 1), .js~box("Int", 7), .js~box("BIG", "123456789012345678901"), -
 +  .js~box("st", 5), .js~box("n", "1.5"), .js~box("Ch", "z"), .js~box("o", .nil), 5)
@@ -1158,7 +1161,7 @@ index e1c1cd8..83b451f 100755
 +::requires "js.cls"
 +EOF
 +check "JavaScript arrays from 1, Array methods, box and unbox" '^get: a c 1 3$' '^put: a-X-c-d 1 Xcd$' \
-+  '^with: 1=a=a 2=X=X 3=c=c 4=d=d$' '^index 0: 1$' '^typed: 9 methods: 1 dcXa d$' \
++  '^with: 1=a=a 2=X=X 3=c=c 4=d=d$' '^index 0: 1$' '^typed: 9 methods: 1 dcXa a$' '^at/put: d e e 5 1$' \
 +  '^box: boolean number bigint string number string object string$' '^unbox: 1 -5 3 plain$' '^byte 300: 1$' '^type B: 1$' -- "$X jsarr.rex"
 +
 +check "JavaScript events: HTTP server in Rexx, threads, release, exit" '^rexx answered GET /q\?i=1$' \
@@ -1996,10 +1999,10 @@ index 0000000..f75e48e
 +}
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
 new file mode 100644
-index 0000000..d45c4fc
+index 0000000..f319ca4
 --- /dev/null
 +++ b/wasm/web/js.cls
-@@ -0,0 +1,413 @@
+@@ -0,0 +1,417 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -2070,6 +2073,8 @@ index 0000000..d45c4fc
 + *                   element i, from 1 as in a Rexx Array (o[1] is JavaScript's
 + *                   o[0]); a list (NodeList...) keeps JavaScript's o[0]
 + *   o["name"] = v   property name set (created if need be)
++ *   o~at(i), o~put(v, i)   the same as o[i] and o[i] = v, as in Rexx's
++ *                   collections (JavaScript's own Array at(): o~invoke("at", i))
 + *   o~invoke("name", args...)   method name called; o~invoke(.nil, args...)
 + *                   calls o itself (a function)
 + * and o~new(args...) (new o(...)), o~await (a Promise's value; a rejection is
@@ -2082,8 +2087,8 @@ index 0000000..d45c4fc
 + * properties), o~byteString (an ArrayBuffer's or typed array's bytes as a
 + * Rexx string).  These names were
 + * chosen not to hide common JavaScript ones (Map's get/set/has/keys, ...).
-+ * Methods of Rexx's Object (send, start, copy, run, request, ...) are not
-+ * passed on: use o~invoke("send", x).
++ * Methods of Rexx's Object (send, start, copy, run, request, ...) and at/put
++ * are not passed on: use o~invoke("send", x).
 + *
 + * Values: JavaScript strings, numbers, booleans (1/0) and bigints come back as
 + * Rexx strings, null as .nil and undefined as .js~undefined (one object, so
@@ -2170,6 +2175,8 @@ index 0000000..d45c4fc
 +::method unknown unguarded          external "LIBRARY js js_unknown"
 +::method "[]" unguarded             external "LIBRARY js js_get"
 +::method "[]=" unguarded            external "LIBRARY js js_put"
++::method at unguarded               external "LIBRARY js js_get"   -- AT is [] in Rexx
++::method put unguarded              external "LIBRARY js js_put"   -- PUT is []=
 +::method invoke unguarded           external "LIBRARY js js_call"
 +::method new unguarded              external "LIBRARY js js_new"
 +::method await unguarded            external "LIBRARY js js_await"

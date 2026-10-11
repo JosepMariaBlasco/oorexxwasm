@@ -85,7 +85,7 @@ browser, node under Node), plus:
 | `o["exactName"]`, `o["exactName"] = v`, `o~invoke("exactName", args...)` | case-exact, no guessing (`o~invoke(.nil, ...)` calls `o`) |
 | `o~await` | wait for a Promise/thenable; result or JS error |
 | `o~new(args...)` | `new o(...)` |
-| `o[i]`, `o[i] = v` | element/property access (`[]`, `[]=`) |
+| `o[i]`, `o[i] = v` | element/property access (`[]`, `[]=`; also `~at(i)`, `~put(v, i)`) |
 | `o~makeArray`, `o~supplier` | iterables, so `DO x OVER o` and `DO WITH` work |
 | `o~typeOf`, `o~className`, `o~instanceOf(c)`, `o~hasProperty`, `o~propertyNames` | introspection |
 | `o~byteString` | the bytes of a binary value |
@@ -418,8 +418,11 @@ For the bridges to agree with each other (BSF4ooRexx for Java, oorexxnet for
   error; past the end reads `.js~undefined` and `o[n + 1] = v` appends, as
   in JavaScript. Only whole numbers are shifted: `o["length"]` is still the
   property. JavaScript's methods keep their own convention (`o~slice(1)`,
-  `o~at(0)`, `o~indexOf(x)` gives 0-based positions): only the Rexx syntax
-  counts from 1.
+  `o~indexOf(x)` gives 0-based positions): only the Rexx syntax counts
+  from 1. That includes AT and PUT, which in ooRexx are synonyms of `[]` and
+  `[]=` (Rony pointed it out): `o~at(i)` and `o~put(v, i)` are `o[i]` and
+  `o[i] = v`, and JavaScript's own `Array.prototype.at` is
+  `o~invoke("at", i)`.
 - **`DO WITH INDEX i ITEM v OVER o`** agrees with `o[i]`: an array gives
   1..n; a list (an iterable with a `length` that is not an array:
   NodeList, HTMLCollection) keeps JavaScript's `o[0]` and gives 0..n-1, as

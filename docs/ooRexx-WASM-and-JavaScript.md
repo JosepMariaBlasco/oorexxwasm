@@ -36,10 +36,11 @@ In the browser, the page that runs ooRexx must grant each realm (`js: {worker: t
 
 `o~name` reads a property, or calls it when it is a function (a constructor, such as `Map`, is returned instead, so that `.js~Map~new` works); `o~name(a, b)` calls a method; `o~name = v` sets a property that exists. ooRexx uppercases message names, so they are resolved case-insensitively along the prototype chain. `o["name"]`, `o["name"] = v` (which also creates the property) and `o~invoke("name", ...)` are exact.
 
-On an array or a typed array, `o[i]` and `o[i] = v` count from 1, as in a Rexx Array: `o[1]` is JavaScript's `o[0]`, 0 is an error, a position past the end reads `.js~undefined`, and `o[n + 1] = v` appends. `DO WITH INDEX i ITEM v OVER o` gives the same positions, 1 to n. Lists that are not arrays, such as the DOM's `NodeList`, keep JavaScript's indexing from 0, and so does `DO WITH` over them. JavaScript's own methods keep their meaning: `o~slice(1)`, `o~indexOf(x)`.
+On an array or a typed array, `o[i]` and `o[i] = v` count from 1, as in a Rexx Array: `o[1]` is JavaScript's `o[0]`, 0 is an error, a position past the end reads `.js~undefined`, and `o[n + 1] = v` appends. `o~at(i)` and `o~put(v, i)` are the same as `o[i]` and `o[i] = v`, as AT and PUT are in Rexx's collections. `DO WITH INDEX i ITEM v OVER o` gives the same positions, 1 to n. Lists that are not arrays, such as the DOM's `NodeList`, keep JavaScript's indexing from 0, and so does `DO WITH` over them. JavaScript's own methods keep their meaning: `o~slice(1)`, `o~indexOf(x)`; JavaScript's `at` (which takes negative positions) is `o~invoke("at", i)`.
 
 | Method | Does |
 | --- | --- |
+| `~at(i)`, `~put(v, i)` | the same as `o[i]` and `o[i] = v` |
 | `~new(args...)` | `new o(args...)` |
 | `~await` | waits for a Promise and gives its value; a rejection is an error |
 | `~typeOf`, `~className`, `~instanceOf(c)` | JavaScript's `typeof`, the class name, `instanceof` |
@@ -75,7 +76,7 @@ A handler stays alive from its first trip to JavaScript until `handler~release` 
 ## Pitfalls
 
 - **Case-insensitive names can pick the wrong property.** `.js~page~Event` finds `window.event`, the current event, before `window.Event`, the constructor. Use the exact form: `w["Event"]~new("input")`.
-- **Rexx methods win.** The methods in the table above, and those of Rexx's Object (`send`, `start`, `copy`, `run`, …), are not passed on to JavaScript. `el~className` names the JavaScript class (`HTMLDivElement`), not the element's `class` attribute: use `el["className"]`, and `o~invoke("send", x)`.
+- **Rexx methods win.** The methods in the table above, and those of Rexx's Object (`send`, `start`, `copy`, `run`, …), are not passed on to JavaScript. `el~className` names the JavaScript class (`HTMLDivElement`), not the element's `class` attribute: use `el["className"]`, and `o~invoke("send", x)`. Likewise `a~at(1)` is the first element, as `a[1]`: JavaScript's own `at` is `a~invoke("at", 0)`.
 - **Directory keys are upper case.** `d~method = "POST"` stores `METHOD`, which a JavaScript options object does not know: use `d["method"] = "POST"`.
 
 ## Guarantees
@@ -108,3 +109,4 @@ Replies on this list are very welcome.
 | Arrays and typed arrays count from 1 with `o[i]` and `DO WITH`; lists keep 0 | Messages |
 | `.js~box(type, x)` with BSF4ooRexx's type indicators, and `.js~unbox(o)` | Values |
 | What the implementation guarantees, stated | Guarantees |
+| `~at(i)` and `~put(v, i)` are `o[i]` and `o[i] = v`, as in Rexx's collections (JavaScript's `at` is `o~invoke("at", i)`) | Messages, Pitfalls |
