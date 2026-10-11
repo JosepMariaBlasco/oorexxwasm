@@ -37,8 +37,6 @@ upstream, flaky	base/class/MutexSemaphore	hangs at interpreter termination under
 flaky	base/keyword/TRACE	TEST_TRACE_LABEL_WITH_FORWARD: trace line count depends on thread timing (also seen under Node)
 test-bug	base/class/DateTime	TEST_FROMCIVILTIME uses '0:00am', which TIME()/DateTime reject since trunk r13250 (as TIME.testGroup itself expects: 40.19 for '00:00am'): 1 error on every platform, native too. Also, WebKit only: occasionally no output after 'Executing automated test suite'; passes when retried
 install	base/class/RexxInfo	TEST_REXXINFO_EXECUTABLE: executable expected to be a File (it is .nil)
-test-bug	extensions/json/json_02	init: filespec('location', .rexxInfo~executable) with executable .nil; no test runs (227 pass with the fix); bug #2097, fixed in test/trunk r13249
-test-bug	extensions/yaml/yaml	same as json_02 (54 pass with the fix); bug #2097, fixed in test/trunk r13249
 processes	samples/samples	the samples are run as a rexx process (and are not in the browser's file system)
 flaky	base/class/RexxContext	TEST_INTERPRETER_THREAD_INVOCATION: compares with a value a START thread records, read before that thread wrote it ('.nil'); once in Chromium (r13254 run), 6 reruns pass
 upstream	base/class/RexxInteger	TEST_INTEGER_TIME with TZ=UTC (bug #2110): on 32-bit builds (wasm32) TIME('O') is a String, never a RexxInteger; the test expects one when the offset is 0. Any other time zone passes
