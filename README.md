@@ -102,13 +102,13 @@ r13268, 402 test groups (GitHub Actions runners, Ubuntu 24.04):
 | | groups passing |
 |---|---:|
 | native (same series) | 400 |
-| Node | 391 |
-| Chromium | 366 |
-| Firefox | 366 |
-| WebKit | 366 |
+| Node | 397 |
+| Chromium | 371 |
+| Firefox | 371 |
+| WebKit | 371 |
 
 Every difference with native has a known cause (mostly: no processes in the
-browser, and the native test libraries the API groups need):
+browser):
 [`results/suite-platforms-r13268-series.md`](results/suite-platforms-r13268-series.md).
 The results on r13263, the previous base, are kept next to them.
 
