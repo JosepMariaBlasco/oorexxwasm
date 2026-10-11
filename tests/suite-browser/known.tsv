@@ -4,7 +4,7 @@ processes	base/bif/CHAROUT	'rexx delMe...rex' failed with RC 127
 processes	base/bif/CONDITION	external command raises FAILURE (RC 127), test expects ERROR
 processes	base/bif/LINEIN	'echo hello hello>' file: no command
 processes	base/bif/STREAM	'id -u' failed with RC 127
-processes, memfs	base/class/File	searchPath('sh'): no shell on PATH; *_FRACTIONS: MEMFS file times read back in whole ms
+processes, memfs, flaky	base/class/File	searchPath('sh'): no shell on PATH; *_FRACTIONS: MEMFS file times read back in whole ms (one of them passes by chance now and then: 3 or 4 failures)
 processes	base/class/Method	rexxc: RC 127
 processes	base/class/RexxQueue	'rexx -e ...' RC 127
 processes	base/class/Routine	rexxc: RC 127
