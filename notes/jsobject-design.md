@@ -445,8 +445,9 @@ For the bridges to agree with each other (BSF4ooRexx for Java, oorexxnet for
   typed array, Array methods, box and unbox, errors); web-api.py's js core
   case now reads `a[1]` as the first element. `fetch.cls` (patch 0009)
   reads the headers' `[name, value]` pairs as `pair[1]`, `pair[2]`.
-- The specification posted on 8 October still says `o[0]`: its second
-  version must say all this.
+- The living specification (`docs/ooRexx-WASM-and-JavaScript.md`) says
+  all this; the version posted on 8 October stays as sent in
+  `docs/posted/2026-10-08/`.
 
 ## Guarantees
 
