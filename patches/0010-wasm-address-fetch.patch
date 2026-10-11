@@ -265,7 +265,7 @@ index f8d87cb..4fdf81c 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 0df2192..f3b0d86 100755
+index 8789644..094b1bc 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -64,6 +64,9 @@ class H(SimpleHTTPRequestHandler):
@@ -278,7 +278,7 @@ index 0df2192..f3b0d86 100755
  time.sleep(0.7)
  
  CASES = [
-@@ -165,6 +168,9 @@ CASES = [
+@@ -178,6 +181,9 @@ CASES = [
                   'shape u area a; areaAdd u b; shapeBounds u; say rc\nshape i area a; areaIntersect i b; shapeBounds i; say rc\n'
                   '::requires "jdor.cls"', {},
       lambda r: r["out"] == "0.0 0.0 15.0 10.0\n5.0 0.0 5.0 10.0\n"),

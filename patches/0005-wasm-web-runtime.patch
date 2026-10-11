@@ -30,20 +30,25 @@ onInput}) -> {write, close, stop, done}.
 - .RexxInfo~libraryPath is /usr/lib/ooRexx/, where the classes are
   preloaded; .RexxInfo~executable stays .nil (the executable, rexx.wasm,
   comes from a URL, not from the program's file system);
+- output marked as Rexx's for the embedding side, as BSF4ooRexx does for
+  Rexx run from Java (option prefixes: REXXout>, REXXerr>, REXXtrc> at the
+  start of each line, REXXin?> / REXXdbgIn?> when input is awaited); on for
+  the streams that go to the JavaScript console (no onOut / onErr), off for
+  those the page receives;
 - test page wasm/tests/web-api.html, and wasm/tests/web-api.py: assertions
   over the API in headless Chromium.
 ---
  common/platform/unix/SysProcess.cpp  |   9 ++
  interpreter/concurrency/Activity.cpp |  54 +++++++
- wasm/README.md                       |  54 +++++++
+ wasm/README.md                       |  63 ++++++++
  wasm/build-web.sh                    |  83 +++++++++++
- wasm/tests/web-api.html              |  67 +++++++++
- wasm/tests/web-api.py                | 150 ++++++++++++++++++++
- wasm/web-pre.js                      | 205 +++++++++++++++++++++++++++
+ wasm/tests/web-api.html              |  76 ++++++++++
+ wasm/tests/web-api.py                | 163 +++++++++++++++++++++
+ wasm/web-pre.js                      | 205 ++++++++++++++++++++++++++
  wasm/web-stdin.cpp                   | 157 ++++++++++++++++++++
- wasm/web/ooRexx-worker.js            | 111 +++++++++++++++
- wasm/web/ooRexx.js                   | 150 ++++++++++++++++++++
- 10 files changed, 1040 insertions(+)
+ wasm/web/ooRexx-worker.js            | 111 ++++++++++++++
+ wasm/web/ooRexx.js                   | 207 +++++++++++++++++++++++++++
+ 10 files changed, 1128 insertions(+)
  create mode 100755 wasm/build-web.sh
  create mode 100644 wasm/tests/web-api.html
  create mode 100755 wasm/tests/web-api.py
@@ -166,10 +171,10 @@ index 8848967..3b1f460 100644
      if (callDebugInputExit(activation, value))
      {
 diff --git a/wasm/README.md b/wasm/README.md
-index c2c2a0f..746ba5b 100644
+index c2c2a0f..1cd8b38 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -143,6 +143,60 @@ threads, SysSleep, RxSock and `.StreamSocket` over WebSocket, external data
+@@ -143,6 +143,69 @@ threads, SysSleep, RxSock and `.StreamSocket` over WebSocket, external data
  queue, rxregexp, rxmath, deep recursion (Error 11, at a depth set by the
  browser; see the limits below).
  
@@ -220,6 +225,15 @@ index c2c2a0f..746ba5b 100644
 +// onOut(text, kind), onErr(text, kind): kind is 'trace', 'error' (an error
 +// message) or 'plain'; onInput({debug}): debug when .debugInput is reading
 +```
++
++Without `onOut` or `onErr`, that stream's lines go to the JavaScript console.
++What comes from Rexx can be marked as BSF4ooRexx marks it for Rexx run from
++Java (option `prefixes`): every line written starts with `REXXout>`,
++`REXXerr>` or `REXXtrc>` (trace output), and `REXXin?>` (`REXXdbgIn?>` for
++interactive trace) is written when the program waits for input.  It is on for
++the streams that go to the console, off for those the page receives, and
++`prefixes: true / false / {out, err, trace, input, debugInput}` turns it on,
++off, or changes the strings.
 +
 +`wasm/tests/web-api.html` is a minimal page over it. The page must be cross-origin
 +isolated (see above).  `wasm/tests/web-api.py BIN_WEB` runs assertions over the
@@ -321,10 +335,10 @@ index 0000000..62f7ae3
 +ls -l "$OUT" | awk 'NR>1{print $5, $9}'
 diff --git a/wasm/tests/web-api.html b/wasm/tests/web-api.html
 new file mode 100644
-index 0000000..e3fc7a7
+index 0000000..1e3edd8
 --- /dev/null
 +++ b/wasm/tests/web-api.html
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,76 @@
 +<!doctype html><meta charset="utf-8"><title>ooRexx/WASM web API test</title>
 +<!--
 +/*============================================================================*/
@@ -371,6 +385,8 @@ index 0000000..e3fc7a7
 +// (trace: the output marked as trace, errmsg: marked as an error message,
 +// debug: one flag per input request, true when .debugInput asked)
 +// inputs: lines typed one per input request (interactive stdin); then EOF
++// prefixes: passed on; console: no onOut / onErr, the console lines are
++// collected instead (out: console.log, err: console.error, one per line)
 +let rexx = null;
 +window.rexxReady = OoRexx.load().then((r) => { rexx = r; return true; }, (e) => String(e));
 +window.rexxRun = async (source, o = {}) => {
@@ -379,14 +395,21 @@ index 0000000..e3fc7a7
 +  const mark = (t, kind) => { if (kind === 'trace') trace += t; else if (kind === 'error') errmsg += t; };
 +  const inputs = (o.inputs || []).slice();
 +  const files = Object.assign({ '/home/rexx/prog.rex': source }, o.files || {});
++  const saved = { log: console.log, error: console.error };
++  if (o.console) {
++    console.log = (l) => { out += l + '\n'; };
++    console.error = (l) => { err += l + '\n'; };
++  }
 +  const run = rexx.run({
-+    args: ['prog.rex'].concat(o.args || []), files, stdin: o.stdin,
-+    onOut: (t, kind) => { out += t; mark(t, kind); }, onErr: (t, kind) => { err += t; mark(t, kind); },
++    args: ['prog.rex'].concat(o.args || []), files, stdin: o.stdin, prefixes: o.prefixes,
++    onOut: o.console ? undefined : (t, kind) => { out += t; mark(t, kind); },
++    onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
 +    onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 +      if (inputs.length) run.write(inputs.shift() + '\n'); else run.close(); },
 +  });
 +  if (o.stopAfterMs) setTimeout(() => run.stop(), o.stopAfterMs);
 +  const r = await run.done;
++  console.log = saved.log; console.error = saved.error;
 +  const files2 = {};
 +  for (const [p, b] of Object.entries(r.files)) files2[p] = new TextDecoder().decode(b);
 +  return { out, err, asks, trace, errmsg, debug, rc: r.rc, stopped: r.stopped, error: r.error, ms: Math.round(r.ms), files: files2 };
@@ -394,10 +417,10 @@ index 0000000..e3fc7a7
 +</script>
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
 new file mode 100755
-index 0000000..6467a39
+index 0000000..3940711
 --- /dev/null
 +++ b/wasm/tests/web-api.py
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,163 @@
 +#/*----------------------------------------------------------------------------*/
 +#/*                                                                            */
 +#/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -510,6 +533,19 @@ index 0000000..6467a39
 +  ("trace to stdout", '.traceOutput~destination(.output); trace r; a = 1', {},
 +     lambda r: "*-* a = 1" in r["out"] and "*-* a = 1" in r["trace"] and r["err"] == ""),
 +  # interactive trace reads .debugInput, PULL reads .input: each request says which
++  # prefixes (as BSF4ooRexx's for Rexx run from another language)
++  ("prefixes", 'say "a"; call charout , "b"; say "c"; .error~lineout("e"); trace r; x = 1',
++     {"prefixes": True},
++     lambda r: r["out"] == "REXXout>a\nREXXout>bc\n" and r["err"].startswith("REXXerr>e\nREXXtrc>")
++               and all(l.startswith("REXXtrc>") for l in r["err"].splitlines()[1:])),
++  ("prefixes: input prompt", 'call charout , "Name? "; parse pull n; say "Hi" n', {"prefixes": True, "inputs": ["Ana"]},
++     lambda r: r["out"] == "REXXout>Name? REXXin?>REXXout>Hi Ana\n"),
++  ("prefixes: own strings", 'say "a"; say "b"', {"prefixes": {"out": "R> "}},
++     lambda r: r["out"] == "R> a\nR> b\n"),
++  ("prefixes: off by default with onOut", 'say "a"', {}, lambda r: r["out"] == "a\n"),
++  ("console: lines, prefixed", 'say "a"; say "b"; .error~lineout("e"); call charout , "tail"', {"console": True},
++     lambda r: r["out"] == "REXXout>a\nREXXout>b\nREXXout>tail\n" and r["err"] == "REXXerr>e\n"),
++  ("console: prefixes false", 'say "a"', {"console": True, "prefixes": False}, lambda r: r["out"] == "a\n"),
 +  ("debug input", 'trace ?r; a = 1; pull x; say "x=[" || x || "]"', {"inputs": [""] * 8},
 +     lambda r: "x=[]" in r["out"] and True in r["debug"] and False in r["debug"]),
 +  # the marks are per thread: several threads tracing and writing at once
@@ -1041,10 +1077,10 @@ index 0000000..732e019
 +};
 diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
 new file mode 100644
-index 0000000..3d1ae66
+index 0000000..73eb864
 --- /dev/null
 +++ b/wasm/web/ooRexx.js
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,207 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -1119,10 +1155,62 @@ index 0000000..3d1ae66
 + *   onInput        ({debug}) => void, the program is waiting for standard
 + *                  input; debug is true when it is interactive trace reading
 + *                  (.debugInput) rather than the program
++ *                  Without onOut / onErr, that stream's lines go to the
++ *                  JavaScript console (console.log / console.error).
++ *   prefixes       mark what comes from Rexx, as BSF4ooRexx does for Rexx
++ *                  run from Java: every line written starts with
++ *                  'REXXout>' (standard output), 'REXXerr>' (standard error,
++ *                  error messages) or 'REXXtrc>' (trace output), and when the
++ *                  program waits for input 'REXXin?>' ('REXXdbgIn?>' for
++ *                  interactive trace) is written to the output.  true: on;
++ *                  false: off; an object changes the strings, {out, err,
++ *                  trace, input, debugInput} (a missing one: the default, ''
++ *                  or null: none).  Default: on for a stream that goes to
++ *                  the console, off for one the page receives (onOut, onErr)
 + */
 +(function (global) {
 +  'use strict';
 +  const here = (global.document && document.currentScript && document.currentScript.src) || '';
++
++  // prefixes: BSF4ooRexx's (BSF.CLS, bsf.redirectTo), the same in every bridge
++  const PREFIXES = { out: 'REXXout>', err: 'REXXerr>', trace: 'REXXtrc>', input: 'REXXin?>', debugInput: 'REXXdbgIn?>' };
++  function prefixStrings(option, onConsole) {
++    const on = option === undefined ? onConsole : !!option;
++    if (!on) return null;
++    const p = Object.assign({}, PREFIXES);
++    if (option && typeof option === 'object') {
++      for (const k of Object.keys(PREFIXES)) if (k in option) p[k] = option[k] || '';
++    }
++    return p;
++  }
++  // a stream sink: text -> the page's callback, or whole lines -> the console;
++  // with prefixes, each line starts with the one for its kind of output
++  function sink(callback, log, prefixes, plainKey) {
++    let atStart = true, line = '';
++    const emit = callback || ((text) => {
++      line += text;
++      let i;
++      while ((i = line.indexOf('\n')) >= 0) { log(line.slice(0, i)); line = line.slice(i + 1); }
++    });
++    return {
++      write(text, kind) {
++        if (!text) return;
++        if (prefixes) {
++          const p = prefixes[kind === 'trace' ? 'trace' : kind === 'error' ? 'err' : plainKey];
++          let out = '';
++          for (const piece of text.split(/(?<=\n)/)) {
++            if (atStart && p) out += p;
++            out += piece;
++            atStart = piece.endsWith('\n');
++          }
++          text = out;
++        }
++        emit(text, kind || 'plain');
++      },
++      prompt(text) { if (text) { emit(text, 'plain'); atStart = true; } },
++      flush() { if (!callback && line) { log(line); line = ''; } },
++    };
++  }
 +
 +  class OoRexx {
 +    static async load(base) {
@@ -1153,6 +1241,9 @@ index 0000000..3d1ae66
 +      const files = {};
 +      for (const [p, v] of Object.entries(opts.files || {})) files[p] = bytes(v);
 +      const outDec = new TextDecoder('utf-8'), errDec = new TextDecoder('utf-8');
++      const out = sink(opts.onOut, (l) => console.log(l), prefixStrings(opts.prefixes, !opts.onOut), 'out');
++      const errs = sink(opts.onErr, (l) => console.error(l), prefixStrings(opts.prefixes, !opts.onErr), 'err');
++      const prompts = prefixStrings(opts.prefixes, !opts.onOut);
 +      const worker = new Worker(this.base + 'ooRexx-worker.js', { name: 'ooRexx-host' });
 +      const t0 = performance.now();
 +      let settle, finished = false;
@@ -1160,9 +1251,8 @@ index 0000000..3d1ae66
 +      const end = (result) => {
 +        if (finished) return;
 +        finished = true;
-+        const tailOut = outDec.decode(), tailErr = errDec.decode();
-+        if (tailOut && opts.onOut) opts.onOut(tailOut);
-+        if (tailErr && opts.onErr) opts.onErr(tailErr);
++        out.write(outDec.decode(), 'plain'); errs.write(errDec.decode(), 'plain');
++        out.flush(); errs.flush();
 +        worker.terminate();
 +        result.ms = performance.now() - t0;
 +        settle(result);
@@ -1170,9 +1260,12 @@ index 0000000..3d1ae66
 +      worker.onmessage = (ev) => {
 +        const m = ev.data;
 +        switch (m.type) {
-+          case 'out': if (opts.onOut) opts.onOut(outDec.decode(m.bytes, { stream: true }), m.kind || 'plain'); break;
-+          case 'err': if (opts.onErr) opts.onErr(errDec.decode(m.bytes, { stream: true }), m.kind || 'plain'); break;
-+          case 'input': if (opts.onInput) opts.onInput({ debug: !!m.debug }); break;
++          case 'out': out.write(outDec.decode(m.bytes, { stream: true }), m.kind); break;
++          case 'err': errs.write(errDec.decode(m.bytes, { stream: true }), m.kind); break;
++          case 'input':
++            if (prompts) out.prompt(m.debug ? prompts.debugInput : prompts.input);
++            if (opts.onInput) opts.onInput({ debug: !!m.debug });
++            break;
 +          case 'exit': end({ rc: m.rc, files: m.files, stopped: false }); break;
 +          case 'error': end({ rc: null, files: {}, stopped: false, error: m.message }); break;
 +        }

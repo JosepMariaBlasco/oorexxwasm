@@ -98,10 +98,10 @@ index 9324d0b..5dbab4a 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index 2b68f40..87678f3 100644
+index ed1d7a7..9947869 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -195,7 +195,58 @@ const { rc, files, stopped, ms } = await run.done;
+@@ -204,7 +204,58 @@ off, or changes the strings.
  isolated (see above).  `wasm/tests/web-api.py BIN_WEB` runs assertions over the
  API in headless Chromium (Python Playwright): output, interactive and fixed
  stdin, EOF, stop, threads, files in and out, extension classes, rexxtry,
@@ -161,7 +161,7 @@ index 2b68f40..87678f3 100644
  
  ## The test suite's API groups (`wasm/build-test.sh`)
  
-@@ -227,7 +278,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -236,7 +287,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
    with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
@@ -224,18 +224,18 @@ index 0b7a11c..db384d5 100755
 +cp "$SRC/wasm/web/ooRexx.js" "$SRC/wasm/web/ooRexx-worker.js" "$SRC/wasm/web/polygon-clipping.umd.min.js" "$OUT/"
  ls -l "$OUT" | awk 'NR>1{print $5, $9}'
 diff --git a/wasm/tests/web-api.html b/wasm/tests/web-api.html
-index e3fc7a7..19d0aeb 100644
+index 1e3edd8..0c169f9 100644
 --- a/wasm/tests/web-api.html
 +++ b/wasm/tests/web-api.html
-@@ -44,6 +44,7 @@
- // (trace: the output marked as trace, errmsg: marked as an error message,
- // debug: one flag per input request, true when .debugInput asked)
+@@ -46,6 +46,7 @@
  // inputs: lines typed one per input request (interactive stdin); then EOF
+ // prefixes: passed on; console: no onOut / onErr, the console lines are
+ // collected instead (out: console.log, err: console.error, one per line)
 +// jdor: JDOR windows {win: {title, visible, frames, probe: [r,g,b,a] at o.probe}}
  let rexx = null;
  window.rexxReady = OoRexx.load().then((r) => { rexx = r; return true; }, (e) => String(e));
  window.rexxRun = async (source, o = {}) => {
-@@ -52,16 +53,30 @@ window.rexxRun = async (source, o = {}) => {
+@@ -54,6 +55,20 @@ window.rexxRun = async (source, o = {}) => {
    const mark = (t, kind) => { if (kind === 'trace') trace += t; else if (kind === 'error') errmsg += t; };
    const inputs = (o.inputs || []).slice();
    const files = Object.assign({ '/home/rexx/prog.rex': source }, o.files || {});
@@ -253,15 +253,21 @@ index e3fc7a7..19d0aeb 100644
 +      m.bitmap.close();
 +    }
 +  };
+   const saved = { log: console.log, error: console.error };
+   if (o.console) {
+     console.log = (l) => { out += l + '\n'; };
+@@ -62,7 +77,7 @@ window.rexxRun = async (source, o = {}) => {
    const run = rexx.run({
-     args: ['prog.rex'].concat(o.args || []), files, stdin: o.stdin,
--    onOut: (t, kind) => { out += t; mark(t, kind); }, onErr: (t, kind) => { err += t; mark(t, kind); },
-+    onOut: (t, kind) => { out += t; mark(t, kind); }, onErr: (t, kind) => { err += t; mark(t, kind); }, onJdor,
+     args: ['prog.rex'].concat(o.args || []), files, stdin: o.stdin, prefixes: o.prefixes,
+     onOut: o.console ? undefined : (t, kind) => { out += t; mark(t, kind); },
+-    onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
++    onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); }, onJdor,
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
        if (inputs.length) run.write(inputs.shift() + '\n'); else run.close(); },
    });
-   if (o.stopAfterMs) setTimeout(() => run.stop(), o.stopAfterMs);
+@@ -70,7 +85,7 @@ window.rexxRun = async (source, o = {}) => {
    const r = await run.done;
+   console.log = saved.log; console.error = saved.error;
    const files2 = {};
 -  for (const [p, b] of Object.entries(r.files)) files2[p] = new TextDecoder().decode(b);
 -  return { out, err, asks, trace, errmsg, debug, rc: r.rc, stopped: r.stopped, error: r.error, ms: Math.round(r.ms), files: files2 };
@@ -270,7 +276,7 @@ index e3fc7a7..19d0aeb 100644
  };
  </script>
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 6467a39..f368988 100755
+index 3940711..48fc32b 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -42,7 +42,7 @@ Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP
@@ -282,7 +288,7 @@ index 6467a39..f368988 100755
  from playwright.sync_api import sync_playwright
  
  if len(sys.argv) != 2:
-@@ -123,6 +123,45 @@ CASES = [
+@@ -136,6 +136,45 @@ CASES = [
                         '::options trace r', {},
       lambda r: r["out"].count("  worker") == 12 and "total 4\n" in r["out"] and "*-*" in r["err"]
                 and r["err"] == r["trace"] and r["errmsg"] == ""),
@@ -3122,13 +3128,13 @@ index 732e019..7de8c97 100644
        if (msg.stdin) { M.orxStdinWrite(msg.stdin); M.orxStdinClose(); }
        for (const m of q) feed(m);
 diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
-index 3d1ae66..ce302cf 100644
+index 73eb864..b2d1562 100644
 --- a/wasm/web/ooRexx.js
 +++ b/wasm/web/ooRexx.js
-@@ -72,6 +72,20 @@
-  *   onInput        ({debug}) => void, the program is waiting for standard
-  *                  input; debug is true when it is interactive trace reading
-  *                  (.debugInput) rather than the program
+@@ -84,6 +84,20 @@
+  *                  trace, input, debugInput} (a missing one: the default, ''
+  *                  or null: none).  Default: on for a stream that goes to
+  *                  the console, off for one the page receives (onOut, onErr)
 + *   onJdor         (msg) => void, JDOR (the drawing command handler, see
 + *                  jdor.cls) shows something; msg.op is
 + *                    'window'  {win, visible, title, frame, x, y, width,
@@ -3146,15 +3152,15 @@ index 3d1ae66..ce302cf 100644
   */
  (function (global) {
    'use strict';
-@@ -126,6 +140,7 @@
-           case 'out': if (opts.onOut) opts.onOut(outDec.decode(m.bytes, { stream: true }), m.kind || 'plain'); break;
-           case 'err': if (opts.onErr) opts.onErr(errDec.decode(m.bytes, { stream: true }), m.kind || 'plain'); break;
-           case 'input': if (opts.onInput) opts.onInput({ debug: !!m.debug }); break;
+@@ -183,6 +197,7 @@
+             if (prompts) out.prompt(m.debug ? prompts.debugInput : prompts.input);
+             if (opts.onInput) opts.onInput({ debug: !!m.debug });
+             break;
 +          case 'jdor': if (opts.onJdor) opts.onJdor(m.msg); else if (m.msg.bitmap) m.msg.bitmap.close(); break;
            case 'exit': end({ rc: m.rc, files: m.files, stopped: false }); break;
            case 'error': end({ rc: null, files: {}, stopped: false, error: m.message }); break;
          }
-@@ -135,11 +150,13 @@
+@@ -192,11 +207,13 @@
          type: 'run', scriptUrl: this.base + 'rexx.js', wasmModule: this.wasmModule,
          data: this.data.slice(0), args: opts.args || [], files, cwd, env: opts.env || {},
          stdin: opts.stdin === undefined || opts.stdin === null ? null : bytes(opts.stdin),

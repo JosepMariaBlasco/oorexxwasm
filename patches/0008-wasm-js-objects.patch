@@ -131,10 +131,10 @@ index 5dbab4a..e949832 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index 87678f3..65b47c4 100644
+index 9947869..57e2196 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -271,6 +271,108 @@ from the test suite's directory:
+@@ -280,6 +280,108 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -243,7 +243,7 @@ index 87678f3..65b47c4 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -280,6 +382,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -289,6 +391,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127);
    ADDRESS JDOR draws (see above).
@@ -1171,23 +1171,23 @@ index e1c1cd8..2f5eb61 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.html b/wasm/tests/web-api.html
-index 19d0aeb..860e798 100644
+index 0c169f9..4aafd0c 100644
 --- a/wasm/tests/web-api.html
 +++ b/wasm/tests/web-api.html
-@@ -68,7 +68,7 @@ window.rexxRun = async (source, o = {}) => {
-     }
-   };
+@@ -75,7 +75,7 @@ window.rexxRun = async (source, o = {}) => {
+     console.error = (l) => { err += l + '\n'; };
+   }
    const run = rexx.run({
--    args: ['prog.rex'].concat(o.args || []), files, stdin: o.stdin,
-+    args: ['prog.rex'].concat(o.args || []), files, stdin: o.stdin, js: o.js,
-     onOut: (t, kind) => { out += t; mark(t, kind); }, onErr: (t, kind) => { err += t; mark(t, kind); }, onJdor,
+-    args: ['prog.rex'].concat(o.args || []), files, stdin: o.stdin, prefixes: o.prefixes,
++    args: ['prog.rex'].concat(o.args || []), files, stdin: o.stdin, prefixes: o.prefixes, js: o.js,
+     onOut: o.console ? undefined : (t, kind) => { out += t; mark(t, kind); },
+     onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); }, onJdor,
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
-       if (inputs.length) run.write(inputs.shift() + '\n'); else run.close(); },
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index f368988..735f1b4 100755
+index 48fc32b..f07c770 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
-@@ -162,6 +162,72 @@ CASES = [
+@@ -175,6 +175,72 @@ CASES = [
                   'shape u area a; areaAdd u b; shapeBounds u; say rc\nshape i area a; areaIntersect i b; shapeBounds i; say rc\n'
                   '::requires "jdor.cls"', {},
       lambda r: r["out"] == "0.0 0.0 15.0 10.0\n5.0 0.0 5.0 10.0\n"),
@@ -2476,10 +2476,10 @@ index 7de8c97..bd06285 100644
      printErr: (s) => post({ type: 'err', bytes: textBytes(s) }),
      orxReady: () => {
 diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
-index ce302cf..eb80101 100644
+index b2d1562..8eea641 100644
 --- a/wasm/web/ooRexx.js
 +++ b/wasm/web/ooRexx.js
-@@ -86,11 +86,45 @@
+@@ -98,6 +98,19 @@
   *                  win, x, y}) and closes with run.jdorEvent({op:'closed', win}).
   *   screen         {width, height} JDOR's winScreenSize (default: the
   *                  window's inner size)
@@ -2499,7 +2499,9 @@ index ce302cf..eb80101 100644
   */
  (function (global) {
    'use strict';
-   const here = (global.document && document.currentScript && document.currentScript.src) || '';
+@@ -143,6 +156,27 @@
+     };
+   }
  
 +  // js-realm.js (orxJsRealm), loaded once, when a run grants the page realm
 +  let realmScript = null;
@@ -2525,7 +2527,7 @@ index ce302cf..eb80101 100644
    class OoRexx {
      static async load(base) {
        base = new URL(base || here.slice(0, here.lastIndexOf('/') + 1) || './', global.location.href).href;
-@@ -124,6 +158,20 @@
+@@ -179,12 +213,28 @@
        const t0 = performance.now();
        let settle, finished = false;
        const done = new Promise((resolve) => { settle = resolve; });
@@ -2546,24 +2548,23 @@ index ce302cf..eb80101 100644
        const end = (result) => {
          if (finished) return;
          finished = true;
-@@ -131,6 +179,8 @@
-         if (tailOut && opts.onOut) opts.onOut(tailOut);
-         if (tailErr && opts.onErr) opts.onErr(tailErr);
+         out.write(outDec.decode(), 'plain'); errs.write(errDec.decode(), 'plain');
+         out.flush(); errs.flush();
          worker.terminate();
 +        if (pageRealm) pageRealm.close();       // its handlers' functions do nothing now
 +        pageRealm = null;
          result.ms = performance.now() - t0;
          settle(result);
        };
-@@ -140,6 +190,7 @@
-           case 'out': if (opts.onOut) opts.onOut(outDec.decode(m.bytes, { stream: true }), m.kind || 'plain'); break;
-           case 'err': if (opts.onErr) opts.onErr(errDec.decode(m.bytes, { stream: true }), m.kind || 'plain'); break;
-           case 'input': if (opts.onInput) opts.onInput({ debug: !!m.debug }); break;
+@@ -197,6 +247,7 @@
+             if (prompts) out.prompt(m.debug ? prompts.debugInput : prompts.input);
+             if (opts.onInput) opts.onInput({ debug: !!m.debug });
+             break;
 +          case 'js': jsRequest(m.msg); break;
            case 'jdor': if (opts.onJdor) opts.onJdor(m.msg); else if (m.msg.bitmap) m.msg.bitmap.close(); break;
            case 'exit': end({ rc: m.rc, files: m.files, stopped: false }); break;
            case 'error': end({ rc: null, files: {}, stopped: false, error: m.message }); break;
-@@ -151,6 +202,7 @@
+@@ -208,6 +259,7 @@
          data: this.data.slice(0), args: opts.args || [], files, cwd, env: opts.env || {},
          stdin: opts.stdin === undefined || opts.stdin === null ? null : bytes(opts.stdin),
          screen: opts.screen || { width: global.innerWidth || 1280, height: global.innerHeight || 800 },
