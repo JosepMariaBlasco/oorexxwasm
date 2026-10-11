@@ -25,7 +25,7 @@ for f in "$HERE"/rexx-parser/css/rexx-*.css; do
 done
 cp "$HERE"/rexx-parser/LICENSE "$HERE"/rexx-parser/NOTICE "$OUT/rexx-parser/"
 
-python3 - "$HERE" "$OUT" "$OOREXX" "${OOREXX_REV:-13254}" <<'PY'
+python3 - "$HERE" "$OUT" "$OOREXX" "${OOREXX_REV:-13268}" <<'PY'
 import json, sys, datetime, os
 here, out, oorexx, rev = sys.argv[1:5]
 m = json.load(open(f"{here}/samples.json"))

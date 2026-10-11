@@ -6,6 +6,7 @@ Serves SITE with COOP/COEP on :8003; exit status 1 on any failure.
 import os, subprocess, sys, time
 from playwright.sync_api import sync_playwright
 
+ORX_WORK = os.environ.get('ORX_WASM_WORK') or os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../..'))  # where oorexx/, build-wasm/, site/ ... live
 SITE = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ORX_WORK, 'site')
 SHOTS = sys.argv[2] if len(sys.argv) > 2 else None
 BASE = os.environ.get("BASE")   # e.g. http://127.0.0.1:8004/ : test a real server instead
