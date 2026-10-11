@@ -10,7 +10,7 @@ the test results and a link to the patches at the commit they describe.
 
 | Date | Update |
 |---|---|
-| 2026-10-11 (2) | [A sixth patch, and the API test groups run](2026-10-11-2/update.md) |
+| 2026-10-11 (2) | [A sixth patch, the API test groups run, prefixes for Rexx's output](2026-10-11-2/update.md) |
 | 2026-10-11 | [The five patches on Emscripten 6.0.12, tested on r13268](2026-10-11/update.md) |
 | 2026-10-08 | [The same five patches, now also tested on r13263](2026-10-08/update.md) |
 | 2026-10-07 | [Patches 1–4 are in trunk; five patches on r13254](2026-10-07/update.md) |

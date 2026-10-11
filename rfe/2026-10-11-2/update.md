@@ -1,4 +1,4 @@
-# RFE #879 update, 11 October 2026 (2): a sixth patch, and the API test groups run
+# RFE #879 update, 11 October 2026 (2): a sixth patch, the API test groups run, and prefixes for Rexx's output
 
 ## What changed
 
@@ -35,7 +35,19 @@ a bug in patch 1.
   - `wasm/README.md` has a new section on running the API groups:
     `bin-node-test/rexx testOORexx.rex -R ooRexx/API` from the test suite's
     directory.
-- **Patches 2–5**: no change (only the index lines differ, and the subject
+- **Patch 5, prefixes for what comes from Rexx.** As BSF4ooRexx does for
+  Rexx run from Java, a page can have every line Rexx writes start with
+  `REXXout>`, `REXXerr>` or `REXXtrc>` (trace output), and `REXXin?>`
+  (`REXXdbgIn?>` for interactive trace) written when the program waits for
+  input. Then Rexx's output can be told apart where it mixes with the page's.
+  - The new `run()` option is `prefixes`: `true`, `false`, or
+    `{out, err, trace, input, debugInput}` to change the strings.
+  - It is on by default for a stream that goes to the JavaScript console,
+    and off for one the page receives with `onOut` / `onErr`.
+  - Without `onOut` or `onErr`, that stream's lines now go to the console
+    (until now they were dropped).
+  - `wasm/tests/web-api.py` has six new cases.
+- **Patches 2–4**: no change (only the index lines differ, and the subject
   now says `n/6`).
 
 The patches apply cleanly to trunk **r13268**, in order, with `svn patch`
@@ -47,7 +59,7 @@ as it did then.
 
 ## The patches
 
-[`patches/` at commit d3e4d6b](https://github.com/JosepMariaBlasco/oorexxwasm/tree/d3e4d6b/patches):
+[`patches/` at commit da40f53](https://github.com/JosepMariaBlasco/oorexxwasm/tree/da40f53/patches):
 0001–0006 are the RFE, and `SHA256SUMS` lists their hashes. 0007–0011 build
 on them and are not part of the RFE (they were 0006–0010).
 
