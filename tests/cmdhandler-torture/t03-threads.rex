@@ -34,6 +34,7 @@ do m over senders
 end
 .local~flipping = .false
 call check "register/remove under fire: RC 1 or FAILURE 30, nothing else", sum.other == 0
+if .local~odd \== .nil then call note "odd outcomes:" .local~odd~makeString("L", "; ")
 call note sum.ok "answered," sum.failure "unregistered (FAILURE 30) while flipping" flipper~result "times"
 exit finish()
 
@@ -125,10 +126,15 @@ unexpected:
   do i = 1 to per
     "ADD"
     if rc == "ok" then ok += 1
-    else if rc \== 30 then other += 1
+    else if rc \== 30 then call odd "RC" rc
   end
   return ok failure other
 f:
-  if rc == 30 then failure += 1; else other += 1
+  if rc == 30 then failure += 1; else call odd condition("C") rc
   rc = 30
+  return
+odd:
+  other += 1
+  if .local~odd == .nil then .local~odd = .array~new
+  if .local~odd~items < 5 then .local~odd~append(arg(1) arg(2))
   return
