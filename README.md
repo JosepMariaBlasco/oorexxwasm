@@ -128,7 +128,7 @@ run's summary puts all platforms side by side.
 - `playground/`: the ooRexx Playground page and its samples. See
   [`playground/README.md`](playground/README.md).
 - `examples/`: a command environment written in Rexx (`ADDRESS SQLITE`).
-- `docs/`: *ooRexx WASM and JavaScript*, the specification of `.JSObject`.
+- `docs/`: [*ooRexx/WASM and JavaScript*](docs/ooRexx-WASM-and-JavaScript.md), the specification of `.JSObject`, kept up to date with the implementation; `docs/posted/` holds each version as it was posted to the ooRexx developers' list.
 - `notes/`: design notes (threads and recursion, Node commands, rxapi and
   sockets, `.JSObject`, FETCH and DOM, the suite in the browser, provenance).
 - `results/`: the official test suite's results, as CSV.

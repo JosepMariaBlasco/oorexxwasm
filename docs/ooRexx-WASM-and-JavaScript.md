@@ -1,6 +1,8 @@
 # ooRexx/WASM and JavaScript
 
-October 8, 2026 · Josep Maria Blasco
+Working draft · Josep Maria Blasco
+
+*This is the living version of the specification: it follows the implementation and changes with it. The version posted to the ooRexx developers' list on October 8, 2026 is kept as it was sent in [`posted/2026-10-08`](posted/2026-10-08/ooRexx-WASM-and-JavaScript.md); [Changes since the posted version](#changes-since-the-posted-version) lists what differs.*
 
 ## What this is
 
@@ -34,18 +36,22 @@ In the browser, the page that runs ooRexx must grant each realm (`js: {worker: t
 
 `o~name` reads a property, or calls it when it is a function (a constructor, such as `Map`, is returned instead, so that `.js~Map~new` works); `o~name(a, b)` calls a method; `o~name = v` sets a property that exists. ooRexx uppercases message names, so they are resolved case-insensitively along the prototype chain. `o["name"]`, `o["name"] = v` (which also creates the property) and `o~invoke("name", ...)` are exact.
 
+On an array or a typed array, `o[i]` and `o[i] = v` count from 1, as in a Rexx Array: `o[1]` is JavaScript's `o[0]`, 0 is an error, a position past the end reads `.js~undefined`, and `o[n + 1] = v` appends. `DO WITH INDEX i ITEM v OVER o` gives the same positions, 1 to n. Lists that are not arrays, such as the DOM's `NodeList`, keep JavaScript's indexing from 0, and so does `DO WITH` over them. JavaScript's own methods keep their meaning: `o~slice(1)`, `o~indexOf(x)`.
+
 | Method | Does |
 | --- | --- |
 | `~new(args...)` | `new o(args...)` |
 | `~await` | waits for a Promise and gives its value; a rejection is an error |
 | `~typeOf`, `~className`, `~instanceOf(c)` | JavaScript's `typeof`, the class name, `instanceof` |
 | `~hasProperty(name)`, `~propertyNames` | JavaScript's `in`, with the exact name; `Object.keys` |
-| `~makeArray`, `~supplier` | for `DO x OVER o` and `DO WITH INDEX i ITEM v OVER o`: arrays, Maps, Sets and plain objects |
+| `~makeArray`, `~supplier` | for `DO x OVER o` and `DO WITH INDEX i ITEM v OVER o`: arrays, Maps, Sets, lists and plain objects |
 | `~byteString` | an ArrayBuffer's or typed array's bytes as a Rexx string |
 
 ## Values
 
-JavaScript strings, numbers, booleans (1/0) and bigints come back as Rexx strings; null and undefined as `.nil`. Rexx strings always go as strings, so "007" stays "007": `.js~num(x)`, `.js~bool(x)`, `.js~bigint(x)` and `.js~bytes(x)` (a Uint8Array) force a type, and `.js~true`, `.js~false` and `.js~undefined` are those values. `.nil` goes as null. An Array goes as an array and a Directory or StringTable as a plain object, both as copies; `.js~newArray(items...)` and `.js~newObject(directory)` make them in JavaScript instead, held by reference.
+JavaScript strings, numbers, booleans (1/0) and bigints come back as Rexx strings; null as `.nil`, and undefined as `.js~undefined`, a single object, so `x == .js~undefined` tests for it. A property that does not exist reads as `.js~undefined`; `~hasProperty` tells the two apart. Rexx strings always go as strings, so "007" stays "007": `.js~num(x)`, `.js~bool(x)`, `.js~bigint(x)` and `.js~bytes(x)` (a Uint8Array) force a type, and `.js~true`, `.js~false` and `.js~undefined` are those values. `.nil` goes as null. An Array goes as an array and a Directory or StringTable as a plain object, both as copies; `.js~newArray(items...)` and `.js~newObject(directory)` make them in JavaScript instead, held by reference.
+
+`.js~box(type, x)` forces a type with the type indicators of BSF4ooRexx's `box()`: `BOolean`, `BYte`, `Char`, `Double`, `Float`, `Int`, `Long`, `Object`, `SHort` and `STring`, and JavaScript's own `Number` and `BIgint`. Case does not matter, and an indicator may be shortened down to its capitals, so `.js~box("bo", 1)` is `.js~box("Boolean", 1)`. The whole-number types check Java's ranges (`.js~box("BYte", 300)` is an error), `Long` within the integers JavaScript holds exactly; `BIgint` takes any whole number. `.js~unbox(o)` gives back the Rexx value of a box, or of a JavaScript `Number`, `String`, `Boolean` or `BigInt` object.
 
 ## Errors
 
@@ -62,7 +68,7 @@ btn~addEventListener("click", .js~handler(self, "CLICKED", "preventDefault"))
 
 `.js~eventLoop` sends the message to the object, with the call's arguments, for each call until `.js~stopEventLoop`, from a handler or another thread. `.js~nextEvent([seconds])` takes one event instead (a `.JSEvent`, which `~dispatch` sends; `.nil` when the time is over), so a program can run its own loop. Several threads may wait; each event goes to one.
 
-Because the function returns before Rexx sees the call, it cannot answer anything (no sort comparators), and by then the browser has finished dispatching the event (`event~currentTarget` is `.nil`). What must happen during the dispatch goes in the options: `preventDefault`, `stopPropagation`, `stopImmediatePropagation`. Option `latest` keeps only the newest event of the handler waiting, for mousemove or scroll.
+Because the function returns before Rexx sees the call, it cannot answer anything (no sort comparators), and by then the browser has finished dispatching the event (`event~currentTarget` is `.nil`). What must happen during the dispatch goes in the options: `preventDefault`, `stopPropagation`, `stopImmediatePropagation`. Option `latest` keeps only the newest event of the handler waiting, for mousemove or scroll; option `max n` keeps at most n, dropping the oldest.
 
 A handler stays alive from its first trip to JavaScript until `handler~release` or the end of the run.
 
@@ -72,9 +78,18 @@ A handler stays alive from its first trip to JavaScript until `handler~release` 
 - **Rexx methods win.** The methods in the table above, and those of Rexx's Object (`send`, `start`, `copy`, `run`, …), are not passed on to JavaScript. `el~className` names the JavaScript class (`HTMLDivElement`), not the element's `class` attribute: use `el["className"]`, and `o~invoke("send", x)`.
 - **Directory keys are upper case.** `d~method = "POST"` stores `METHOD`, which a JavaScript options object does not know: use `d["method"] = "POST"`.
 
+## Guarantees
+
+- The same JavaScript object is always the same `.JSObject`: `o1 == o2` tests identity.
+- Each operation runs on the thread of its realm, so any Rexx thread may use any `.JSObject`.
+- `~await` blocks only the Rexx thread that waits.
+- Names are looked up when the message arrives, so a property added later is found.
+- What a JavaScript exception threw is kept, in `condition("O")~additional[2]`.
+- A `.JSObject` keeps its JavaScript object alive while Rexx holds it, and no longer.
+
 ## Relation to BSF4ooRexx and OLEObject
 
-The design follows Rony Flatscher's BSF4ooRexx, moved from Java to JavaScript: `.JSObject` is to JavaScript objects what `BSF.CLS` is to Java objects. Messages work as with OLEObject on Windows: names are case-insensitive, and `o~name` reads a property or calls a method.
+The design follows Rony Flatscher's BSF4ooRexx, moved from Java to JavaScript: `.JSObject` is to JavaScript objects what `BSF.CLS` is to Java objects. Messages work as with OLEObject on Windows: names are case-insensitive, and `o~name` reads a property or calls a method. As in BSF4ooRexx, arrays count from 1 and `box` takes the same type indicators, so what holds in one bridge holds in the other.
 
 ## Questions to decide
 
@@ -83,3 +98,13 @@ The design follows Rony Flatscher's BSF4ooRexx, moved from Java to JavaScript: `
 3. **Events.** JavaScript's callbacks become queued calls, taken by `.js~eventLoop` or `.js~nextEvent`. Does this model suit you, or would you expect another?
 
 Replies on this list are very welcome.
+
+## Changes since the posted version
+
+| Change | Where |
+| --- | --- |
+| undefined comes back as `.js~undefined`, no longer `.nil`; a missing property reads as it | Values |
+| Handler option `max n` | Events |
+| Arrays and typed arrays count from 1 with `o[i]` and `DO WITH`; lists keep 0 | Messages |
+| `.js~box(type, x)` with BSF4ooRexx's type indicators, and `.js~unbox(o)` | Values |
+| What the implementation guarantees, stated | Guarantees |
