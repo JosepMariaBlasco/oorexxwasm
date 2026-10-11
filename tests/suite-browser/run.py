@@ -9,7 +9,8 @@ collect the same CSV as tests/run-suite.sh:
 Usage: run.py ENGINE BIN_WEB OUTDIR [--jobs 2] [--timeout 300] [--pattern RE]
   ENGINE  chromium | firefox | webkit (firefox/webkit from $PW_EXTRA,
           default $ORX_WASM_WORK/pw-browsers; chromium from the default path)
-  BIN_WEB the web build (build-wasm/bin-web)
+  BIN_WEB the web build, in the variant with the test suite's native
+          libraries (build-wasm/bin-web-test, wasm/build-test.sh)
   OUTDIR  results.csv, logs/, www/ (page + test tree bundle), hangs.csv
           (group,attempt,stage: runs that produced no output within --start
           seconds, and with --retry-timeouts runs that timed out; retried)

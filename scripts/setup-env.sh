@@ -3,7 +3,8 @@
 #   1. Check out ooRexx from SVN at a fixed revision into $OOREXX
 #   2. Apply every patch in patches/ in lexical order
 #   3. If a saved build matches the current patches (MANIFEST, see
-#      save-build.sh), install it into $BUILD/bin, bin-node and bin-web and
+#      save-build.sh), install it into $BUILD/bin, bin-node and bin-web (and
+#      the test variants bin-node-test and bin-web-test) and
 #      stop: no emsdk, no compilation (~1 min total).  The pack is looked for
 #      in $SAVED, then downloaded from this repository's branch saved-build
 #      as oorexxwasm-`build-manifest.sh --tag`.tar.gz (publish-build.sh).
@@ -47,10 +48,12 @@ install_pack() {   # $1: oorexxwasm-build.tar.gz
   diff -q <("$PROJECT/scripts/build-manifest.sh") "$T/build/MANIFEST" >/dev/null || { rm -rf "$T"; return 1; }
   echo "== saved build matches the patches: installing it -> $BUILD"
   mkdir -p "$BUILD"
-  rm -rf "$BUILD/bin" "$BUILD/bin-node" "$BUILD/bin-web"
+  rm -rf "$BUILD/bin" "$BUILD/bin-node" "$BUILD/bin-web" "$BUILD/bin-node-test" "$BUILD/bin-web-test"
   cp -a "$T/build/bin" "$BUILD/bin"
-  [[ -d "$T/build/bin-node" ]] && cp -a "$T/build/bin-node" "$BUILD/bin-node"
-  [[ -d "$T/build/bin-web" ]] && cp -a "$T/build/bin-web" "$BUILD/bin-web"
+  local d
+  for d in bin-node bin-web bin-node-test bin-web-test; do
+    [[ -d "$T/build/$d" ]] && cp -a "$T/build/$d" "$BUILD/$d"
+  done
   [[ -d "$T/build/samples" ]] && { rm -rf "$BUILD/samples"; cp -a "$T/build/samples" "$BUILD/samples"; }
   rm -rf "$T"
 }
@@ -87,4 +90,6 @@ echo "== Node CLI build -> $BUILD/bin-node"
 "$OOREXX/wasm/build-node.sh" "$BUILD" >/dev/null
 echo "== web build -> $BUILD/bin-web"
 "$OOREXX/wasm/build-web.sh" "$BUILD" >/dev/null
+echo "== test variants (the test suite's native libraries) -> $BUILD/bin-node-test, bin-web-test"
+"$OOREXX/wasm/build-test.sh" "$BUILD" >/dev/null
 echo "== done"

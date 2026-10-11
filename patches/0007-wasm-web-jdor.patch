@@ -64,7 +64,7 @@ the HTML canvas, no Java involved.
  create mode 100644 wasm/web/polygon-clipping.umd.min.js
 
 diff --git a/interpreter/package/PackageManager.cpp b/interpreter/package/PackageManager.cpp
-index 5efe0eb..8b8e190 100644
+index 9324d0b..5dbab4a 100644
 --- a/interpreter/package/PackageManager.cpp
 +++ b/interpreter/package/PackageManager.cpp
 @@ -94,6 +94,11 @@ const PackageManager::EmbeddedPackage PackageManager::embeddedPackages[] =
@@ -98,7 +98,7 @@ index 5efe0eb..8b8e190 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index 746ba5b..6cbda68 100644
+index 2b68f40..87678f3 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -195,7 +195,58 @@ const { rc, files, stopped, ms } = await run.done;
@@ -159,9 +159,9 @@ index 746ba5b..6cbda68 100644
 +  logical fonts map to CSS families, as on Windows); XOR mode is
 +  approximated; text antialiasing cannot be turned off.
  
- ## Known limitations / deliberate non-claims
+ ## The test suite's API groups (`wasm/build-test.sh`)
  
-@@ -204,7 +255,8 @@ trace and error marks, debug input.
+@@ -227,7 +278,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
    with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
@@ -172,20 +172,20 @@ index 746ba5b..6cbda68 100644
    CALL / internal function calls / method calls): Node about 7,100 / 5,400 /
    4,000; browser workers about 900 / 700 / 500 in Chromium, 1,300 / 900 / 700
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index 62f7ae3..581badc 100755
+index 0b7a11c..db384d5 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
-@@ -43,7 +43,8 @@
- #
- # Usage: wasm/build-web.sh [BUILD_DIR=build-wasm] [OUTDIR=BUILD_DIR/bin-web]
+@@ -45,7 +45,8 @@
  #   (BUILD_DIR: a build made by wasm/build-wasm.sh; EM_CONFIG from it)
+ #   EXTRA_OBJECTS="a.o b.o" wasm/build-web.sh ...  (more objects to link in:
+ #   wasm/build-test.sh)
 -# Output: OUTDIR/{rexx.js,rexx.wasm,rexx.data,ooRexx.js,ooRexx-worker.js}
 +# Output: OUTDIR/{rexx.js,rexx.wasm,rexx.data,ooRexx.js,ooRexx-worker.js,
 +#         polygon-clipping.umd.min.js (JDOR's areas, loaded on first use)}
  set -euo pipefail
  SRC=$(cd "$(dirname "$0")/.." && pwd)
  BUILD=$(cd "${1:-$SRC/build-wasm}" && pwd)
-@@ -53,6 +54,10 @@ EMXX=$(sed -E 's/ .*//' "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
+@@ -55,6 +56,10 @@ EMXX=$(sed -E 's/ .*//' "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
  
  # the interactive stdin (read() of fd 0 served from a ring in shared memory)
  "$EMXX" -O3 -pthread -c "$SRC/wasm/web-stdin.cpp" -o "$BUILD/web-stdin.o"
@@ -196,7 +196,7 @@ index 62f7ae3..581badc 100755
  
  # the portable extension classes (not ncurses: no native library here)
  PRELOAD=()
-@@ -61,6 +66,10 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+@@ -63,6 +68,10 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
             csvStream/csvStream.cls dateparser/dateparser.cls; do
    PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
  done
@@ -207,12 +207,12 @@ index 62f7ae3..581badc 100755
  
  # Emscripten's default list plus mainScriptUrlOrBlob: the pthreads must load
  # rexx.js, not the worker script that hosts the runtime
-@@ -72,12 +81,12 @@ wasm,websocket,mainScriptUrlOrBlob]"
+@@ -74,12 +83,12 @@ wasm,websocket,mainScriptUrlOrBlob]"
  cmd=$(cat "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
  cmd=$(sed -E 's/--preload-file [^ ]+//g; s/-sENVIRONMENT=[^ ]+//' <<<"$cmd")
  cmd=${cmd//-o bin\/rexx.js/-o $OUT\/rexx.js}
--(cd "$BUILD" && eval "$cmd" "$BUILD/web-stdin.o" \
-+(cd "$BUILD" && eval "$cmd" "$BUILD/web-stdin.o" "$BUILD/web-jdor.o" \
+-(cd "$BUILD" && eval "$cmd" "$BUILD/web-stdin.o" ${EXTRA_OBJECTS:-} \
++(cd "$BUILD" && eval "$cmd" "$BUILD/web-stdin.o" "$BUILD/web-jdor.o" ${EXTRA_OBJECTS:-} \
     -Wl,--wrap=read,--wrap=write \
     -sENVIRONMENT=web,worker -sMODULARIZE=1 -sEXPORT_NAME=createOoRexx \
     "-sINCOMING_MODULE_JS_API=$INCOMING" \

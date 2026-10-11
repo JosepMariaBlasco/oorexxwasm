@@ -4,7 +4,8 @@
 # setup-env.sh reuses such a pack, instead of installing Emscripten and
 # compiling, when its MANIFEST matches the current patches: from OUT if it is
 # there, else from the branch saved-build (scripts/publish-build.sh).
-# Run after the final build (and oorexx/wasm/build-node.sh, build-web.sh).
+# Run after the final build (and oorexx/wasm/build-node.sh, build-web.sh,
+# build-test.sh).
 # Usage: save-build.sh [BUILD_DIR=$ORX_WASM_WORK/build-wasm] [OUT=$ORX_WASM_WORK/saved-build]
 set -euo pipefail
 ORX_WASM_WORK=${ORX_WASM_WORK:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)}   # where oorexx/, build-wasm/ ... live
@@ -20,6 +21,16 @@ if [[ -d "$BUILD/bin-node" ]]; then
 fi
 if [[ -d "$BUILD/bin-web" ]]; then      # oorexx/wasm/build-web.sh (playground)
   mkdir -p "$S/bin-web" && cp -a "$BUILD/bin-web/." "$S/bin-web/"
+fi
+# oorexx/wasm/build-test.sh: the variants with the test suite's native
+# libraries (the API test groups); they cannot be relinked without the
+# build tree, so they travel too
+if [[ -d "$BUILD/bin-node-test" ]]; then
+  mkdir -p "$S/bin-node-test"
+  (cd "$BUILD/bin-node-test" && cp -a rexx rexxc rxqueue rxsubcom rexxinstance rexx.js rexx.wasm rexx.img *.cls "$S/bin-node-test/")
+fi
+if [[ -d "$BUILD/bin-web-test" ]]; then
+  mkdir -p "$S/bin-web-test" && cp -a "$BUILD/bin-web-test/." "$S/bin-web-test/"
 fi
 # the build tree samples (+ support files): the test suite locates them
 # relative to .RexxInfo~executable (bin-node/../samples)

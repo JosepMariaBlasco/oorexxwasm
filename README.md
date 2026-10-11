@@ -29,13 +29,14 @@ Applied in order on top of ooRexx SVN trunk **r13268**
 | 0003 | Node: the RexxAPI (queues, registrations, macrospace) shared between processes through a daemon, like native `rxapi` |
 | 0004 | Node: real TCP/UDP sockets and DNS |
 | 0005 | The browser runtime: `wasm/web/ooRexx.js`, one Web Worker per run, interactive stdin, output streams marked as plain / trace / error |
-| 0006 | `ADDRESS JDOR`: Rony G. Flatscher's JDOR drawing commands on the browser's canvas |
-| 0007 | `.JSObject`: JavaScript objects from Rexx (the worker's and the page's), events |
-| 0008 | Command environments written in Rexx (`cmdhandler`), a portable extension package |
-| 0009 | `ADDRESS FETCH`: HTTP from Rexx commands |
-| 0010 | `ADDRESS DOM`: building and driving the page from Rexx commands |
+| 0006 | Build variants with the test suite's native libraries linked in (`wasm/build-test.sh`), so the API test groups run under Node and in the browsers |
+| 0007 | `ADDRESS JDOR`: Rony G. Flatscher's JDOR drawing commands on the browser's canvas |
+| 0008 | `.JSObject`: JavaScript objects from Rexx (the worker's and the page's), events |
+| 0009 | Command environments written in Rexx (`cmdhandler`), a portable extension package |
+| 0010 | `ADDRESS FETCH`: HTTP from Rexx commands |
+| 0011 | `ADDRESS DOM`: building and driving the page from Rexx commands |
 
-0001–0005 are the RFE. 0006–0010 build on them and are not part of it. The
+0001–0006 are the RFE. 0007–0011 build on them and are not part of it. The
 patches are in git format and apply with `svn patch` or `git am`;
 `patches/SHA256SUMS` lists their hashes.
 
@@ -92,7 +93,10 @@ in-tree tests it runs are `wasm/tests/qualify-node.sh`,
 
 The **official ooRexx test suite** (test/trunk at the same revision as the
 interpreter) runs with `tests/run-suite.sh` under Node and with
-`tests/suite-browser/run.py` in Chromium, Firefox and WebKit. Results on
+`tests/suite-browser/run.py` in Chromium, Firefox and WebKit, on the variants
+with the test suite's native libraries (`build-wasm/bin-node-test`,
+`bin-web-test`, from `wasm/build-test.sh`: the API test groups need them).
+Results on
 r13268, 402 test groups (GitHub Actions runners, Ubuntu 24.04):
 
 | | groups passing |

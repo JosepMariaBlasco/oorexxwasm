@@ -151,7 +151,7 @@ in headless Chromium.
   handled in Rexx: `.js~handler` + `.js~eventLoop`). A program that is
   stopped leaves what it added to the page until a reload (its event
   handlers do nothing any more).
-- JDOR: `ADDRESS JDOR` (wasm/web-jdor.*, patch 0006) draws on
+- JDOR: `ADDRESS JDOR` (wasm/web-jdor.*, patch 0007) draws on
   OffscreenCanvases in the run's worker; `onJdor` messages create windows
   here: fixed-position panels over the page (`.jdorwin`), dragged by the
   title bar (frameless ones anywhere; their x shows on hover), closed with x,

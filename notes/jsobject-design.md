@@ -1,6 +1,6 @@
 # `.JSObject`: a JavaScript bridge for ooRexx/WASM
 
-*Written 06/10/2026–08/10/2026; describes patch 0007 (`wasm-js-objects`) of
+*Written 06/10/2026–08/10/2026; describes patch 0008 (`wasm-js-objects`) of
 the current series. Model: OLEObject on Windows.*
 
 The first part of this note is the design as proposed; the sections on the
@@ -47,7 +47,7 @@ FETCH are thin layers over it; see `dom-fetch-design.md`).
    Every JS object lives in exactly one realm; a reference carries its realm.
 2. **The interpreter thread may block; the realm threads never do.** This is
    what makes a synchronous Rexx API possible. The mechanism already exists
-   (JDOR, patch 0006): `emscripten_proxy_sync_with_ctx` to the runtime
+   (JDOR, patch 0007): `emscripten_proxy_sync_with_ctx` to the runtime
    thread; the JS side may finish the call later with
    `emscripten_proxy_finish(ctx)`. For the page realm the worker forwards
    with `postMessage` and finishes the ctx when the page answers.
@@ -198,7 +198,7 @@ four calls today). Measurements are in the phase sections.
 
 ## Where it lives
 
-Patch 0007 (`wasm-js-objects`), outside the RFE like 0006:
+Patch 0008 (`wasm-js-objects`), outside the RFE like 0007:
 `wasm/web-js.cpp` (native package "js": the handler-free equivalent of
 web-jdor.cpp), `wasm/js-realm.js` (the realm side: handle tables, name
 resolution, marshalling), `wasm/js-bridge.js` (the dispatcher on the main
@@ -271,7 +271,7 @@ handle ids stay in the hundreds, so release by UNINIT works); 8 Rexx threads
 awaiting at once. Heap views: Emscripten 6 code uses `(growMemViews(),
 HEAP32)`; the bridge calls `growMemViews()` before touching the heap. Tested
 without it after growing the memory to 160 MB: still fine (the proxied-call
-path refreshes the views), so JDOR's direct `HEAPU8` use in patch 0006 is not
+path refreshes the views), so JDOR's direct `HEAPU8` use in patch 0007 is not
 a proven bug, at most a hardening for the asynchronous finish.
 
 ## Phase 2: the page realm
@@ -370,7 +370,7 @@ sample says so).
 
 Iteration and coalescing are built; batching and copying values across
 realms are not. ADDRESS DOM and ADDRESS FETCH were designed separately
-(`dom-fetch-design.md`; patches 0009 and 0010). The whole JS integration is
+(`dom-fetch-design.md`; patches 0010 and 0011). The whole JS integration is
 a prototype; it is a sister of Rony G. Flatscher's BSF4ooRexx, and good
 documentation for developers is the next step.
 
@@ -395,7 +395,7 @@ documentation for developers is the next step.
   (`.JSTyped~undefined`, handed to web-js.cpp by `JsSetup`; record U both
   ways), whose string is "undefined". A property that does not exist reads
   as `.js~undefined`; `~hasProperty` tells the two apart. dom.cls (patch
-  0010) checks JavaScript values with a `missing()` routine (null or
+  0011) checks JavaScript values with a `missing()` routine (null or
   undefined).
 - Tests: qualify-node-cli.sh 17 (+1: Map/array/object with DO WITH, the
   error, latest keeps detail 5 of 5), later also `max 2` keeps events 4 and
@@ -446,7 +446,7 @@ For the bridges to agree with each other (BSF4ooRexx for Java, oorexxnet for
   `Array.isArray` accepts and that has no own `constructor`.
 - Tests: qualify-node-cli.sh 22 (+1: arrays from 1, DO WITH, index 0,
   typed array, Array methods, box and unbox, errors); web-api.py's js core
-  case now reads `a[1]` as the first element. `fetch.cls` (patch 0009)
+  case now reads `a[1]` as the first element. `fetch.cls` (patch 0010)
   reads the headers' `[name, value]` pairs as `pair[1]`, `pair[2]`.
 - The living specification (`docs/ooRexx-WASM-and-JavaScript.md`) says
   all this; the version posted on 8 October stays as sent in

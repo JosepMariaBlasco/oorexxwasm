@@ -4,7 +4,10 @@
 #   group,status,ran,assertions,failures,errors,seconds
 # status: ok | fail | crash | timeout | noresult
 # Usage: run-suite.sh REXX_CMD OUTDIR [JOBS=2] [TIMEOUT=300] [PATTERN]
-#   REXX_CMD: e.g. $ORX_WASM_WORK/build-wasm/bin-node/rexx  or  $ORX_WASM_WORK/build-native/bin/rexx
+#   REXX_CMD: e.g. $ORX_WASM_WORK/build-wasm/bin-node-test/rexx (the variant with
+#   the test suite's native libraries, wasm/build-test.sh)  or
+#   $ORX_WASM_WORK/build-native/bin/rexx (a relative path is made absolute:
+#   the groups run from the suite's directory)
 #   PATTERN : optional grep -E filter on the group path
 # Needs the suite checked out in $SUITE (default $ORX_WASM_WORK/oorexx-test).
 # Groups that share system-wide state through rxapi (the macrospace) run one
@@ -15,6 +18,7 @@
 ORX_WASM_WORK=${ORX_WASM_WORK:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)}   # where oorexx/, build-wasm/ ... live
 set -u
 REXX=${1:?}; OUT=${2:?}; JOBS=${3:-2}; TMO=${4:-300}; PAT=${5:-.}
+[[ $REXX == */* && $REXX != /* ]] && REXX=$(cd "$(dirname "$REXX")" && pwd)/$(basename "$REXX")
 SUITE=${SUITE:-$ORX_WASM_WORK/oorexx-test}
 SERIAL=${SERIAL:-'API/classic/CLASSIC|API/oo/FUNCTION|rexxutil/Macrospace'}
 mkdir -p "$OUT/logs"; OUT=$(cd "$OUT" && pwd)

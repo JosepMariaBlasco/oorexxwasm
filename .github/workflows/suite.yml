@@ -5,10 +5,12 @@
 #
 #   native    ooRexx built natively from the same patched tree (the reference
 #             that tells port problems from upstream ones)
-#   node      the Node command-line build (build-wasm/bin-node/rexx)
+#   node      the Node command-line build, in its variant with the test
+#             suite's native libraries (build-wasm/bin-node-test/rexx,
+#             wasm/build-test.sh: the API test groups need them)
 #   chromium, firefox, webkit
-#             the web build (bin-web) in a headless browser
-#             (tests/suite-browser/run.py)
+#             the web build, in the same variant (bin-web-test), in a
+#             headless browser (tests/suite-browser/run.py)
 #
 # Actions > suite > Run workflow; or
 #   gh api -X POST repos/JosepMariaBlasco/oorexxwasm/actions/workflows/suite.yml/dispatches \
@@ -125,9 +127,9 @@ jobs:
           J=$(nproc)
           case $PLATFORM in
             native) tests/run-suite.sh "$ORX_WASM_WORK/build-native/rexx-native" "$OUT" "$J" 300 "$PATTERN" ;;
-            node)   tests/run-suite.sh "$ORX_WASM_WORK/build-wasm/bin-node/rexx" "$OUT" "$J" 300 "$PATTERN" ;;
+            node)   tests/run-suite.sh "$ORX_WASM_WORK/build-wasm/bin-node-test/rexx" "$OUT" "$J" 300 "$PATTERN" ;;
             *)      PW_EXTRA=$HOME/.cache/ms-playwright python tests/suite-browser/run.py "$PLATFORM" \
-                      "$ORX_WASM_WORK/build-wasm/bin-web" "$OUT" --jobs 2 --timeout 300 \
+                      "$ORX_WASM_WORK/build-wasm/bin-web-test" "$OUT" --jobs 2 --timeout 300 \
                       --pattern "$PATTERN" --retry-timeouts ;;
           esac
           rm -rf "$OUT/www"

@@ -6,6 +6,8 @@
 #   BUILD/bin       MEMFS build (Node + browser, WebSocket sockets)
 #   BUILD/bin-node  Node command-line build (host files, commands, rxapi
 #                   daemon, real TCP/UDP) — oorexx/wasm/build-node.sh
+#   BUILD/bin-node-test  its variant with the test suite's native libraries
+#                   — oorexx/wasm/build-test.sh
 #   --no-browser    skip the headless Chromium section (otherwise it runs when
 #                   Python Playwright is importable, and is reported SKIPPED
 #                   if it is not)
@@ -27,7 +29,7 @@ done
 BUILD=$(cd "$BUILD" && pwd)
 HERE=$(cd "$(dirname "$0")" && pwd)
 OOREXX=${OOREXX:-$ORX_WASM_WORK/oorexx}
-BIN=$BUILD/bin; NB=$BUILD/bin-node
+BIN=$BUILD/bin; NB=$BUILD/bin-node; NBT=$BUILD/bin-node-test
 T=$(mktemp -d); trap 'rm -rf "$T"; for p in ${PIDS[@]:-}; do kill $p 2>/dev/null; done' EXIT
 PIDS=()
 PASSED=0; FAILED=(); SKIPPED=()
@@ -55,7 +57,7 @@ check() {
 }
 skip() { SKIPPED+=("$1"); printf 'SKIP  %s (%s)\n' "$1" "$2"; }
 section() { printf '\n== %s\n' "$1"; }
-export BIN NB T
+export BIN NB NBT T
 
 # Rexx programs used below (files in $T)
 cat > "$T/server.rex" <<'EOF'
@@ -199,6 +201,20 @@ else
     "$X udp.rex serve 50114 & sleep 1.5; $X udp.rex send 50114; wait"
   check "name resolution (host resolver)" '^localhost=1 127\.0\.0\.1$' '^invalid=0$' '^reverse=1 ' "^hostname=$(hostname)\$" '^hostid=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' -- \
     "$X dns.rex"
+fi
+
+section "Node test variant, the test suite's native libraries ($NBT)"
+if [[ ! -x $NBT/rexx ]]; then
+  skip "Node test variant" "no $NBT/rexx (run oorexx/wasm/build-test.sh)"
+else
+  # in-process RexxAPI: the registrations do not outlive the check
+  X="ORX_WASM_RXAPI=inprocess \"\$NBT/rexx\""
+  check "a linked-in package library (LIBRARY orxmethod)" '^int32=12345$' -- \
+    "printf '%s\n' 'say \"int32=\".t~TestInt32Arg(12345)' '::class t' '::method TestInt32Arg class external \"LIBRARY orxmethod TestInt32Arg\"' > lib.rex && $X lib.rex"
+  check "classic functions: RxFuncAdd, Rexx*Dll and *Exe registrations" '^add=0 call=0 dll=0 exe=0$' -- \
+    "printf '%s\n' \"a = rxfuncadd('TestExternalFunction', 'orxclassic1', 'TestExternalFunction')\" 'c = TestExternalFunction()' 'd = MyTestExtFunc()' \"call rxfuncdrop 'MyTestExtFunc'\" \"call TestExternalFunction 'x'\" 'e = MyTestExtFunc()' 'say \"add=\"a \"call=\"c \"dll=\"d \"exe=\"e' > classic.rex && $X classic.rex"
+  check "rexxinstance, a tool of the same rexx.wasm" '^from rexxinstance$' -- \
+    "echo 'say \"from rexxinstance\"' > ri.rex && ORX_WASM_RXAPI=inprocess \"\$NBT/rexxinstance\" REXXSTART ri.rex"
 fi
 
 # ---------------------------------------------------------------------------

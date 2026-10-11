@@ -760,7 +760,7 @@ index 0000000..68f1845
 +  expose label
 +  return label
 diff --git a/interpreter/package/PackageManager.cpp b/interpreter/package/PackageManager.cpp
-index 9c17231..8905b5c 100644
+index e949832..c16231d 100644
 --- a/interpreter/package/PackageManager.cpp
 +++ b/interpreter/package/PackageManager.cpp
 @@ -79,6 +79,7 @@ extern RexxPackageEntry rxregexp_package_entry;
@@ -780,10 +780,10 @@ index 9c17231..8905b5c 100644
  };
  
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index 98768a8..0e8b5a9 100755
+index 3f6ba84..81037c7 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
-@@ -76,7 +76,7 @@ cp "$SRC/samples/rexxtry.rex" "$OUT/"
+@@ -78,7 +78,7 @@ cp "$SRC/samples/rexxtry.rex" "$OUT/"
  # not ncurses (no native library here)
  for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp.cls \
             rxftp/rxftp.cls rxregexp/rxregexp.cls json/json.cls yaml/yaml.cls \
@@ -793,10 +793,10 @@ index 98768a8..0e8b5a9 100755
  done
  cp "$SRC/wasm/web/js.cls" "$OUT/"
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index 326d386..86995f9 100755
+index 70c2a26..3ffa933 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
-@@ -69,7 +69,7 @@ done
+@@ -71,7 +71,7 @@ done
  PRELOAD=()
  for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp.cls \
             rxftp/rxftp.cls rxregexp/rxregexp.cls json/json.cls yaml/yaml.cls \

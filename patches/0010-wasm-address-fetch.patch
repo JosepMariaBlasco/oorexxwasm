@@ -35,10 +35,10 @@ qualify-node-cli.sh and web-api.py.  Not part of the posted RFE.
  create mode 100644 wasm/web/fetch.cls
 
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index 0e8b5a9..c43795e 100755
+index 81037c7..80c5ae2 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
-@@ -79,7 +79,7 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+@@ -81,7 +81,7 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
             csvStream/csvStream.cls dateparser/dateparser.cls cmdhandler/cmdhandler.cls; do
    cp "$SRC/extensions/$cls" "$OUT/"
  done
@@ -48,10 +48,10 @@ index 0e8b5a9..c43795e 100755
  launcher() {   # launcher NAME [rexx.js option]
    cat > "$OUT/$1" <<SH
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index 86995f9..2f58d6f 100755
+index 3ffa933..36a3782 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
-@@ -74,6 +74,8 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+@@ -76,6 +76,8 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
  done
  # JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
  PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls"

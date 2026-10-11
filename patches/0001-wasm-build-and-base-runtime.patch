@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
 Date: Sun, 4 Oct 2026 11:46:20 +0200
-Subject: [PATCH 1/5] WebAssembly port: build and base runtime
+Subject: [PATCH 1/6] WebAssembly port: build and base runtime
 
 Build ooRexx for WebAssembly with Emscripten 6.0.12 (wasm/build-wasm.sh,
 cmake/wasm-emscripten-6.0.12-cache.cmake).  Everything is under
@@ -19,9 +19,14 @@ if (EMSCRIPTEN) / #if defined(__EMSCRIPTEN__); native builds are unchanged.
 - the wall clock with sub-millisecond resolution (performance.timeOrigin +
   performance.now(); Emscripten's gettimeofday is Date.now(), whole ms);
 - the API server (queues, registrations, macrospace) linked in and reached
-  in-process (SysLoopbackConnection);
+  in-process (SysLoopbackConnection), so registered functions resolve as
+  natively (RxFuncAdd of classic library functions, RexxRegisterFunctionExe);
 - rxsock, rxregexp, rxmath, hostemu and rxunixsys embedded in the
   interpreter (PackageManager::embeddedPackages; no dlopen);
+- other libraries a build links in described by a table SysLibrary looks
+  up instead of dlopen/dlsym (orx_wasm_static_libraries(), a weak symbol:
+  absent in the standard builds), so "LIBRARY name", RxFuncAdd() and the
+  Rexx*Dll() registrations find them unchanged;
 - getpwnam()/getpwuid() wrapped to return the user the process runs as
   (Emscripten has no passwd database): the host user under Node, the
   synthetic user "wasm" in the browser;
@@ -35,11 +40,12 @@ Common Public License 1.0.
  CMakeLists.txt                                | 160 ++++++++++++++++--
  api/oorexxapi.h                               |   7 +
  cmake/wasm-emscripten-6.0.12-cache.cmake      |  84 +++++++++
+ common/platform/unix/SysLibrary.cpp           |  89 ++++++++++
  common/platform/unix/SysProcess.cpp           |  75 ++++++++
  extensions/rxsock/rxsockfn.cpp                | 108 ++++++++++++
  interpreter/concurrency/Activity.cpp          |  93 ++++++++++
  interpreter/concurrency/Activity.hpp          |   6 +
- interpreter/package/PackageManager.cpp        |  74 ++++++++
+ interpreter/package/PackageManager.cpp        |  70 ++++++++
  interpreter/package/PackageManager.hpp        |   9 +
  interpreter/parser/LanguageParser.cpp         |  15 ++
  interpreter/parser/LanguageParser.hpp         |   3 +
@@ -58,7 +64,7 @@ Common Public License 1.0.
  wasm/tests/http_isolated.py                   |  48 ++++++
  wasm/tests/qualify-node.sh                    | 111 ++++++++++++
  wasm/tests/ws_echo.py                         |  46 +++++
- 26 files changed, 1464 insertions(+), 20 deletions(-)
+ 27 files changed, 1549 insertions(+), 20 deletions(-)
  create mode 100644 cmake/wasm-emscripten-6.0.12-cache.cmake
  create mode 100644 rexxapi/common/platform/unix/SysLoopbackConnection.cpp
  create mode 100644 rexxapi/common/platform/unix/SysLoopbackConnection.hpp
@@ -425,6 +431,127 @@ index 0000000..4c24522
 +set(HAVE_STAT_ST_MTIM 1 CACHE INTERNAL "")
 +set(HAVE_STAT_ST_MTIMESPEC 0 CACHE INTERNAL "")
 +set(HAVE_PRAGMA_GCC_STRINGOPOVERFLOW 0 CACHE INTERNAL "")
+diff --git a/common/platform/unix/SysLibrary.cpp b/common/platform/unix/SysLibrary.cpp
+index c6c0386..c20a2e8 100644
+--- a/common/platform/unix/SysLibrary.cpp
++++ b/common/platform/unix/SysLibrary.cpp
+@@ -53,6 +53,59 @@
+ #include <dlfcn.h>
+ 
+ 
++#if defined(__EMSCRIPTEN__)
++// There is no dlopen in WebAssembly.  A build may instead link libraries in
++// and describe them with this table (a weak symbol: NULL in the builds that
++// link none): load() finds a library by name, getProcedure() a symbol in it,
++// so ::METHOD ... EXTERNAL "LIBRARY name ...", RxFuncAdd() and the
++// Rexx*Dll() registrations work for them unchanged.  A library may take
++// several entries (one per source file); the table ends with a NULL name.
++extern "C"
++{
++typedef struct { const char *name; void *address; } OrxWasmStaticSymbol;
++typedef struct { const char *name; const OrxWasmStaticSymbol *symbols; } OrxWasmStaticLibrary;
++const OrxWasmStaticLibrary *orx_wasm_static_libraries(void) __attribute__((weak));
++}
++
++/**
++ * Return the first static library entry called name, or NULL.
++ */
++static const OrxWasmStaticLibrary *findStaticLibrary(const char *name)
++{
++    if (orx_wasm_static_libraries == NULL)
++    {
++        return NULL;
++    }
++    for (const OrxWasmStaticLibrary *l = orx_wasm_static_libraries(); l->name != NULL; l++)
++    {
++        if (strcmp(l->name, name) == 0)
++        {
++            return l;
++        }
++    }
++    return NULL;
++}
++
++/**
++ * Is this handle one of the static library entries?
++ */
++static bool isStaticLibrary(void *handle)
++{
++    if (handle == NULL || orx_wasm_static_libraries == NULL)
++    {
++        return false;
++    }
++    for (const OrxWasmStaticLibrary *l = orx_wasm_static_libraries(); l->name != NULL; l++)
++    {
++        if ((void *)l == handle)
++        {
++            return true;
++        }
++    }
++    return false;
++}
++#endif
++
+ #define MAX_LIBRARY_NAME_LENGTH 250
+ #define LIBARY_NAME_BUFFER_LENGTH (1 + MAX_LIBRARY_NAME_LENGTH + sizeof("/usr/lib/lib") + sizeof(ORX_SHARED_LIBRARY_EXT))
+ 
+@@ -68,6 +121,27 @@ void * SysLibrary::getProcedure(
+ /* Function:  Resolve a named procedure in a library                          */
+ /******************************************************************************/
+ {
++#if defined(__EMSCRIPTEN__)
++    if (isStaticLibrary(libraryHandle))
++    {
++        const char *library = ((const OrxWasmStaticLibrary *)libraryHandle)->name;
++        for (const OrxWasmStaticLibrary *l = (const OrxWasmStaticLibrary *)libraryHandle; l->name != NULL; l++)
++        {
++            if (strcmp(l->name, library) != 0)
++            {
++                continue;
++            }
++            for (const OrxWasmStaticSymbol *s = l->symbols; s->name != NULL; s++)
++            {
++                if (strcmp(s->name, name) == 0)
++                {
++                    return s->address;
++                }
++            }
++        }
++        return NULL;
++    }
++#endif
+     return dlsym(libraryHandle, name);
+ }
+ 
+@@ -85,6 +159,15 @@ bool SysLibrary::load(
+         return false;
+     }
+ 
++#if defined(__EMSCRIPTEN__)
++    const OrxWasmStaticLibrary *linkedIn = findStaticLibrary(name);
++    if (linkedIn != NULL)
++    {
++        libraryHandle = (void *)linkedIn;
++        return true;
++    }
++#endif
++
+     snprintf(nameBuffer, LIBARY_NAME_BUFFER_LENGTH, "lib%s%s", name, ORX_SHARED_LIBRARY_EXT);
+     // try loading directly
+     libraryHandle = dlopen(nameBuffer, RTLD_LAZY);
+@@ -110,6 +193,12 @@ bool SysLibrary::load(
+  */
+ bool SysLibrary::unload()
+ {
++#if defined(__EMSCRIPTEN__)
++    if (isStaticLibrary(libraryHandle))
++    {
++        return true;           // linked in: nothing to unload
++    }
++#endif
+     if (libraryHandle != NULL)
+     {
+         dlclose(libraryHandle);
 diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
 index 69b1869..485a701 100644
 --- a/common/platform/unix/SysProcess.cpp
@@ -811,7 +938,7 @@ index 213314a..96da70e 100644
      uint64_t    randomSeed;             // random number seed
      ProtectedBase *protectedObjects;    // list of stack-based object protectors
 diff --git a/interpreter/package/PackageManager.cpp b/interpreter/package/PackageManager.cpp
-index 60d8c1e..5efe0eb 100644
+index 60d8c1e..9324d0b 100644
 --- a/interpreter/package/PackageManager.cpp
 +++ b/interpreter/package/PackageManager.cpp
 @@ -73,6 +73,48 @@ StringTable *PackageManager::packageRoutines = OREF_NULL;     // table of functi
@@ -914,34 +1041,6 @@ index 60d8c1e..5efe0eb 100644
      if (package == NULL)
      {
          package = new LibraryPackage(name);
-@@ -451,11 +521,13 @@ RoutineClass *PackageManager::createRegisteredRoutine(RexxString *function)
- 
-     const char *functionName = function->getStringData();
- 
-+#if !defined(__EMSCRIPTEN__)
-     {
-         UnsafeBlock releaser;    // don't hold the lock while calling
-         // now go resolve this entry pointer
-         RexxResolveRoutine(functionName, &entry);
-     }
-+#endif
- 
-     // this is a failure
-     if (entry == NULL)
-@@ -988,11 +1060,13 @@ PREGISTEREDROUTINE PackageManager::resolveRegisteredRoutineEntry(RexxString *pac
-         REXXPFN entry = NULL;
- 
-         const char *functionName = name->getStringData();
-+#if !defined(__EMSCRIPTEN__)
-         {
-             UnsafeBlock releaser;
-             // now go resolve this entry pointer
-             RexxResolveRoutine(functionName, &entry);
-         }
-+#endif
- 
-         // this is a failure
-         if (entry == NULL)
 diff --git a/interpreter/package/PackageManager.hpp b/interpreter/package/PackageManager.hpp
 index 416ab1f..30a4d87 100644
 --- a/interpreter/package/PackageManager.hpp

@@ -23,14 +23,9 @@ processes	utilities/rexx/rexx_command	runs rexx as a command
 processes	utilities/rexxc/rexxc	runs rexxc as a command
 processes	utilities/rxqueue/rxQueue	runs rxqueue as a command
 processes	utilities/rxsubcom/rxsubcom	runs rxsubcom as a command
-api-libs	API/classic/CLASSIC	native test library
-api-libs	API/oo/CONVERSION	native test library
-api-libs	API/oo/FUNCTION	native test library
-api-libs	API/oo/INVOCATION	native test library
-api-libs	API/oo/METHOD	native test library
-api-libs	API/oo/ProcessInvocation	native test library
-api-libs	API/oo/ProcessRexxStart	native test library
-api-libs	API/oo/RexxStart	native test library
+processes	API/oo/METHOD	TEST_REXXC_WITH_NEWROUTINE_LOADPACKAGEFROMDATA: rexxc RC 127 (the API groups need wasm/build-test.sh's bin-web-test)
+processes	API/oo/ProcessInvocation	runs testbinaries' rexxinstance as a command
+processes	API/oo/ProcessRexxStart	runs testbinaries' rexxinstance as a command
 sockets	extensions/rxsock/socketClass	server/client tests (no listen) and socket options (.nil)
 stack	base/keyword/CALL	TEST_STACKSIZE: Error 11 at ~900 (Chromium), ~1300 (Firefox) levels; WebKit passes (~5000) or not (3614 with the WebKit of the GitHub runners): it depends on the engine build
 upstream, flaky	base/class/MutexSemaphore	hangs at interpreter termination under load, as natively (todo 10)
