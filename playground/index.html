@@ -118,6 +118,7 @@ textarea {
 .editor:not(.lit) .hl { visibility: hidden; }
 .hl .bad { text-decoration: underline wavy var(--err); text-decoration-skip-ink: none; }
 .hint .lint { color: var(--err); flex: 1 1 100%; order: -1; }
+.hint .navmsg { color: var(--muted); flex: 1 1 100%; order: -1; }
 .hint label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
 .hint input[type=checkbox] { margin: 0; accent-color: var(--accent); }
 .hint select { font: 12px var(--mono); color: var(--ink); background: var(--code-bg); border: 1px solid var(--line); border-radius: 3px; padding: 1px 2px; max-width: 22ch; }
@@ -273,8 +274,10 @@ footer a { color: var(--accent); }
       </div>
       <div class="editor" id="editor"><div class="hl" id="hl" aria-hidden="true"></div><textarea id="src"
         spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Rexx source"></textarea></div>
-      <div class="hint"><span class="lint" id="lint" hidden></span><span id="fname"></span><span><label
-        title="Syntax highlighting and checking by the Rexx Parser"><input type="checkbox" id="hlon" checked> highlight</label>
+      <div class="hint"><span class="lint" id="lint" hidden></span><span class="navmsg" id="navmsg" hidden></span><span id="fname"></span><span><label
+        title="Go to a label, routine, class or method (F12 or Ctrl+click on a name goes to its definition, Alt+Left goes back)"><select
+        id="outline" aria-label="Go to a definition"><option value="">go to&hellip;</option></select></label>
+        <label title="Syntax highlighting and checking by the Rexx Parser"><input type="checkbox" id="hlon" checked> highlight</label>
         <label title="Highlighting style (the Rexx Parser's stylesheets)">style <select id="hlstyle"></select></label>
         &middot; Ctrl+Enter runs &middot; Esc stops</span></div>
       <div class="files" id="files">
@@ -351,7 +354,7 @@ footer a { color: var(--accent); }
       <li>The console understands ANSI escape sequences for colors and styles (<code>'1b'x || '[31m'</code>…; see the <i>ANSI colors</i> sample); <code>ESC[2J</code> clears it.</li>
     </ul>
     <h3>The editor</h3>
-    <p>The <a href="https://rexx.epbcn.com/rexx-parser/" target="_blank" rel="noopener">Rexx Parser</a> highlights the program and checks its syntax as you type: an error is shown under the editor and its line is underlined. <b>style</b> picks one of the Parser's highlighting styles (<i>auto</i> follows the page theme); <b>highlight</b> turns it all off. <kbd>Tab</kbd> inserts two spaces. Edits to a sample are kept while the page is open.</p>
+    <p>The <a href="https://rexx.epbcn.com/rexx-parser/" target="_blank" rel="noopener">Rexx Parser</a> highlights the program and checks its syntax as you type: an error is shown under the editor and its line is underlined. <b>style</b> picks one of the Parser's highlighting styles (<i>auto</i> follows the page theme); <b>highlight</b> turns it all off. <kbd>F12</kbd> (or <kbd>Ctrl</kbd>+click, <kbd>Cmd</kbd>+click on a Mac) on a name goes to its definition: a label from a call or SIGNAL in the same code body, a <code>::ROUTINE</code>, a <code>::CLASS</code> from <code>.Name</code>, a <code>::METHOD</code> or <code>::ATTRIBUTE</code> from <code>~name</code> (each in turn when there are several), or one of your files from <code>::REQUIRES</code>; on a definition it goes to the next use. <kbd>Alt</kbd>+<kbd>&larr;</kbd> goes back. <b>go to&hellip;</b> lists the labels, routines, classes and methods. <kbd>Tab</kbd> inserts two spaces. Edits to a sample are kept while the page is open.</p>
     <h3>Your files</h3>
     <ul>
       <li>Every run has <code>/home/rexx</code> as its current directory. Your files live there, and what a program writes there stays for the next runs. Click a file to edit it (Run then runs it); &darr; downloads it, &times; deletes it.</li>
@@ -695,7 +698,7 @@ footer a { color: var(--accent); }
     if (status === "OK") {
       const m = /<code>([\s\S]*)<\/code>/.exec(html);
       const lines = m ? m[1].split("\n").map((l) => l.replace(/^<span id="[^"]*"><a [^>]*><\/a>/, "").replace(/<\/span>$/, "")) : [];
-      if (lines.length === H.sent.lines.length) H.base = { lines: H.sent.lines, html: lines };
+      if (lines.length === H.sent.lines.length) { H.base = { lines: H.sent.lines, html: lines }; navBuild(H.sent.text); }
       H.err = null;
     } else {
       const m = /^\s*(\d*)\s+(\S+)\s+([\s\S]*)$/.exec(rest) || [];
@@ -734,7 +737,183 @@ footer a { color: var(--accent); }
     H.on = hlon.checked; remember("orx-pg-hl", H.on ? null : "off");
     if (H.on) { hlStart(); hlChanged(0); }
     else { if (H.run) { const r = H.run; H.run = null; r.stop(); } editor.classList.remove("lit"); chooser.disabled = true; hlCaret(); hlLint(); }
+    outline.disabled = !H.on || !NAV.defs.length;
   });
+
+  // ---- navigation: go to a definition and the outline ---------------------------------
+  // Built from the Highlighter's HTML, whose classes carry the Rexx Parser's categories:
+  // rx-int-func/-proc (a call to a label of the same code body), rx-label (a label, or a
+  // SIGNAL target), rx-pkg-func/-proc (a call to a ::ROUTINE of the program), rx-routine,
+  // rx-class, rx-method (also ::ATTRIBUTE and ::CONSTANT names), rx-env (.Name),
+  // rx-requires. F12 or Ctrl/Cmd+click on a name goes to its definition (on a definition:
+  // to its next use); Alt+Left goes back.
+  const outline = $("outline"), navmsg = $("navmsg");
+  const NAV = { text: null, groups: [], defs: [], back: [], msgTimer: 0 };
+  const NAV_KEYS = ["rx-int-func", "rx-int-proc", "rx-label", "rx-pkg-func", "rx-pkg-proc",
+                    "rx-routine", "rx-class", "rx-method", "rx-requires", "rx-env"];
+  const NAV_DEF = { routine: "rx-routine", class: "rx-class", method: "rx-method", attribute: "rx-method", constant: "rx-method" };
+  const unesc = (s) => s.replace(/&(lt|gt|quot|amp|#39|apos);/g, (m, e) =>
+    ({ lt: "<", gt: ">", quot: '"', amp: "&", "#39": "'", apos: "'" })[e]);
+  function navTokens(html) {          // [{cls, text, col}], or null for unexpected markup
+    const t = [], re = /<span class="([^"]*)">([^<]*)<\/span>/g;
+    let m, col = 0, last = 0;
+    while ((m = re.exec(html))) {
+      if (m.index !== last) return null;
+      last = re.lastIndex;
+      const text = unesc(m[2]);
+      t.push({ cls: m[1].split(" "), text, col }); col += text.length;
+    }
+    return last === html.length ? t : null;
+  }
+  function navBuild(text) {
+    // body: the code body a name is in (0 = the main program, then one per ::ROUTINE,
+    // ::METHOD or ::ATTRIBUTE; -1 = none, after other directives). Labels are local to it.
+    const groups = [], defs = [], CODE = ["routine", "method", "attribute"];
+    let body = 0, bodies = 0, cls = null, inClass = false;
+    H.base.html.forEach((html, line) => {
+      const toks = navTokens(html);
+      if (!toks) return;
+      let dkw = null;
+      for (let i = 0; i < toks.length; i++) {
+        const t = toks[i];
+        if (t.cls.includes("rx-dkw") && i > 0 && toks[i - 1].cls.includes("rx-dir")) {
+          dkw = t.text.toLowerCase();
+          body = CODE.includes(dkw) ? ++bodies : -1;
+          inClass = dkw === "method" || dkw === "attribute";
+          if (dkw === "routine") cls = null;
+          continue;
+        }
+        const key = NAV_KEYS.find((k) => t.cls.includes(k));
+        if (!key) continue;
+        let j = i, raw = "";
+        while (j < toks.length && toks[j].cls.includes(key)) {
+          if (!toks[j].cls.includes("rx-oquo") && !toks[j].cls.includes("rx-cquo")) raw += toks[j].text;
+          j++;
+        }
+        const g = { key, line, col: t.col, end: toks[j - 1].col + toks[j - 1].text.length, raw, body };
+        i = j - 1;
+        if (key === "rx-env") { if (!raw.startsWith(".") || raw.length < 2) continue; g.raw = raw.slice(1); g.col++; }
+        g.name = t.cls.includes("rx-oquo") ? g.raw : g.raw.toUpperCase();
+        let k = j; while (k < toks.length && toks[k].cls.includes("rx-ws")) k++;
+        if (dkw && NAV_DEF[dkw] === key) {                     // the name a directive defines
+          g.def = dkw === "class" || dkw === "routine" ? dkw : "method";
+          g.kind = dkw;
+          if (dkw === "class") cls = g.raw;
+          g.cls = dkw === "routine" ? null : cls;
+          dkw = null;
+        } else if (key === "rx-label" && k < toks.length && toks[k].text === ":" && toks[k].cls.includes("rx-spe")) {
+          g.def = "label"; g.kind = "label"; g.cls = inClass ? cls : null;
+        }
+        groups.push(g);
+        if (g.def) defs.push(g);
+      }
+    });
+    NAV.text = text; NAV.groups = groups; NAV.defs = defs;
+    const ind = "  ";
+    outline.innerHTML = '<option value="">go to…</option>' + defs.map((d, n) => {
+      const label = d.def === "label" ? (d.body > 0 ? ind : "") + (d.cls !== null ? ind : "") + d.raw + ":" :
+        d.def === "method" ? (d.cls !== null ? ind : "") + "::" + d.kind + " " + d.raw :
+        "::" + d.kind + " " + d.raw;
+      return `<option value="${n}">${esc(label)}</option>`;
+    }).join("");
+    outline.disabled = !H.on || !defs.length;
+  }
+  function navSay(text) {
+    navmsg.textContent = text; navmsg.hidden = !text;
+    clearTimeout(NAV.msgTimer);
+    if (text) NAV.msgTimer = setTimeout(() => { navmsg.hidden = true; }, 4000);
+  }
+  function navReady() {
+    if (!H.on) { navSay("Go to definition needs highlighting on (it uses the Rexx Parser)."); return false; }
+    if (NAV.text === src.value) return true;
+    if (H.err && H.sent && H.sent.text === src.value) navSay("The program has a syntax error: fix it first.");
+    else { navSay("Still reading the program: try again in a moment."); hlChanged(0); }
+    return false;
+  }
+  function navOffset(line, col) {
+    const lines = src.value.split("\n");
+    let off = 0;
+    for (let i = 0; i < line; i++) off += lines[i].length + 1;
+    return off + col;
+  }
+  function navPos(off) {                 // [line, col] of a textarea offset
+    const before = src.value.slice(0, off).split("\n");
+    return [before.length - 1, before[before.length - 1].length];
+  }
+  function navShow(g) {
+    const off = navOffset(g.line, g.col);
+    src.focus();
+    src.setSelectionRange(off, off + (g.end - g.col));
+    const lh = parseFloat(getComputedStyle(src).lineHeight) || 18;
+    const top = g.line * lh, pad = parseFloat(getComputedStyle(src).paddingTop) || 0;
+    if (top < src.scrollTop || top + lh + pad > src.scrollTop + src.clientHeight)
+      src.scrollTop = Math.max(0, top - src.clientHeight / 3);
+    hlScroll();
+  }
+  function navPush() {
+    NAV.back.push({ cur: current, start: src.selectionStart, end: src.selectionEnd, top: src.scrollTop });
+    if (NAV.back.length > 50) NAV.back.shift();
+  }
+  function navGo(g, why) { navPush(); navShow(g); navSay(why || ""); }
+  function navNext(list, g, what) {      // the next one after g, wrapping around
+    const after = list.findIndex((x) => x.line > g.line || (x.line === g.line && x.col > g.col));
+    const n = after < 0 ? 0 : after;
+    navGo(list[n], list.length > 1 ? `${what} ${n + 1} of ${list.length}` : "");
+  }
+  function navAt(off) {
+    if (!navReady()) return;
+    const [line, col] = navPos(off);
+    const g = NAV.groups.find((x) => x.line === line && x.col <= col && col <= x.end);
+    if (!g) { navSay("Put the cursor on the name of a label, routine, class or method."); return; }
+    const same = (x) => x.name === g.name;
+    if (g.def) {                         // on a definition: go to its next use
+      const uses = NAV.groups.filter((x) => !x.def && same(x) && (
+        g.def === "label" ? ["rx-int-func", "rx-int-proc", "rx-label"].includes(x.key) && x.body === g.body :
+        g.def === "routine" ? ["rx-pkg-func", "rx-pkg-proc"].includes(x.key) :
+        g.def === "class" ? ["rx-env", "rx-class"].includes(x.key) : x.key === "rx-method"));
+      if (!uses.length) { navSay(`${g.raw} is not used in this program.`); return; }
+      navNext(uses, g, "use");
+      return;
+    }
+    let found = [];
+    switch (g.key) {
+      case "rx-int-func": case "rx-int-proc": case "rx-label":
+        found = NAV.defs.filter((d) => d.def === "label" && d.body === g.body && same(d)).slice(0, 1); break;
+      case "rx-pkg-func": case "rx-pkg-proc": found = NAV.defs.filter((d) => d.def === "routine" && same(d)); break;
+      case "rx-env": case "rx-class": found = NAV.defs.filter((d) => d.def === "class" && same(d)); break;
+      case "rx-method": found = NAV.defs.filter((d) => d.def === "method" && same(d)); break;
+      case "rx-requires": navRequires(g.raw); return;
+    }
+    if (!found.length) {
+      navSay(g.key === "rx-env" || g.key === "rx-class" ? `No ::CLASS ${g.raw} in this program.` :
+             g.key === "rx-method" ? `No ::METHOD ${g.raw} in this program.` : `No definition of ${g.raw} in this program.`);
+      return;
+    }
+    if (found.length === 1) navGo(found[0]); else navNext(found, g, "definition");
+  }
+  function navRequires(name) {           // ::REQUIRES "file": open it if it is one of yours
+    const here = current && current.user ? (HOME + current.file).replace(/[^/]*$/, "") : HOME;
+    const tries = name.startsWith("/") ? [name] : [here + name, HOME + name, ...[...mounts.values()].map((m) => HOME + m.name + "/" + name)];
+    const path = tries.map((p) => p.replace(/\/\.\//g, "/")).find((p) => workspace.has(p) && asText(workspace.get(p)) !== null);
+    if (!path) { navSay(`${name} is not one of your files.`); return; }
+    if (run) { navSay("Stop the program first."); return; }
+    navPush(); openFile(path); src.focus(); src.setSelectionRange(0, 0); src.scrollTop = 0; hlScroll();
+  }
+  function navBack() {
+    const b = NAV.back.pop();
+    if (!b) { navSay("Nothing to go back to."); return; }
+    if (b.cur !== current) {
+      if (run) { NAV.back.push(b); navSay("Stop the program first."); return; }
+      if (b.cur && b.cur.user) openFile(HOME + b.cur.file); else if (b.cur) select(b.cur);
+    }
+    src.focus(); src.setSelectionRange(b.start, b.end); src.scrollTop = b.top; hlScroll(); navSay("");
+  }
+  outline.addEventListener("change", () => {
+    const d = NAV.defs[+outline.value];
+    outline.value = "";
+    if (d && navReady()) navGo(d);
+  });
+  src.addEventListener("click", (e) => { if ((e.ctrlKey || e.metaKey) && src.selectionStart === src.selectionEnd) navAt(src.selectionStart); });
 
   // ---- samples ------------------------------------------------------------------
   function saveCurrent() {
@@ -1496,6 +1675,8 @@ footer a { color: var(--accent); }
   });
   window.addEventListener("pagehide", () => { if (current && current.user && !run) { saveCurrent(); store.save(workspace); diskSave(workspace); } });
   src.addEventListener("keydown", (e) => {
+    if (e.key === "F12" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); navAt(src.selectionStart); return; }
+    if (e.key === "ArrowLeft" && e.altKey && !e.shiftKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); navBack(); return; }
     if (e.key === "Tab" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
       src.setRangeText("  ", src.selectionStart, src.selectionEnd, "end");

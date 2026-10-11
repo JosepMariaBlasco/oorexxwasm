@@ -279,6 +279,44 @@ with sync_playwright() as p:
           and pg.locator('#out span[style*="rgb("]').count() > 5, out(pg)[-300:])
     pg.locator('.f[data-path="/home/rexx/p.rex"] .del').click()
 
+    # go to definition (F12, Ctrl+click, Alt+Left) and the outline, from the Highlighter's HTML
+    NAV = ('say f(3)\ncall sub 2\nsignal done\nf: return arg(1)*2\nsub: say "sub" arg(1); return\n'
+           'done: call r 1\no = .Foo~new; o~bar\nexit\n::routine r\n  say f(1)\n  exit\nf: return 5\n'
+           '::class Foo public\n::method bar\n  call inner\n  return\ninner: return\n::method other\n  self~bar\n'
+           '::requires "navlib.cls"\n')
+    def npos(line, col): return sum(len(l) + 1 for l in NAV.split("\n")[:line]) + col
+    def ncaret(): return pg.evaluate("[document.getElementById('src').selectionStart, document.getElementById('src').selectionEnd]")
+    def nput(line, col): pg.evaluate(f"(() => {{ const s = document.getElementById('src'); s.focus(); s.setSelectionRange({npos(line, col)}, {npos(line, col)}); }})()")
+    def f12(line, col): nput(line, col); pg.keyboard.press("F12"); return ncaret()
+    def sel(line, col, n): return [npos(line, col), npos(line, col + n)]
+    pg.set_input_files("#picker", [{"name": "navlib.cls", "mimeType": "text/plain", "buffer": b"::routine hello public\n  say 'hi'\n"}])
+    pg.set_input_files("#picker", [{"name": "nav.rex", "mimeType": "text/plain", "buffer": NAV.encode()}])
+    pg.wait_for_function("document.querySelectorAll('#outline option').length > 5", timeout=30000)
+    opts = [o.replace("\xa0", " ") for o in pg.locator("#outline option").all_inner_texts()]
+    check("outline lists the definitions", opts[1:] == ["f:", "sub:", "done:", "::routine r", "  f:", "::class Foo",
+          "  ::method bar", "    inner:", "  ::method other"], opts)
+    check("F12: function call -> label", f12(0, 4) == sel(3, 0, 1), ncaret())
+    check("F12: SIGNAL target -> label", f12(2, 8) == sel(5, 0, 4), ncaret())
+    check("F12: call -> ::ROUTINE", f12(5, 11) == sel(8, 10, 1), ncaret())
+    check("F12: label in its own code body", f12(9, 7) == sel(11, 0, 1), ncaret())
+    check("F12: .Foo -> ::CLASS", f12(6, 6) == sel(12, 8, 3), ncaret())
+    check("F12: ~bar -> ::METHOD", f12(6, 17) == sel(13, 9, 3), ncaret())
+    pg.keyboard.press("Alt+ArrowLeft"); check("Alt+Left goes back", ncaret() == [npos(6, 17)] * 2, ncaret())
+    check("F12 on a definition: next use", f12(13, 10) == sel(18, 7, 3) and "use 2 of 2" in pg.locator("#navmsg").inner_text(), ncaret())
+    nput(1, 6); pg.evaluate("document.getElementById('src').dispatchEvent(new MouseEvent('click', {ctrlKey: true, bubbles: true}))")
+    check("Ctrl+click", ncaret() == sel(4, 0, 3), ncaret())
+    pg.select_option("#outline", label="::class Foo")
+    check("outline jumps", ncaret() == sel(12, 8, 3) and pg.input_value("#outline") == "", ncaret())
+    nput(19, 13); pg.keyboard.press("F12")
+    check("::REQUIRES opens your file", "navlib.cls" in pg.locator("#fname").inner_text() and "::routine hello" in pg.input_value("#src"),
+          pg.locator("#fname").inner_text() + " " + pg.locator("#navmsg").inner_text())
+    pg.keyboard.press("Alt+ArrowLeft")
+    check("back across files", "nav.rex" in pg.locator("#fname").inner_text() and ncaret() == [npos(19, 13)] * 2, ncaret())
+    pg.keyboard.press("Control+End"); pg.keyboard.type("\nsay 'x"); nput(1, 6); pg.keyboard.press("F12")
+    m = pg.locator("#navmsg").inner_text()
+    check("F12 on a stale or broken program says why", "syntax error" in m or "Still reading" in m, m)
+    for f in ("nav.rex", "navlib.cls"): pg.locator(f'.f[data-path="/home/rexx/{f}"] .del').click()
+
     # linked folders (File System Access API), driven with OPFS directories (same API, no picker)
     OPFS = """async (op) => {
       const root = await navigator.storage.getDirectory();

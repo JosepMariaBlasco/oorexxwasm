@@ -124,6 +124,21 @@ in headless Chromium.
   answer (250 ms after typing stops). Syntax errors show under the editor and
   the line gets a wavy underline. `rexx-light.css`/`rexx-dark.css` follow the
   theme. The "highlight" checkbox turns it off (remembered).
+- Go to definition and outline: built in the page from the Highlighter's
+  HTML, whose classes carry the Parser's categories (`rx-int-func`/`-proc`,
+  `rx-label`, `rx-pkg-func`/`-proc`, `rx-routine`, `rx-class`, `rx-method`,
+  `rx-env`, `rx-requires`); no change to `hlserver.rex`. F12 or
+  Ctrl/Cmd+click on a name: a call or SIGNAL target goes to the first label of
+  that name in the same code body (main program, or a `::ROUTINE`/`::METHOD`/
+  `::ATTRIBUTE`); a call to a `::ROUTINE`, `.Name` (or a SUBCLASS/INHERIT
+  name) to its `::CLASS`, `~name` to the `::METHOD`/`::ATTRIBUTE`/`::CONSTANT`
+  of that name (the next one when there are several); `::REQUIRES "file"`
+  opens it if it is one of your files (next to the open file, in
+  `/home/rexx/`, or at the root of a linked folder). On a definition: its
+  next use. Alt+Left goes back (also across files). Symbols compare
+  uppercased, strings as written. Works on the last text the Parser read
+  without errors; otherwise a note says why. The "go to…" select lists the
+  definitions (labels indented under their routine or method).
 - Style chooser (after the Parser's `js/style-chooser.js`): every
   `rexx-*.css` but `test*`, fetched when first chosen; "auto" follows the page
   theme on the page's background, a chosen style brings its own background
