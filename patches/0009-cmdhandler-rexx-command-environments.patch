@@ -19,18 +19,18 @@ instances.cpp (two instances in one process, native).  Portable, not part
 of the posted RFE.
 ---
  CMakeLists.txt                            |  24 +-
- extensions/cmdhandler/cmdhandler.cls      | 175 ++++++++++
- extensions/cmdhandler/cmdhandler.cpp      | 382 ++++++++++++++++++++++
+ extensions/cmdhandler/cmdhandler.cls      | 176 ++++++++++
+ extensions/cmdhandler/cmdhandler.cpp      | 397 ++++++++++++++++++++++
  extensions/cmdhandler/tests/ask.rex       |   2 +
  extensions/cmdhandler/tests/instances.cpp |  42 +++
  extensions/cmdhandler/tests/reg.rex       |  13 +
  interpreter/package/PackageManager.cpp    |   2 +
  wasm/build-node.sh                        |   2 +-
  wasm/build-web.sh                         |   2 +-
- wasm/tests/cmdhandler.rex                 | 246 ++++++++++++++
+ wasm/tests/cmdhandler.rex                 | 265 +++++++++++++++
  wasm/tests/qualify-node-cli.sh            |   4 +
  wasm/tests/web-api.py                     |   3 +
- 12 files changed, 894 insertions(+), 3 deletions(-)
+ 12 files changed, 929 insertions(+), 3 deletions(-)
  create mode 100644 extensions/cmdhandler/cmdhandler.cls
  create mode 100644 extensions/cmdhandler/cmdhandler.cpp
  create mode 100644 extensions/cmdhandler/tests/ask.rex
@@ -117,10 +117,10 @@ index 800ba2c..0f843d3 100644
  install(FILES ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/json.cls COMPONENT Core DESTINATION ${INSTALL_CLS_DIR})
 diff --git a/extensions/cmdhandler/cmdhandler.cls b/extensions/cmdhandler/cmdhandler.cls
 new file mode 100644
-index 0000000..816515c
+index 0000000..598aee6
 --- /dev/null
 +++ b/extensions/cmdhandler/cmdhandler.cls
-@@ -0,0 +1,175 @@
+@@ -0,0 +1,176 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -148,7 +148,8 @@ index 0000000..816515c
 + * class whose COMMAND method is abstract.  For every command the handler
 + * object gets ~command(command, context).
 + * Its result is RC (0 when it returns nothing).  The .CommandContext, valid
-+ * only while that command runs, gives:
++ * only while that command runs and only on its thread (not after a REPLY,
++ * nor from another thread: SYNTAX 98.900), gives:
 + *
 + *    ~lineIn                next line of WITH INPUT, .nil at the end
 + *    ~lines                 all the remaining input lines (an Array)
@@ -298,10 +299,10 @@ index 0000000..816515c
 +  return rc
 diff --git a/extensions/cmdhandler/cmdhandler.cpp b/extensions/cmdhandler/cmdhandler.cpp
 new file mode 100644
-index 0000000..8f70ed5
+index 0000000..a080c79
 --- /dev/null
 +++ b/extensions/cmdhandler/cmdhandler.cpp
-@@ -0,0 +1,382 @@
+@@ -0,0 +1,397 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -369,6 +370,7 @@ index 0000000..8f70ed5
 +{
 +    RexxExitContext         *exit;      // context of the code that issued the command
 +    RexxIORedirectorContext *io;        // its ADDRESS ... WITH redirection
++    RexxThreadContext       *thread;    // the thread (activity) running the command
 +    bool                     valid;     // only while the command runs
 +};
 +
@@ -414,6 +416,7 @@ index 0000000..8f70ed5
 +    CommandState *state = (CommandState *)c->BufferData(buffer);
 +    state->exit = c;
 +    state->io = io;
++    state->thread = c->threadContext;
 +    state->valid = true;
 +
 +    RexxObjectPtr context = c->SendMessage2(contextClass, "NEW", buffer, address);
@@ -473,7 +476,14 @@ index 0000000..8f70ed5
 +}
 +
 +
-+// the state of a .CommandContext, or a SYNTAX error once its command ended
++/**
++ * The state of a .CommandContext, or a SYNTAX error once its command ended
++ * or when it is used from another thread.  The exit and I/O contexts belong
++ * to the command's activity: used from another one (a method that REPLYs and
++ * goes on, or a thread the handler hands the context to) they would run on
++ * an activation another thread is using, and the command may end (and its
++ * contexts go away) meanwhile, whatever VALID said a moment before.
++ */
 +static CommandState *liveState(RexxMethodContext *context, void *self)
 +{
 +    CommandState *state = (CommandState *)self;
@@ -481,6 +491,12 @@ index 0000000..8f70ed5
 +    {
 +        context->RaiseException1(Rexx_Error_Execution_user_defined,
 +            context->String("this CommandContext belongs to a command that has ended"));
++        return NULL;
++    }
++    if (context->threadContext != state->thread)
++    {
++        context->RaiseException1(Rexx_Error_Execution_user_defined,
++            context->String("this CommandContext can only be used on the thread of its command"));
 +        return NULL;
 +    }
 +    return state;
@@ -807,10 +823,10 @@ index 70c2a26..3ffa933 100755
  # JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
 diff --git a/wasm/tests/cmdhandler.rex b/wasm/tests/cmdhandler.rex
 new file mode 100644
-index 0000000..5f3bf34
+index 0000000..92f276a
 --- /dev/null
 +++ b/wasm/tests/cmdhandler.rex
-@@ -0,0 +1,246 @@
+@@ -0,0 +1,265 @@
 +/* cmdhandler.rex: tests of cmdhandler.cls (command environments written in */
 +/* Rexx).  Portable: native and WASM builds.  Prints one line per check and */
 +/* exits 1 if any fails.                                                    */
@@ -915,6 +931,12 @@ index 0000000..5f3bf34
 +call check "stale context raises SYNTAX", .false
 +afterStale:
 +signal on syntax name unexpected
++
++-- a method that REPLYs goes on in another thread: the context refuses it there
++.local~replied = .nil
++address t "REPLY"
++do 100 while .local~replied == .nil; call SysSleep 0.02; end
++call check "after REPLY (another thread) the context raises SYNTAX", .local~replied == "98.900"
 +
 +-- nesting, threads, registration
 +.CommandHandler~register("u", .U~new)
@@ -1023,6 +1045,11 @@ index 0000000..5f3bf34
 +    when verb = "INDIVIDE"   then do; x = ctx~lineIn; return 1 / 0; end
 +    when verb = "OUTDIVIDE"  then do; ctx~output("o"); return 1 / 0; end
 +    when verb = "KEEP"    then .local~kept = ctx
++    when verb = "REPLY"   then do
++      reply 0
++      .local~replied = self~afterReply(ctx)
++      return
++    end
 +    when verb = "NESTED"  then do
 +      address u "INNER"
 +      return rc "T:after"
@@ -1030,6 +1057,14 @@ index 0000000..5f3bf34
 +    otherwise return ctx~raiseFailure(-1)
 +  end
 +  return 0
++
++::method afterReply
++  use arg ctx
++  signal on syntax name refused
++  x = ctx~getVar("x")
++  return "no error"
++refused:
++  return condition("O")~code
 +
 +::method badName
 +  use arg ctx
