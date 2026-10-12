@@ -50,7 +50,7 @@ On an array or a typed array, `o[i]` and `o[i] = v` count from 1, as in a Rexx A
 
 ## Values
 
-JavaScript strings, numbers, booleans (1/0) and bigints come back as Rexx strings; null as `.nil`, and undefined as `.js~undefined`, a single object, so `x == .js~undefined` tests for it. A property that does not exist reads as `.js~undefined`; `~hasProperty` tells the two apart. Rexx strings always go as strings, so "007" stays "007": `.js~num(x)`, `.js~bool(x)`, `.js~bigint(x)` and `.js~bytes(x)` (a Uint8Array) force a type, and `.js~true`, `.js~false` and `.js~undefined` are those values. `.nil` goes as null. An Array goes as an array and a Directory or StringTable as a plain object, both as copies; `.js~newArray(items...)` and `.js~newObject(directory)` make them in JavaScript instead, held by reference.
+JavaScript strings, numbers, booleans (1/0) and bigints come back as Rexx strings; null as `.nil`, and undefined as `.js~undefined`, a single object, so `x == .js~undefined` tests for it. A property that does not exist reads as `.js~undefined`; `~hasProperty` tells the two apart. Rexx strings always go as strings, so "007" stays "007": `.js~num(x)`, `.js~bool(x)`, `.js~bigint(x)` and `.js~bytes(x)` (a Uint8Array) force a type, and `.js~true`, `.js~false` and `.js~undefined` are those values. `.nil` goes as null. An Array goes as an array and a Directory or StringTable as a plain object, both as copies; `.js~newArray(items...)` and `.js~newObject(directory)` make them in JavaScript instead, held by reference. Any other Rexx object goes by reference, as a `RexxProxy`: see [Rexx objects in JavaScript](#rexx-objects-in-javascript).
 
 `.js~box(type, x)` forces a type with the type indicators of BSF4ooRexx's `box()`: `BOolean`, `BYte`, `Char`, `Double`, `Float`, `Int`, `Long`, `Object`, `SHort` and `STring`, and JavaScript's own `Number` and `BIgint`. Case does not matter, and an indicator may be shortened down to its capitals, so `.js~box("bo", 1)` is `.js~box("Boolean", 1)`. The whole-number types check Java's ranges (`.js~box("BYte", 300)` is an error), `Long` within the integers JavaScript holds exactly; `BIgint` takes any whole number. `.js~unbox(o)` gives back the Rexx value of a box, or of a JavaScript `Number`, `String`, `Boolean` or `BigInt` object.
 
@@ -126,6 +126,31 @@ In the page, what can be done:
 
 A queued handler given where JavaScript needs a value at once does not fail: JavaScript receives `undefined`, and Rexx receives the calls later, as events. `.js~page~Array~of(3, 1, 2)~sort(.js~handler(o, "COMPARE"))` leaves the array as it was, with three calls queued; in the worker's realm the same `sort` works.
 
+## Rexx objects in JavaScript
+
+A Rexx object that is not converted (not a string or number, an Array, a Directory or a StringTable) reaches JavaScript by reference, as a `RexxProxy`, the name BSF4ooRexx gives it in Java. JavaScript sends it messages:
+
+```rexx
+acct = .Account~new(100)
+f = .js~Function~new("a", "a.deposit(50); return a.sendMessage0('balance')")
+say f~invoke(.nil, acct)                         -- 150
+```
+
+| JavaScript | Rexx |
+| --- | --- |
+| `o.name(a, b)` | `o~name(a, b)`: any property is a function that sends the message, its name upper-cased |
+| `o.sendMessage(name, [args])` | the same, with the arguments in an array |
+| `o.sendMessage0(name)` … `o.sendMessage5(name, a1, …, a5)` | the same, with 0 to 5 arguments |
+| `o.sendMessageScope(name, scope, [args])` | `o~name:scope(args)`: the method search starts at the class `scope` (a `RexxProxy` of a Rexx class) |
+| `String(o)`, `` `${o}` `` | the object's string when it last came over; `o.string()` asks Rexx now |
+
+- **Values.** The arguments go to Rexx as anything JavaScript gives Rexx (see [Values](#values)), and the result comes back as anything Rexx gives JavaScript; a method with no result gives `undefined`.
+- **The call** is a synchronous call of Rexx, as a synchronous handler's (see [Events](#events) and [Waiting](#waiting)): on the Rexx thread waiting for JavaScript, with its result, or, when JavaScript calls on its own (a timer), on a thread of its own, and JavaScript gets `undefined`. A condition is a `RexxError`. In the page, which cannot wait, a call gives a rejected Promise for now: calls from the page will give a Promise of the result.
+- **Identity.** The same Rexx object is the same `RexxProxy` while JavaScript holds it (`a === b`), and a `RexxProxy` given back to Rexx is the Rexx object itself.
+- **Classes.** A Rexx class is a Rexx object too: `C.new(args)` in JavaScript makes an instance.
+- **Not a property bag, not a thenable.** Setting a property is a `TypeError`; `then` and `toJSON` are not messages, so `await` and `JSON.stringify` treat a `RexxProxy` as a plain object. `RexxProxy` and `RexxError` are globals of the realm, for `instanceof`.
+- **Lifetime.** JavaScript holding a `RexxProxy` keeps the Rexx object alive; when JavaScript collects it, Rexx may collect the object.
+
 ## Classes
 
 A Rexx class can extend a JavaScript class, so that JavaScript calls the Rexx methods where it would call the class's own, as `.net~extend` does in ooRexx/.NET:
@@ -195,4 +220,5 @@ Replies on this list are very welcome.
 | `~at(i)` and `~put(v, i)` are `o[i]` and `o[i] = v`, as in Rexx's collections (JavaScript's `at` is `o~invoke("at", i)`) | Messages, Pitfalls |
 | Why JavaScript cannot wait for Rexx in the page, and what to do instead | Waiting |
 | Handlers are synchronous in the worker's realm and under Node, as `.net~handler` (a comparator for `sort` works); option `queued` (implied by `latest` and `max`), and the page, keep them queued; a condition is a `RexxError` | Events, Waiting |
+| Any other Rexx object goes to JavaScript as a `RexxProxy` (it went as its string): messages, BSF4ooRexx's `sendMessage` names, identity both ways | Values, Rexx objects in JavaScript |
 | Rexx classes extending JavaScript classes: `.js~extend(class, base [, names...])`, `.js~detach(o)`, as `.net~extend` | Classes |

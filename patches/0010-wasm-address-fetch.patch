@@ -247,10 +247,10 @@ index 0000000..01451f3
 +
 +::requires "fetch.cls"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 165f319..fe70ea7 100755
+index 85fc4eb..a54d754 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -311,6 +311,13 @@ check "JavaScript objects: Rexx classes extending JavaScript classes" '^31 passe
+@@ -331,6 +331,13 @@ check "JavaScript objects: Rexx classes extending JavaScript classes" '^31 passe
  check "command handlers in Rexx (cmdhandler.cls)" '^[0-9]+ passed, 0 failed$' '!^FAIL ' -- \
    "$X '$(cd "$(dirname "$0")" && pwd)/cmdhandler.rex'"
  
@@ -265,7 +265,7 @@ index 165f319..fe70ea7 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3f0b291..0d3fde5 100755
+index e40fa88..f1b33b5 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -64,6 +64,9 @@ class H(SimpleHTTPRequestHandler):
