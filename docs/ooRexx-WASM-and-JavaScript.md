@@ -122,7 +122,7 @@ In the page, what can be done:
   ```
 
 - **Do the work in Rexx, or in the worker's realm.** Bring the data over, compute there, and hand the page the result: a sorted array instead of a comparator.
-- **Let JavaScript take a Promise** where it can: code of one's own written with `async`/`await` waits for Rexx without blocking the page.
+- **Let JavaScript take a Promise** where it can: code of one's own written with `async`/`await` waits for Rexx without blocking the page. Every call from the page to a Rexx object gives one (see [Rexx from the page](#rexx-from-the-page)).
 
 A queued handler given where JavaScript needs a value at once does not fail: JavaScript receives `undefined`, and Rexx receives the calls later, as events. `.js~page~Array~of(3, 1, 2)~sort(.js~handler(o, "COMPARE"))` leaves the array as it was, with three calls queued; in the worker's realm the same `sort` works.
 
@@ -145,11 +145,56 @@ say f~invoke(.nil, acct)                         -- 150
 | `String(o)`, `` `${o}` `` | the object's string when it last came over; `o.string()` asks Rexx now |
 
 - **Values.** The arguments go to Rexx as anything JavaScript gives Rexx (see [Values](#values)), and the result comes back as anything Rexx gives JavaScript; a method with no result gives `undefined`.
-- **The call** is a synchronous call of Rexx, as a synchronous handler's (see [Events](#events) and [Waiting](#waiting)): on the Rexx thread waiting for JavaScript, with its result, or, when JavaScript calls on its own (a timer), on a thread of its own, and JavaScript gets `undefined`. A condition is a `RexxError`. In the page, which cannot wait, a call gives a rejected Promise for now: calls from the page will give a Promise of the result.
+- **The call** is a synchronous call of Rexx, as a synchronous handler's (see [Events](#events) and [Waiting](#waiting)): on the Rexx thread waiting for JavaScript, with its result, or, when JavaScript calls on its own (a timer), on a thread of its own, and JavaScript gets `undefined`. A condition is a `RexxError`. In the page, which cannot wait, a call gives a Promise of the result: see [Rexx from the page](#rexx-from-the-page).
 - **Identity.** The same Rexx object is the same `RexxProxy` while JavaScript holds it (`a === b`), and a `RexxProxy` given back to Rexx is the Rexx object itself.
 - **Classes.** A Rexx class is a Rexx object too: `C.new(args)` in JavaScript makes an instance.
 - **Not a property bag, not a thenable.** Setting a property is a `TypeError`; `then` and `toJSON` are not messages, so `await` and `JSON.stringify` treat a `RexxProxy` as a plain object. `RexxProxy` and `RexxError` are globals of the realm, for `instanceof`.
 - **Lifetime.** JavaScript holding a `RexxProxy` keeps the Rexx object alive; when JavaScript collects it, Rexx may collect the object.
+
+## Rexx from the page
+
+The page cannot wait (see [Waiting](#waiting)), so a call it makes to Rexx is queued, as the events of its handlers are, and gives a Promise of the result at once:
+
+```js
+const v = await o.deposit(50);        // o a RexxProxy in the page: a Promise
+```
+
+- **Who runs it.** The Rexx thread that takes events (`.js~eventLoop`, `.js~nextEvent`) runs the calls in turn, as it runs the handlers' events. So does a Rexx thread waiting for JavaScript (`~await`, a request to the page), for the calls that come while it waits: what it waits for may be the page's code that called Rexx. As with `await` in JavaScript, other code may run while one waits.
+- **The result.** The Promise is resolved with the method's result (`undefined` when there is none), or rejected with a `RexxError` for a condition. While nobody takes events it stays pending; when the run ends, it is rejected.
+
+**Sessions.** `ooRexx.js` gives the page an interpreter that stays, to call when it needs Rexx:
+
+```js
+const rexx = await OoRexx.load();
+const s = await rexx.start({ js: { page: true } });     // the options of run()
+await s.eval('use arg a, b; return a + b', 2, 3);       // '5'
+const r = await s.routine('double', 'use arg x; return x * 2');
+await r.call(21);                                       // '42'
+const p = await s.loadPackage('bank.cls', '::class Account public ...');
+const acct = await (await p.findClass('Account')).new(100);
+await acct.deposit(50);                                 // '150'
+s.stop();
+```
+
+| JavaScript | Rexx |
+| --- | --- |
+| `s.eval(source, ...args)` | `source` run as a routine (`USE ARG`, `RETURN`): its result |
+| `s.routine(name, source)` | a `Routine`: `r.call(...args)` |
+| `s.loadPackage(name, source)` | a `Package`, its prolog run; without `source`, the file `name` (`'dom.cls'`) |
+
+A session is a run whose program, `.js~session`, hands the page a `.JSSession` and then takes events for good: the session's calls, and the events of the handlers its code sets up, run one at a time, in the order they come. What a session makes sees `js.cls`, and the public classes and routines of what it made before, as the scripts of a page see each other's globals. `s` has what `run()` returns besides (`done`, `stop`, `write`, `close`); `s.rexx` is the `.JSSession` itself.
+
+**Rexx scripts.** A page that loads `ooRexx.js` can hold Rexx as it holds JavaScript:
+
+```html
+<script src="ooRexx.js"></script>
+<script type="text/rexx">
+  .js~page~document~getElementById("greeting")~textContent = "Hello from Rexx"
+</script>
+<script type="text/rexx" src="app.rex"></script>
+```
+
+When the page has any, `ooRexx.js` starts a session once the document is parsed, with both realms granted (they are the page's own scripts), and runs them in order, each as a routine named after its `src`. A script sees what the scripts before it defined, its handlers run once the scripts are done, its output goes to the console, and an error is logged and does not stop the next script. `OoRexx.scripts` is a Promise of that session.
 
 ## Classes
 
@@ -222,3 +267,5 @@ Replies on this list are very welcome.
 | Handlers are synchronous in the worker's realm and under Node, as `.net~handler` (a comparator for `sort` works); option `queued` (implied by `latest` and `max`), and the page, keep them queued; a condition is a `RexxError` | Events, Waiting |
 | Any other Rexx object goes to JavaScript as a `RexxProxy` (it went as its string): messages, BSF4ooRexx's `sendMessage` names, identity both ways | Values, Rexx objects in JavaScript |
 | Rexx classes extending JavaScript classes: `.js~extend(class, base [, names...])`, `.js~detach(o)`, as `.net~extend` | Classes |
+| Calls from the page to a Rexx object give a Promise of the result, queued as events (they were rejected) | Rexx objects in JavaScript, Rexx from the page |
+| Sessions, `rexx.start()`: `eval`, `routine`, `loadPackage`; and `<script type="text/rexx">` | Rexx from the page |

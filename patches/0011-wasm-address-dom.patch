@@ -315,7 +315,7 @@ index 0000000..4e2e5e2
 +
 +::requires "dom.cls"
 diff --git a/wasm/tests/web-api.html b/wasm/tests/web-api.html
-index 4aafd0c..2b4c7d5 100644
+index e5c8af1..abf687f 100644
 --- a/wasm/tests/web-api.html
 +++ b/wasm/tests/web-api.html
 @@ -75,7 +75,7 @@ window.rexxRun = async (source, o = {}) => {
@@ -328,10 +328,10 @@ index 4aafd0c..2b4c7d5 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); }, onJdor,
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index f1b33b5..41a1c40 100755
+index 39b4e81..c65808e 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
-@@ -184,6 +184,17 @@ CASES = [
+@@ -185,6 +185,17 @@ CASES = [
    # ADDRESS FETCH (wasm/web/fetch.cls over cmdhandler.cls and js.cls): the portable test
    ("fetch", open(f"{SRC}/wasm/tests/fetch.rex").read(), {"js": {"worker": True}, "args": ["http://127.0.0.1:8124"]},
       lambda r: "44 passed, 0 failed" in r["out"] and r["rc"] == 0),
@@ -1402,10 +1402,10 @@ index 0000000..84ffe1c
 +  use arg v
 +  return v == .nil | v == .js~undefined
 diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
-index 8eea641..8000b26 100644
+index e70e275..fa4a3f9 100644
 --- a/wasm/web/ooRexx.js
 +++ b/wasm/web/ooRexx.js
-@@ -111,6 +111,11 @@
+@@ -122,6 +122,11 @@
   *                  ooRexx.js) on first use; the program's page objects live
   *                  until the run ends, and the event handlers it set up
   *                  (.js~handler) do nothing after it.
@@ -1414,10 +1414,10 @@ index 8eea641..8000b26 100644
 + *                  (the program must make a panel with NEW, or say ROOT
 + *                  PAGE), or by default the page's body.  The program sees it
 + *                  as the environment variable ORX_DOM_ROOT ('none' for null)
-  */
- (function (global) {
-   'use strict';
-@@ -177,6 +182,13 @@
+  *
+  * Calling Rexx: a Rexx object that comes to the page (an argument of a
+  * handler, a result) is a RexxProxy (js-realm.js; o.name(args), sendMessage,
+@@ -218,6 +223,13 @@
      return e.encode('E' + m.length + ':' + msg + 'N0:');
    }
  
@@ -1428,10 +1428,10 @@ index 8eea641..8000b26 100644
 +    return env;
 +  }
 +
-   class OoRexx {
-     static async load(base) {
-       base = new URL(base || here.slice(0, here.lastIndexOf('/') + 1) || './', global.location.href).href;
-@@ -256,7 +268,7 @@
+   // a session's program (start): .js~session takes events for good
+   const SESSION_PATH = '/tmp/ooRexx-session.rex';
+   const SESSION_SOURCE = '.js~session\n::requires "js.cls"\n';
+@@ -349,7 +361,7 @@
        worker.onerror = (e) => end({ rc: null, files: {}, stopped: false, error: e.message || 'worker error' });
        worker.postMessage({
          type: 'run', scriptUrl: this.base + 'rexx.js', wasmModule: this.wasmModule,
