@@ -1,0 +1,99 @@
+# The npm package on Windows: a test bench while the port is being brought
+# there.  Builds the package as release.yml does (Linux), installs it on
+# windows-latest and runs, each step on its own (a failure does not stop the
+# rest): rexx -v, tests/windows/probe.rex (what the interpreter sees of its
+# host, one fact per line) from Git Bash, cmd and PowerShell, and the smoke
+# test.  On demand only.
+name: windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      node:
+        description: Node.js version
+        default: "22"
+
+permissions:
+  contents: read
+
+env:
+  EMVER: "6.0.12"
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ORX_WASM_WORK: ${{ github.workspace }}/..
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Tools (svn)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq subversion
+      - name: Emscripten cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/../emsdk
+          key: emsdk-${{ env.EMVER }}-${{ runner.os }}
+      - name: Set up (saved build, or compile)
+        run: scripts/setup-env.sh
+      - name: Package
+        run: |
+          scripts/npm-package.sh 0.0.0-windows "$ORX_WASM_WORK/build-wasm/bin-node" "$RUNNER_TEMP/npm"
+          mkdir -p "$RUNNER_TEMP/npm/tests"
+          cp npm/test/smoke.rex tests/windows/probe.rex "$RUNNER_TEMP/npm/tests/"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: npm-package-windows
+          path: |
+            ${{ runner.temp }}/npm/oorexxwasm-*.tgz
+            ${{ runner.temp }}/npm/tests/
+
+  windows:
+    needs: package
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ inputs.node }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-package-windows
+          path: pkg
+      - name: Install (npm install -g; the "os" field is ignored with --force)
+        run: npm install -g --force ./pkg/oorexxwasm-*.tgz && npm root -g && ls "$(npm root -g)/oorexxwasm/lib" | head -40
+      - name: rexx -v
+        continue-on-error: true
+        run: set +e; rexx -v; echo "exit status $?"
+      - name: probe (Git Bash)
+        continue-on-error: true
+        run: set +e; mkdir -p scratch && cd scratch && rexx ../pkg/tests/probe.rex; echo "exit status $?"
+      - name: probe (cmd)
+        continue-on-error: true
+        shell: cmd
+        run: |
+          cd scratch
+          call rexx ..\pkg\tests\probe.rex
+          echo exit status %ERRORLEVEL%
+      - name: probe (PowerShell)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          cd scratch
+          rexx ..\pkg\tests\probe.rex
+          "exit status $LASTEXITCODE"
+      - name: probe from lib/ (rexx.img in the current directory)
+        continue-on-error: true
+        run: |
+          set +e
+          probe=$(cygpath -w "$PWD/pkg/tests/probe.rex"); scratch=$(cygpath -w "$PWD/scratch")
+          cd "$(npm root -g)/oorexxwasm/lib" && node rexx.js "$probe" "$scratch"; echo "exit status $?"
+      - name: Smoke test
+        continue-on-error: true
+        run: set +e; cd scratch && rexx ../pkg/tests/smoke.rex; echo "exit status $?"
