@@ -2,12 +2,14 @@
 # command-line build, installed with `npm install -g` on Linux and macOS
 # (not Windows yet: the interpreter's Unix platform code does not find its
 # files there; the package says "os": ["!win32"]) and checked there (npm/test/smoke.rex, js-proxy.rex,
-# js-extend.rex), and, for a tag vX.Y.Z, published to npm.
+# js-extend.rex), and, for a tag vX.Y.Z, staged on npm for approval.
 #
 # Publishing uses npm's trusted publishing: npmjs.com is told, once, that
 # oorexxwasm is published from this repository by this workflow, and the job
 # proves who it is with GitHub's OIDC token (no npm token is stored here).
-# The package gets a provenance statement (built here, from this commit).
+# The trusted publisher is stage-only: the job runs `npm stage publish`, the
+# version waits in npm's stage queue, and a maintainer approves it (with
+# 2FA) on npmjs.com or with the npm CLI; only then can it be installed.
 #
 # On demand (Actions > release > Run workflow) it builds and checks the
 # package without publishing it.
@@ -110,11 +112,11 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
-      - name: npm with trusted publishing
-        run: npm install -g npm@latest
+      - name: npm with trusted publishing and staging (11.15 or later)
+        run: npm install -g npm@latest && npm --version
       - uses: actions/download-artifact@v8
         with:
           name: npm-package
           path: pkg
-      - name: Publish
-        run: npm publish ./pkg/oorexxwasm-*.tgz --access public --provenance
+      - name: Stage for approval
+        run: npm stage publish ./pkg/oorexxwasm-*.tgz --access public
