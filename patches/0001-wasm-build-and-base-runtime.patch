@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
 Date: Sun, 4 Oct 2026 11:46:20 +0200
-Subject: [PATCH 1/6] WebAssembly port: build and base runtime
+Subject: [PATCH 1/7] WebAssembly port: build and base runtime
 
 Build ooRexx for WebAssembly with Emscripten 6.0.12 (wasm/build-wasm.sh,
 cmake/wasm-emscripten-6.0.12-cache.cmake).  Everything is under

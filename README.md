@@ -30,13 +30,17 @@ Applied in order on top of ooRexx SVN trunk **r13268**
 | 0004 | Node: real TCP/UDP sockets and DNS |
 | 0005 | The browser runtime: `wasm/web/ooRexx.js`, one Web Worker per run, interactive stdin, output streams marked as plain / trace / error |
 | 0006 | Build variants with the test suite's native libraries linked in (`wasm/build-test.sh`), so the API test groups run under Node and in the browsers |
-| 0007 | `ADDRESS JDOR`: Rony G. Flatscher's JDOR drawing commands on the browser's canvas |
-| 0008 | `.JSObject`: JavaScript objects from Rexx (the worker's and the page's), events |
-| 0009 | Command environments written in Rexx (`cmdhandler`), a portable extension package |
-| 0010 | `ADDRESS FETCH`: HTTP from Rexx commands |
-| 0011 | `ADDRESS DOM`: building and driving the page from Rexx commands |
+| 0007 | `.JSObject`: JavaScript objects from Rexx (the worker's and the page's), events, Rexx objects in JavaScript, Rexx from the page |
+| 0008 | `ADDRESS JDOR`: Rony G. Flatscher's JDOR drawing commands on the browser's canvas (an example environment) |
+| 0009 | Command environments written in Rexx (`cmdhandler`), a portable extension package that 0010 and 0011 use |
+| 0010 | `ADDRESS FETCH`: HTTP from Rexx commands (an example environment) |
+| 0011 | `ADDRESS DOM`: building and driving the page from Rexx commands (an example environment) |
 
-0001–0006 are the RFE. 0007–0011 build on them and are not part of it. The
+0001–0007 are the RFE: the port, and `.JSObject`, which
+[`docs/ooRexx-WASM-and-JavaScript.md`](docs/ooRexx-WASM-and-JavaScript.md)
+specifies. 0008, 0010 and 0011 are example command environments built on
+them. 0009 is a separate, portable package, not WebAssembly-specific, on
+which 0010 and 0011 depend. The
 patches are in git format and apply with `svn patch` or `git am`;
 `patches/SHA256SUMS` lists their hashes.
 

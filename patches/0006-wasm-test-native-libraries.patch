@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
 Date: Sun, 11 Oct 2026 14:40:17 +0200
-Subject: [PATCH 6/6] WebAssembly port: build variants for the test suite's
+Subject: [PATCH 6/7] WebAssembly port: build variants for the test suite's
  native libraries
 
 The API test groups of the test suite (API/classic, API/oo) load the

@@ -1,6 +1,6 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
-Date: Mon, 5 Oct 2026 14:17:57 +0200
+Date: Mon, 12 Oct 2026 16:10:17 +0200
 Subject: [PATCH] WebAssembly port, browser: ADDRESS JDOR, drawing on the
  canvas
 
@@ -29,9 +29,8 @@ the HTML canvas, no Java involved.
   main runtime thread (emscripten_proxy_sync_with_ctx), which may finish
   it later; Rexx variables the command needs are resolved on the
   interpreter thread; sleeping happens there too.
-- interpreter/package/PackageManager.cpp: packages a WASM build links in
-  through a weak hook, orx_wasm_extra_packages(), defined only by the
-  browser build (NULL elsewhere); loaded on first request.
+- wasm/extra-packages.cpp: lists "jdor" too (web-jdor.cpp provides
+  orx_wasm_jdor_package()), for the hook in PackageManager.cpp.
 - wasm/web/jdor.cls: requiring it sets up the JDOR environment;
   addJdorHandler (as BSF4ooRexx's jdor.cls) sets up more; JdorObject, the
   Rexx side of the objects commands return ("a JDOR Image (#99)",
@@ -42,21 +41,24 @@ the HTML canvas, no Java involved.
   few .java.lang.System properties), so they also run unchanged.
 - wasm/web/ooRexx.js: run({onJdor, screen}) and run.jdorEvent(); the page
   decides how to show the windows (ooRexx-worker.js relays the messages).
-- wasm/tests/web-api.py: 8 JDOR cases (30 in all).
+- wasm/tests/web-api.py: 8 JDOR cases.
 ---
- interpreter/package/PackageManager.cpp |   16 +
- wasm/README.md                         |   56 +-
- wasm/build-web.sh                      |   17 +-
- wasm/tests/web-api.html                |   21 +-
- wasm/tests/web-api.py                  |   41 +-
- wasm/web-jdor.cpp                      |  431 +++++
- wasm/web-jdor.js                       | 2060 ++++++++++++++++++++++++
- wasm/web/BSF.CLS                       |  110 ++
- wasm/web/jdor.cls                      |  116 ++
- wasm/web/ooRexx-worker.js              |   12 +-
- wasm/web/ooRexx.js                     |   17 +
- wasm/web/polygon-clipping.umd.min.js   |   39 +
- 12 files changed, 2924 insertions(+), 12 deletions(-)
+ interpreter/package/PackageManager.cpp        |    4 +-
+ wasm/README.md                                |   56 +-
+ wasm/build-web.sh                             |   22 +-
+ wasm/extra-packages.cpp                       |    9 +-
+ .../tests/__pycache__/web-api.cpython-313.pyc |  Bin 30028 -> 0 bytes
+ wasm/tests/web-api.html                       |   21 +-
+ wasm/tests/web-api.py                         |   41 +-
+ wasm/web-jdor.cpp                             |  425 ++++
+ wasm/web-jdor.js                              | 2060 +++++++++++++++++
+ wasm/web/BSF.CLS                              |  110 +
+ wasm/web/jdor.cls                             |  116 +
+ wasm/web/ooRexx-worker.js                     |   14 +-
+ wasm/web/ooRexx.js                            |   19 +-
+ wasm/web/polygon-clipping.umd.min.js          |   39 +
+ 14 files changed, 2914 insertions(+), 22 deletions(-)
+ delete mode 100644 wasm/tests/__pycache__/web-api.cpython-313.pyc
  create mode 100644 wasm/web-jdor.cpp
  create mode 100644 wasm/web-jdor.js
  create mode 100644 wasm/web/BSF.CLS
@@ -64,41 +66,22 @@ the HTML canvas, no Java involved.
  create mode 100644 wasm/web/polygon-clipping.umd.min.js
 
 diff --git a/interpreter/package/PackageManager.cpp b/interpreter/package/PackageManager.cpp
-index 9324d0b..5dbab4a 100644
+index 786af1f..e949832 100644
 --- a/interpreter/package/PackageManager.cpp
 +++ b/interpreter/package/PackageManager.cpp
-@@ -94,6 +94,11 @@ const PackageManager::EmbeddedPackage PackageManager::embeddedPackages[] =
-     { NULL, NULL, false }
+@@ -95,8 +95,8 @@ const PackageManager::EmbeddedPackage PackageManager::embeddedPackages[] =
  };
  
-+// More packages a particular WASM build links in (the browser build's JDOR
-+// command handler, wasm/web-jdor.cpp), loaded on first request.  A weak
-+// symbol: NULL in the builds that do not define it.
-+extern "C" const RexxLibraryPackage *orx_wasm_extra_packages(void) __attribute__((weak));
-+
+ // More packages a particular WASM build links in (wasm/extra-packages.cpp:
+-// the JavaScript bridge), loaded on first request.  A weak symbol: NULL in
+-// the builds that do not define it.
++// the browser build's JDOR command handler, the JavaScript bridge), loaded
++// on first request.  A weak symbol: NULL in the builds that do not define it.
+ extern "C" const RexxLibraryPackage *orx_wasm_extra_packages(void) __attribute__((weak));
  
- /**
-  * Find the embedded package entry matching a restored internal package.
-@@ -299,6 +304,17 @@ LibraryPackage *PackageManager::loadLibrary(RexxString *name)
-                 return (LibraryPackage *)packages->get(name);
-             }
-         }
-+        if (orx_wasm_extra_packages != NULL)
-+        {
-+            for (const RexxLibraryPackage *p = orx_wasm_extra_packages(); p->registeredName != NULL; p++)
-+            {
-+                if (name->strCaselessCompare(p->registeredName))
-+                {
-+                    loadInternalPackage(name, p->table);
-+                    return (LibraryPackage *)packages->get(name);
-+                }
-+            }
-+        }
-     }
- #endif
-     if (package == NULL)
+ 
 diff --git a/wasm/README.md b/wasm/README.md
-index 8c21c8e..2508784 100644
+index 21634d0..12f7355 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -211,7 +211,58 @@ off, or changes the strings.
@@ -161,71 +144,383 @@ index 8c21c8e..2508784 100644
  
  ## The test suite's API groups (`wasm/build-test.sh`)
  
-@@ -243,7 +294,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -411,7 +462,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
 -* Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).
 +* Browser: ADDRESS commands requiring an OS child process fail closed (RC 127);
 +  ADDRESS JDOR draws (see above).
+ * `.JSObject` is in the browser build and the Node command-line build, not
+   in the MEMFS runtime of the CMake build (`bin/`).
  * Maximum recursion depth is set by the JS engine's native stack (internal
-   CALL / internal function calls / method calls): Node about 7,100 / 5,400 /
-   4,000; browser workers about 900 / 700 / 500 in Chromium, 1,300 / 900 / 700
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index 585e5ca..2a8c896 100755
+index 71c0919..e75964b 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
-@@ -47,7 +47,8 @@
- #   may grow to; default 512 MiB, see below)
+@@ -48,6 +48,7 @@
  #   EXTRA_OBJECTS="a.o b.o" wasm/build-web.sh ...  (more objects to link in:
  #   wasm/build-test.sh)
--# Output: OUTDIR/{rexx.js,rexx.wasm,rexx.data,ooRexx.js,ooRexx-worker.js}
-+# Output: OUTDIR/{rexx.js,rexx.wasm,rexx.data,ooRexx.js,ooRexx-worker.js,
-+#         polygon-clipping.umd.min.js (JDOR's areas, loaded on first use)}
+ # Output: OUTDIR/{rexx.js,rexx.wasm,rexx.data,ooRexx.js,ooRexx-worker.js,
++#         polygon-clipping.umd.min.js (JDOR's areas, loaded on first use),
+ #         js-realm.js (the page realm of .JSObject, loaded on first use)}
  set -euo pipefail
  SRC=$(cd "$(dirname "$0")/.." && pwd)
- BUILD=$(cd "${1:-$SRC/build-wasm}" && pwd)
-@@ -57,6 +58,10 @@ EMXX=$(sed -E 's/ .*//' "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
+@@ -58,8 +59,11 @@ EMXX=$(sed -E 's/ .*//' "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
  
  # the interactive stdin (read() of fd 0 served from a ring in shared memory)
  "$EMXX" -O3 -pthread -c "$SRC/wasm/web-stdin.cpp" -o "$BUILD/web-stdin.o"
+-# the JavaScript bridge (package "js", .JSObject) and the list of extra packages;
+-# exceptions as in CMakeLists.txt (exnref: a module that mixes encodings does not compile)
 +# JDOR, the drawing command handler, on the canvas (package "jdor"); exceptions as
 +# in CMakeLists.txt (exnref: a module that mixes encodings does not compile)
 +"$EMXX" -O3 -std=gnu++11 -pthread -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0 -DHAVE_CONFIG_H -DOPSYS_EMSCRIPTEN \
 +  -I"$SRC/api" -I"$SRC/api/platform/unix" -I"$BUILD" -c "$SRC/wasm/web-jdor.cpp" -o "$BUILD/web-jdor.o"
- 
- # the portable extension classes (not ncurses: no native library here)
- PRELOAD=()
-@@ -65,6 +70,10 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
++# the JavaScript bridge (package "js", .JSObject) and the list of extra packages
+ for f in web-js extra-packages; do
+   "$EMXX" -O3 -std=gnu++11 -pthread -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0 -DHAVE_CONFIG_H -DOPSYS_EMSCRIPTEN \
+     -I"$SRC/api" -I"$SRC/api/platform/unix" -I"$BUILD" -c "$SRC/wasm/$f.cpp" -o "$BUILD/$f.o"
+@@ -72,8 +76,11 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
             csvStream/csvStream.cls dateparser/dateparser.cls; do
    PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
  done
+-# the JavaScript bridge's classes
+-PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls")
 +# JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
-+PRELOAD+=("--preload-file" "$SRC/wasm/web/jdor.cls@/usr/lib/ooRexx/jdor.cls"
++PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls"
++          "--preload-file" "$SRC/wasm/web/jdor.cls@/usr/lib/ooRexx/jdor.cls"
 +          "--preload-file" "$SRC/wasm/web/BSF.CLS@/usr/lib/ooRexx/BSF.CLS"
 +          "--preload-file" "$SRC/wasm/web/BSF.CLS@/usr/lib/ooRexx/bsf.cls")
  
  # The most the memory may grow to.  Every run creates a shared
  # WebAssembly.Memory, and WebKit charges its declared maximum, not its size,
-@@ -86,13 +95,13 @@ wasm,websocket,mainScriptUrlOrBlob]"
+@@ -95,13 +102,14 @@ wasm,websocket,mainScriptUrlOrBlob]"
  cmd=$(cat "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
  cmd=$(sed -E 's/--preload-file [^ ]+//g; s/-sENVIRONMENT=[^ ]+//' <<<"$cmd")
  cmd=${cmd//-o bin\/rexx.js/-o $OUT\/rexx.js}
--(cd "$BUILD" && eval "$cmd" "$BUILD/web-stdin.o" ${EXTRA_OBJECTS:-} \
-+(cd "$BUILD" && eval "$cmd" "$BUILD/web-stdin.o" "$BUILD/web-jdor.o" ${EXTRA_OBJECTS:-} \
+-(cd "$BUILD" && eval "$cmd" "$BUILD/web-stdin.o" "$BUILD/web-js.o" "$BUILD/extra-packages.o" ${EXTRA_OBJECTS:-} \
++(cd "$BUILD" && eval "$cmd" "$BUILD/web-stdin.o" "$BUILD/web-jdor.o" "$BUILD/web-js.o" "$BUILD/extra-packages.o" ${EXTRA_OBJECTS:-} \
     -Wl,--wrap=read,--wrap=write \
     -sMAXIMUM_MEMORY=$MAX_MEMORY \
     -sENVIRONMENT=web,worker -sMODULARIZE=1 -sEXPORT_NAME=createOoRexx \
     "-sINCOMING_MODULE_JS_API=$INCOMING" \
--   --pre-js "$SRC/wasm/web-pre.js" \
-+   --pre-js "$SRC/wasm/web-pre.js" --pre-js "$SRC/wasm/web-jdor.js" \
+-   --pre-js "$SRC/wasm/web-pre.js" --pre-js "$SRC/wasm/js-realm.js" --pre-js "$SRC/wasm/js-bridge.js" \
++   --pre-js "$SRC/wasm/web-pre.js" --pre-js "$SRC/wasm/web-jdor.js" --pre-js "$SRC/wasm/js-realm.js" --pre-js "$SRC/wasm/js-bridge.js" \
     --preload-file "$BUILD/bin/rexx.img@/rexx.img" \
     "${PRELOAD[@]}" ${EXTRA_LDFLAGS:-})
--cp "$SRC/wasm/web/ooRexx.js" "$SRC/wasm/web/ooRexx-worker.js" "$OUT/"
-+cp "$SRC/wasm/web/ooRexx.js" "$SRC/wasm/web/ooRexx-worker.js" "$SRC/wasm/web/polygon-clipping.umd.min.js" "$OUT/"
+-cp "$SRC/wasm/web/ooRexx.js" "$SRC/wasm/web/ooRexx-worker.js" "$SRC/wasm/js-realm.js" "$OUT/"
++cp "$SRC/wasm/web/ooRexx.js" "$SRC/wasm/web/ooRexx-worker.js" "$SRC/wasm/web/polygon-clipping.umd.min.js" \
++   "$SRC/wasm/js-realm.js" "$OUT/"
  ls -l "$OUT" | awk 'NR>1{print $5, $9}'
+diff --git a/wasm/extra-packages.cpp b/wasm/extra-packages.cpp
+index ebd946e..57c5181 100644
+--- a/wasm/extra-packages.cpp
++++ b/wasm/extra-packages.cpp
+@@ -40,23 +40,26 @@
+  * orx_wasm_extra_packages() in interpreter/package/PackageManager.cpp).
+  *
+  * Each package lives in its own file and is found through a weak symbol, so
+- * a build lists only what it links: the browser build and the Node
+- * command-line build have "js" (the JavaScript bridge, web-js.cpp).
++ * a build lists only what it links: the browser build has "jdor" (the
++ * drawing command handler, web-jdor.cpp) and "js" (the JavaScript bridge,
++ * web-js.cpp); the Node command-line build only "js".
+  */
+ 
+ #include <oorexxapi.h>
+ 
+ extern "C"
+ {
++RexxPackageEntry *orx_wasm_jdor_package(void) __attribute__((weak));
+ RexxPackageEntry *orx_wasm_js_package(void) __attribute__((weak));
+ 
+ const RexxLibraryPackage *orx_wasm_extra_packages(void)
+ {
+-    static RexxLibraryPackage packages[2];
++    static RexxLibraryPackage packages[3];
+     static bool ready = false;
+     if (!ready)
+     {
+         size_t n = 0;
++        if (orx_wasm_jdor_package != NULL) packages[n++] = { "jdor", orx_wasm_jdor_package() };
+         if (orx_wasm_js_package != NULL) packages[n++] = { "js", orx_wasm_js_package() };
+         packages[n] = { NULL, NULL };
+         ready = true;
+diff --git a/wasm/tests/__pycache__/web-api.cpython-313.pyc b/wasm/tests/__pycache__/web-api.cpython-313.pyc
+deleted file mode 100644
+index 253b78e36c3425c310a7e73e5b8a04312b948373..0000000000000000000000000000000000000000
+GIT binary patch
+literal 0
+HcmV?d00001
+
+literal 30028
+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
+
 diff --git a/wasm/tests/web-api.html b/wasm/tests/web-api.html
-index 1e3edd8..0c169f9 100644
+index 1903e9b..e5c8af1 100644
 --- a/wasm/tests/web-api.html
 +++ b/wasm/tests/web-api.html
 @@ -46,6 +46,7 @@
@@ -234,7 +529,7 @@ index 1e3edd8..0c169f9 100644
  // collected instead (out: console.log, err: console.error, one per line)
 +// jdor: JDOR windows {win: {title, visible, frames, probe: [r,g,b,a] at o.probe}}
  let rexx = null;
- window.rexxReady = OoRexx.load().then((r) => { rexx = r; return true; }, (e) => String(e));
+ window.rexxReady = OoRexx.load().then((r) => { rexx = r; window.rexxLib = r; return true; }, (e) => String(e));
  window.rexxRun = async (source, o = {}) => {
 @@ -54,6 +55,20 @@ window.rexxRun = async (source, o = {}) => {
    const mark = (t, kind) => { if (kind === 'trace') trace += t; else if (kind === 'error') errmsg += t; };
@@ -259,7 +554,7 @@ index 1e3edd8..0c169f9 100644
      console.log = (l) => { out += l + '\n'; };
 @@ -62,7 +77,7 @@ window.rexxRun = async (source, o = {}) => {
    const run = rexx.run({
-     args: ['prog.rex'].concat(o.args || []), files, stdin: o.stdin, prefixes: o.prefixes,
+     args: ['prog.rex'].concat(o.args || []), files, stdin: o.stdin, prefixes: o.prefixes, js: o.js,
      onOut: o.console ? undefined : (t, kind) => { out += t; mark(t, kind); },
 -    onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
 +    onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); }, onJdor,
@@ -277,7 +572,7 @@ index 1e3edd8..0c169f9 100644
  };
  </script>
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..48fc32b 100755
+index 548b1ab..4531a84 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -42,7 +42,7 @@ Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP
@@ -289,7 +584,7 @@ index 3940711..48fc32b 100755
  from playwright.sync_api import sync_playwright
  
  if len(sys.argv) != 2:
-@@ -136,6 +136,45 @@ CASES = [
+@@ -137,6 +137,45 @@ CASES = [
                         '::options trace r', {},
       lambda r: r["out"].count("  worker") == 12 and "total 4\n" in r["out"] and "*-*" in r["err"]
                 and r["err"] == r["trace"] and r["errmsg"] == ""),
@@ -332,15 +627,15 @@ index 3940711..48fc32b 100755
 +                 'shape u area a; areaAdd u b; shapeBounds u; say rc\nshape i area a; areaIntersect i b; shapeBounds i; say rc\n'
 +                 '::requires "jdor.cls"', {},
 +     lambda r: r["out"] == "0.0 0.0 15.0 10.0\n5.0 0.0 5.0 10.0\n"),
- ]
- 
- fails = 0; ran = 0
+   # .JSObject: JavaScript objects as Rexx objects (wasm/web-js.cpp, wasm/js-bridge.js, wasm/web/js.cls)
+   ("js not granted", 'say .js~Math~max(1, 2)\n::requires "js.cls"', {},
+      lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
 diff --git a/wasm/web-jdor.cpp b/wasm/web-jdor.cpp
 new file mode 100644
-index 0000000..37f6f14
+index 0000000..63dfc90
 --- /dev/null
 +++ b/wasm/web-jdor.cpp
-@@ -0,0 +1,431 @@
+@@ -0,0 +1,425 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -761,16 +1056,10 @@ index 0000000..37f6f14
 +    NULL
 +};
 +
-+static const RexxLibraryPackage extraPackages[] =
++// found by wasm/extra-packages.cpp
++extern "C" RexxPackageEntry *orx_wasm_jdor_package(void)
 +{
-+    { "jdor", &jdorPackage },
-+    { NULL, NULL }
-+};
-+
-+// the hook in interpreter/package/PackageManager.cpp
-+extern "C" const RexxLibraryPackage *orx_wasm_extra_packages(void)
-+{
-+    return extraPackages;
++    return &jdorPackage;
 +}
 diff --git a/wasm/web-jdor.js b/wasm/web-jdor.js
 new file mode 100644
@@ -3077,29 +3366,35 @@ index 0000000..8ef981a
 +  if n~startsWith("GET"), attrs~hasIndex(n~substr(4)) then return attrs[n~substr(4)]
 +  raise syntax 97.1 array(self, name)
 diff --git a/wasm/web/ooRexx-worker.js b/wasm/web/ooRexx-worker.js
-index c87af29..4bd75fb 100644
+index 71cd58a..2edbbe8 100644
 --- a/wasm/web/ooRexx-worker.js
 +++ b/wasm/web/ooRexx-worker.js
-@@ -41,12 +41,16 @@
+@@ -41,10 +41,13 @@
   * stops everything.  The page never blocks.
   *
   * page -> worker: {type:'run', scriptUrl, wasmModule, data, args, files, cwd,
-- *                  env, stdin}   (stdin: null = interactive, else Uint8Array
-- *                  followed by end of file)
-+ *                  env, stdin, screen}   (stdin: null = interactive, else
+- *                  env, stdin, js}   (stdin: null = interactive, else
+- *                  Uint8Array followed by end of file; js: the JavaScript
+- *                  realms granted to .JSObject, {worker, page})
++ *                  env, stdin, screen, js}   (stdin: null = interactive, else
 + *                  Uint8Array followed by end of file; screen: {width,
-+ *                  height}, what JDOR's winScreenSize answers)
++ *                  height}, what JDOR's winScreenSize answers; js: the
++ *                  JavaScript realms granted to .JSObject, {worker, page})
   *                 {type:'stdin', bytes}   {type:'eof'}
 + *                 {type:'jdor', event}   (the page moved or closed a JDOR
 + *                  window: {op:'moved', win, x, y} | {op:'closed', win})
+  *                 {type:'jsReply', id, bytes}   (the page realm's answer to a
+  *                  .JSObject request, see wasm/js-bridge.js)
+  *                 {type:'jsEvent', bytes}   (a .JSHandler's function was
+@@ -54,6 +57,7 @@
   * worker -> page: {type:'out'|'err', bytes, kind}   {type:'input', debug}
   *                 (kind: 'plain' | 'trace' | 'error'; debug: a read of
   *                 .debugInput, i.e. interactive trace)
 + *                 {type:'jdor', msg}   (JDOR windows, see wasm/web-jdor.js)
-  *                 {type:'exit', rc, files}   {type:'error', message}
-  */
- 'use strict';
-@@ -63,6 +67,7 @@ function feed(msg) {
+  *                 {type:'js', msg}   (a .JSObject request for the page realm:
+  *                  {type:'call', id, op, bytes} | {type:'release', ids}, or
+  *                  the answer to a jsCall: {type:'callReply', id, bytes})
+@@ -73,6 +77,7 @@ function feed(msg) {
  function finish(rc) {
    let files = {};
    try { if (M && M.orxFlush) M.orxFlush(); } catch (e) {}
@@ -3107,19 +3402,20 @@ index c87af29..4bd75fb 100644
    try { files = M.orxCollect(cwd); } catch (e) {}
    const transfer = Object.values(files).map((b) => b.buffer);
    post({ type: 'exit', rc, files }, transfer);
-@@ -71,6 +76,7 @@ function finish(rc) {
+@@ -81,6 +86,7 @@ function finish(rc) {
  self.onmessage = (ev) => {
    const msg = ev.data;
    if (msg.type === 'stdin' || msg.type === 'eof') { feed(msg); return; }
 +  if (msg.type === 'jdor') { if (M && M.jdorEvent) M.jdorEvent(msg.event); return; }
-   if (msg.type !== 'run' || M) return;
-   cwd = msg.cwd || '/';
-   importScripts(msg.scriptUrl);
-@@ -92,10 +98,12 @@ self.onmessage = (ev) => {
+   if (msg.type === 'jsReply') { if (M && M.jsPageReply) M.jsPageReply(msg.id, msg.bytes); return; }
+   if (msg.type === 'jsEvent') { if (M && M.jsEvent) M.jsEvent(msg.bytes); return; }
+   if (msg.type === 'jsCall') { if (M && M.jsCallQueued) M.jsCallQueued(msg.id, msg.bytes); return; }
+@@ -106,11 +112,13 @@ self.onmessage = (ev) => {
      orxOut: (b, kind) => post({ type: 'out', bytes: b, kind }, [b.buffer]),
      orxErr: (b, kind) => post({ type: 'err', bytes: b, kind }, [b.buffer]),
      orxStdinWanted: (debug) => post({ type: 'input', debug: !!debug }),
 +    orxJdor: (m, transfer) => post({ type: 'jdor', msg: m }, transfer),
+     orxJsPage: (m, transfer) => post({ type: 'js', msg: m }, transfer),
      print: (s) => post({ type: 'err', bytes: textBytes(s) }),
      printErr: (s) => post({ type: 'err', bytes: textBytes(s) }),
      orxReady: () => {
@@ -3129,10 +3425,10 @@ index c87af29..4bd75fb 100644
        if (msg.stdin) { M.orxStdinWrite(msg.stdin); M.orxStdinClose(); }
        for (const m of q) feed(m);
 diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
-index 73eb864..b2d1562 100644
+index e44ad21..e70e275 100644
 --- a/wasm/web/ooRexx.js
 +++ b/wasm/web/ooRexx.js
-@@ -84,6 +84,20 @@
+@@ -95,6 +95,20 @@
   *                  trace, input, debugInput} (a missing one: the default, ''
   *                  or null: none).  Default: on for a stream that goes to
   *                  the console, off for one the page receives (onOut, onErr)
@@ -3150,22 +3446,32 @@ index 73eb864..b2d1562 100644
 + *                  win, x, y}) and closes with run.jdorEvent({op:'closed', win}).
 + *   screen         {width, height} JDOR's winScreenSize (default: the
 + *                  window's inner size)
-  */
- (function (global) {
-   'use strict';
-@@ -183,6 +197,7 @@
-             if (prompts) out.prompt(m.debug ? prompts.debugInput : prompts.input);
+  *   js             the JavaScript realms the Rexx program may use as objects
+  *                  (js.cls: .js, .JSObject), each off by default:
+  *                    worker: true   the Web Worker that runs it (.js): fetch
+@@ -119,7 +133,7 @@
+  * start(opts) -> a Promise of a session, once the interpreter is ready.  It
+  * runs .js~session (js.cls), which takes events for good, so the session's
+  * calls run one at a time, in order.  A session has what run() returns (done,
+- * write, close, stop, running) and
++ * write, close, stop, running, jdorEvent) and
+  *   rexx                       the .JSSession (a RexxProxy)
+  *   eval(source, ...args)      source run as a routine (USE ARG, RETURN): a
+  *                              Promise of its result (undefined when none)
+@@ -327,6 +341,7 @@
              if (opts.onInput) opts.onInput({ debug: !!m.debug });
              break;
+           case 'js': jsRequest(m.msg); break;
 +          case 'jdor': if (opts.onJdor) opts.onJdor(m.msg); else if (m.msg.bitmap) m.msg.bitmap.close(); break;
            case 'exit': end({ rc: m.rc, files: m.files, stopped: false }); break;
            case 'error': end({ rc: null, files: {}, stopped: false, error: m.message }); break;
          }
-@@ -192,11 +207,13 @@
+@@ -336,12 +351,14 @@
          type: 'run', scriptUrl: this.base + 'rexx.js', wasmModule: this.wasmModule,
          data: this.data.slice(0), args: opts.args || [], files, cwd, env: opts.env || {},
          stdin: opts.stdin === undefined || opts.stdin === null ? null : bytes(opts.stdin),
 +        screen: opts.screen || { width: global.innerWidth || 1280, height: global.innerHeight || 800 },
+         js: { worker: !!(opts.js && opts.js.worker), page: !!(opts.js && opts.js.page) },
        });
        return {
          done,

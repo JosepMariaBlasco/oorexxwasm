@@ -4,7 +4,7 @@
 written in Rexx), 0010 (ADDRESS FETCH) and 0011 (ADDRESS DOM) of the current
 series, none of which is part of the RFE. Context: `jsobject-design.md`.
 Model: Rony G. Flatscher's JDOR (an ADDRESS environment over Java2D, part of
-BSF4ooRexx; its web version is patch 0007).*
+BSF4ooRexx; its web version is patch 0008).*
 
 ## Why ADDRESS when there is `.JSObject`
 
@@ -17,7 +17,7 @@ interactive page.
 
 ## Three layers
 
-1. `.JSObject` (patch 0008), the base.
+1. `.JSObject` (patch 0007), the base.
 2. Command handlers written in Rexx (patch 0009), a general mechanism,
    useful far beyond JavaScript.
 3. ADDRESS FETCH and ADDRESS DOM (patches 0010 and 0011), written in Rexx

@@ -1,7 +1,8 @@
 # `.JSObject`: a JavaScript bridge for ooRexx/WASM
 
-*Written 06/10/2026–08/10/2026; describes patch 0008 (`wasm-js-objects`) of
-the current series. Model: OLEObject on Windows.*
+*Written 06/10/2026–08/10/2026; describes patch 0007 (`wasm-js-objects`) of
+the current series (0008 until 12/10/2026, when it moved before JDOR and
+became part of the RFE). Model: OLEObject on Windows.*
 
 The first part of this note is the design as proposed; the sections on the
 phases record what was built and where the implementation departed from the
@@ -47,7 +48,7 @@ FETCH are thin layers over it; see `dom-fetch-design.md`).
    Every JS object lives in exactly one realm; a reference carries its realm.
 2. **The interpreter thread may block; the realm threads never do.** This is
    what makes a synchronous Rexx API possible. The mechanism already exists
-   (JDOR, patch 0007): `emscripten_proxy_sync_with_ctx` to the runtime
+   (JDOR, then patch 0007): `emscripten_proxy_sync_with_ctx` to the runtime
    thread; the JS side may finish the call later with
    `emscripten_proxy_finish(ctx)`. For the page realm the worker forwards
    with `postMessage` and finishes the ctx when the page answers.
@@ -198,7 +199,7 @@ four calls today). Measurements are in the phase sections.
 
 ## Where it lives
 
-Patch 0008 (`wasm-js-objects`), outside the RFE like 0007:
+Patch 0007 (`wasm-js-objects`; written as 0008, outside the RFE, on top of JDOR):
 `wasm/web-js.cpp` (native package "js": the handler-free equivalent of
 web-jdor.cpp), `wasm/js-realm.js` (the realm side: handle tables, name
 resolution, marshalling), `wasm/js-bridge.js` (the dispatcher on the main
@@ -271,7 +272,7 @@ handle ids stay in the hundreds, so release by UNINIT works); 8 Rexx threads
 awaiting at once. Heap views: Emscripten 6 code uses `(growMemViews(),
 HEAP32)`; the bridge calls `growMemViews()` before touching the heap. Tested
 without it after growing the memory to 160 MB: still fine (the proxied-call
-path refreshes the views), so JDOR's direct `HEAPU8` use in patch 0007 is not
+path refreshes the views), so JDOR's direct `HEAPU8` use (then patch 0007) is not
 a proven bug, at most a hardening for the asynchronous finish.
 
 ## Phase 2: the page realm

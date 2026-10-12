@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
 Date: Sun, 4 Oct 2026 12:06:15 +0200
-Subject: [PATCH 3/6] WebAssembly port, Node: RexxAPI shared between processes
+Subject: [PATCH 3/7] WebAssembly port, Node: RexxAPI shared between processes
 
 Under Node the API server runs as a daemon (rexx.js --orx-wasm-rxapi,
 started on first use like rxapi, outlives the session) reached over a Unix
