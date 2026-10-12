@@ -1093,12 +1093,12 @@ index 0000000..92f276a
 +  address t "RETURN thread ok"
 +  return rc
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 2f5eb61..f8d87cb 100755
+index 942c455..3bac5ca 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -299,6 +299,10 @@ check "JavaScript arrays from 1, Array methods, box and unbox" '^get: a c 1 3$'
+@@ -303,6 +303,10 @@ check "JavaScript arrays from 1, Array methods, box and unbox" '^get: a c 1 3$'
  check "JavaScript events: HTTP server in Rexx, threads, release, exit" '^rexx answered GET /q\?i=1$' \
-   '^rexx answered GET /q\?i=3$' '^taken=15 after release: The NIL object$' -- "$X jsev.rex"
+   '^rexx answered GET /q\?i=3$' '^sorted=1,2,3$' '^taken=15 after release: The NIL object$' -- "$X jsev.rex"
  
 +# --- command environments written in Rexx (extensions/cmdhandler, portable test)
 +check "command handlers in Rexx (cmdhandler.cls)" '^[0-9]+ passed, 0 failed$' '!^FAIL ' -- \
@@ -1108,7 +1108,7 @@ index 2f5eb61..f8d87cb 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index f07c770..8789644 100755
+index b572f5f..a558d21 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -93,6 +93,9 @@ CASES = [

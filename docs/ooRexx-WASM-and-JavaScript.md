@@ -60,7 +60,23 @@ A JavaScript exception is SYNTAX 98.900, "JavaScript error: TypeError: …", wit
 
 ## Events
 
-JavaScript cannot call into Rexx while Rexx is running, so a callback is a `.JSHandler`, made with `.js~handler(object, message [, options])`. JavaScript gets it as a function that only queues the call and returns at once; a Rexx thread takes the calls when it is ready:
+A callback is a `.JSHandler`, made with `.js~handler(object, message [, options])`. JavaScript gets it as a function that sends the message to the object with the call's arguments.
+
+In the worker's realm and under Node a handler is synchronous, as `.net~handler` in ooRexx/.NET: the method runs at once. When JavaScript calls it while a Rexx thread is waiting for JavaScript, as `sort`, `forEach`, `map` or `dispatchEvent` do, it runs on that thread, and JavaScript gets its result:
+
+```rexx
+a = .js~newArray(.js~num(3), .js~num(1), .js~num(2))
+a~sort(.js~handler(self, "COMPARE"))            -- COMPARE answers each comparison
+say a~join(",")                                 -- 1,2,3
+
+::method compare
+  use arg x, y
+  return .js~num(x - y)
+```
+
+A condition in the method is thrown to JavaScript as a `RexxError`. When JavaScript calls the handler on its own, as a timer, a Node server or a settling Promise do, the method runs at once on a thread of its own, one call at a time, and JavaScript does not wait for it: see [Waiting](#waiting).
+
+In the page every handler is queued, and so is a handler with option `queued` anywhere. JavaScript gets a function that only queues the call and returns at once; a Rexx thread takes the calls when it is ready:
 
 ```rexx
 btn~addEventListener("click", .js~handler(self, "CLICKED", "preventDefault"))
@@ -69,7 +85,7 @@ btn~addEventListener("click", .js~handler(self, "CLICKED", "preventDefault"))
 
 `.js~eventLoop` sends the message to the object, with the call's arguments, for each call until `.js~stopEventLoop`, from a handler or another thread. `.js~nextEvent([seconds])` takes one event instead (a `.JSEvent`, which `~dispatch` sends; `.nil` when the time is over), so a program can run its own loop. Several threads may wait; each event goes to one.
 
-Because the function returns before Rexx sees the call, it cannot answer anything (no sort comparators), and by then the browser has finished dispatching the event (`event~currentTarget` is `.nil`). What must happen during the dispatch goes in the options: `preventDefault`, `stopPropagation`, `stopImmediatePropagation`. Option `latest` keeps only the newest event of the handler waiting, for mousemove or scroll; option `max n` keeps at most n, dropping the oldest.
+Because a queued handler's function returns before Rexx sees the call, it cannot answer anything, and by then the browser has finished dispatching the event (`event~currentTarget` is `.nil`). What must happen during the dispatch goes in the options, for any handler: `preventDefault`, `stopPropagation`, `stopImmediatePropagation`. Option `latest` keeps only the newest event of the handler waiting, for mousemove or scroll; option `max n` keeps at most n, dropping the oldest. Both imply `queued`.
 
 A handler stays alive from its first trip to JavaScript until `handler~release` or the end of the run.
 
@@ -87,7 +103,11 @@ The other way round is where realms differ, because for JavaScript to call Rexx 
 
 What the page *can* do is call Rexx without waiting: send the call, go on, and receive the answer later. In JavaScript that answer-to-come is a Promise. A Promise is enough wherever JavaScript accepts one (`await` in an `async` function, `then`), because the thread is free until the answer arrives. It is not enough where JavaScript needs a plain value at once, before the function it called returns: a comparator for `sort`, a callback for `filter` or `map`, a getter, an event listener that must decide during the dispatch whether to call `preventDefault`. In those places the page cannot use Rexx's answer, whatever the bridge does.
 
-This is why a handler in the page is always queued, and why the browser has finished dispatching an event by the time Rexx sees it. What can be done:
+This is why a handler in the page is always queued, and why the browser has finished dispatching an event by the time Rexx sees it.
+
+In the worker's realm and under Node, JavaScript does wait for a synchronous handler when a Rexx thread is waiting for JavaScript (a comparator for `sort`): that thread runs the method, and meanwhile it cannot wait for JavaScript in turn, since JavaScript is waiting for it. `~await` and the page are errors there. When JavaScript calls a handler on its own (a timer, a Node server), it does not wait: the realm's thread must stay free, because what finishes later (sockets, the page, the RexxAPI daemon under Node) needs it. So the method runs on a thread of its own, may wait for JavaScript, and JavaScript gets `undefined`. A condition there, or one an event listener does not pass on, is written on the standard error.
+
+In the page, what can be done:
 
 - **Say it in advance.** What must happen during the dispatch, and is always the same, goes in the handler's options: `.js~handler(self, "SUBMIT", "preventDefault")`.
 - **Write the part that cannot wait in JavaScript, from Rexx.** `Function` makes a JavaScript function in any realm, and it runs at once, without Rexx:
@@ -104,7 +124,7 @@ This is why a handler in the page is always queued, and why the browser has fini
 - **Do the work in Rexx, or in the worker's realm.** Bring the data over, compute there, and hand the page the result: a sorted array instead of a comparator.
 - **Let JavaScript take a Promise** where it can: code of one's own written with `async`/`await` waits for Rexx without blocking the page.
 
-A queued handler given where JavaScript needs a value at once does not fail: JavaScript receives `undefined`, and Rexx receives the calls later, as events. `.js~newArray(3, 1, 2)~sort(.js~handler(o, "COMPARE"))` leaves the array as it was, with three calls queued.
+A queued handler given where JavaScript needs a value at once does not fail: JavaScript receives `undefined`, and Rexx receives the calls later, as events. `.js~page~Array~of(3, 1, 2)~sort(.js~handler(o, "COMPARE"))` leaves the array as it was, with three calls queued; in the worker's realm the same `sort` works.
 
 ## Pitfalls
 
@@ -129,7 +149,7 @@ The design follows Rony Flatscher's BSF4ooRexx, moved from Java to JavaScript: `
 
 1. **Names.** Case-insensitive resolution makes `doc~getElementById` work as written, at the price of the rare wrong pick shown above. Would you rather have exact names only?
 2. **Values.** Rexx strings always go as strings, and a number is forced with `.js~num`. Would you rather have numbers converted automatically, at the price of "007" becoming 7?
-3. **Events.** JavaScript's callbacks become queued calls, taken by `.js~eventLoop` or `.js~nextEvent`. Does this model suit you, or would you expect another?
+3. **Events.** Handlers are synchronous where JavaScript can wait (the worker, Node), as in ooRexx/.NET, and queued in the page, taken by `.js~eventLoop` or `.js~nextEvent`. Does this model suit you, or would you expect another?
 
 Replies on this list are very welcome.
 
@@ -144,3 +164,4 @@ Replies on this list are very welcome.
 | What the implementation guarantees, stated | Guarantees |
 | `~at(i)` and `~put(v, i)` are `o[i]` and `o[i] = v`, as in Rexx's collections (JavaScript's `at` is `o~invoke("at", i)`) | Messages, Pitfalls |
 | Why JavaScript cannot wait for Rexx in the page, and what to do instead | Waiting |
+| Handlers are synchronous in the worker's realm and under Node, as `.net~handler` (a comparator for `sort` works); option `queued` (implied by `latest` and `max`), and the page, keep them queued; a condition is a `RexxError` | Events, Waiting |

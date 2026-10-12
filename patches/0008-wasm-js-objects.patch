@@ -13,7 +13,8 @@ in the browser build and in the Node command-line build:
     fs = .js~require("node:fs")                  -- Node: require, npm
     doc = .js~page~document                      -- browser: the page's DOM
     p = doc~createElement("p"); p~textContent = "Hola"; doc~body~appendChild(p)
-    btn~addEventListener("click", .js~handler(obj, "CLICKED"))
+    a~sort(.js~handler(obj, "COMPARE"))          -- a Rexx comparator (synchronous)
+    btn~addEventListener("click", .js~handler(obj, "CLICKED"))   -- page: queued
     .js~eventLoop                                -- events, until .js~stopEventLoop
     ::requires "js.cls"
 
@@ -67,20 +68,35 @@ copied as arrays and plain objects.
   power there (in the worker fetch with the site's cookies, IndexedDB,
   eval; in the page the DOM).  Node: always on; require() resolves from the
   current directory.
-- Events: JavaScript cannot call into the interpreter, so .js~handler(obj,
-  msg [, options]) is a .JSHandler that becomes, in whatever realm it is
-  passed to, a function (one per handler and realm: removeEventListener
-  works) that queues the call (js_event; from the page by postMessage) and
-  returns undefined at once.  .js~nextEvent([seconds]) takes the next one
-  (a .JSEvent; ~dispatch sends msg to obj with the call's arguments),
-  .js~eventLoop dispatches until .js~stopEventLoop; each event goes to one
-  waiting thread.  Options preventDefault, stopPropagation,
-  stopImmediatePropagation act during the browser's dispatch; option
-  latest keeps at most one event of the handler waiting, the newest, and
-  max n at most n, dropping the oldest.  A handler is kept from its first
-  trip to JavaScript until ~release (its waiting events are dropped) or the
-  end of the run; in the browser its functions do nothing after the run.  Under Node
-  the program's end ends the process (Emscripten only sets exitCode, so a
+- Handlers: .js~handler(obj, msg [, options]) is a .JSHandler that becomes,
+  in whatever realm it is passed to, a function (one per handler and realm:
+  removeEventListener works) that sends msg to obj with the call's
+  arguments.  In the worker's realm and under Node it is synchronous, as
+  .net~handler: called while a Rexx thread waits for JavaScript (sort,
+  forEach, map, dispatchEvent) the method runs on that thread and
+  JavaScript gets its result (a condition is thrown as a RexxError), and
+  that thread cannot wait for JavaScript meanwhile (~await, the page:
+  errors); called by JavaScript on its own (a timer, a Node server) it runs
+  on a server thread attached to the interpreter for the call, one at a
+  time, and JavaScript does not wait (it gets undefined): the realm's
+  thread must keep its event loop for what finishes later (sockets, the
+  RexxAPI daemon, the page).  Requests reach the main runtime thread
+  through the bridge's own queue, taken in a microtask (Emscripten's
+  proxying queue is not reentrant), so that while it waits for a handler it
+  can take both.  With option queued (implied by latest and max), and
+  always in the page, whose thread cannot wait, the function queues the
+  call (js_event; from the page by postMessage) and returns undefined at
+  once.  .js~nextEvent([seconds]) takes the next one (a .JSEvent; ~dispatch
+  sends msg to obj with the call's arguments), .js~eventLoop dispatches
+  until .js~stopEventLoop; each event goes to one waiting thread.  Options
+  preventDefault, stopPropagation, stopImmediatePropagation act during the
+  browser's dispatch; option latest keeps at most one event of the handler
+  waiting, the newest, and max n at most n, dropping the oldest.  A
+  RexxError nobody catches (in an event listener) is written on the
+  standard error.  A handler is kept from its first trip to JavaScript
+  until ~release (its waiting events are dropped) or the end of the run; in
+  the browser its functions do nothing after the run.  Under Node the
+  program's end ends the process (Emscripten only sets exitCode, so a
   listening server kept Node alive).  .JSObject's methods are unguarded (a
   thread waiting in .js~eventLoop must not hold .js).
 - wasm/extra-packages.cpp: orx_wasm_extra_packages() now lists the
@@ -88,25 +104,26 @@ copied as arrays and plain objects.
   provides orx_wasm_jdor_package().
 - Tests: wasm/tests/web-api.py (11 cases, 5 of them the page realm),
   qualify-node-cli.sh (require of an npm module, import, await, errors; an
-  HTTP server answered from Rexx, events taken by several threads;
+  HTTP server answered from Rexx, a Rexx comparator, events taken by
+  several threads;
   iteration, options latest and max, release).  Documented in wasm/README.md.
 ---
  interpreter/package/PackageManager.cpp |   6 +-
- wasm/README.md                         | 104 ++++
+ wasm/README.md                         | 120 +++
  wasm/build-node.sh                     |  17 +-
  wasm/build-web.sh                      |  18 +-
- wasm/extra-packages.cpp                |  69 +++
- wasm/js-bridge.js                      | 166 ++++++
- wasm/js-realm.js                       | 457 ++++++++++++++++
- wasm/tests/qualify-node-cli.sh         |  99 ++++
+ wasm/extra-packages.cpp                |  69 ++
+ wasm/js-bridge.js                      | 214 ++++++
+ wasm/js-realm.js                       | 470 ++++++++++++
+ wasm/tests/qualify-node-cli.sh         | 103 +++
  wasm/tests/web-api.html                |   2 +-
- wasm/tests/web-api.py                  |  66 +++
+ wasm/tests/web-api.py                  |  85 +++
  wasm/web-jdor.cpp                      |  12 +-
- wasm/web-js.cpp                        | 709 +++++++++++++++++++++++++
- wasm/web/js.cls                        | 417 +++++++++++++++
+ wasm/web-js.cpp                        | 979 +++++++++++++++++++++++++
+ wasm/web/js.cls                        | 433 +++++++++++
  wasm/web/ooRexx-worker.js              |  15 +-
  wasm/web/ooRexx.js                     |  52 ++
- 15 files changed, 2186 insertions(+), 23 deletions(-)
+ 15 files changed, 2572 insertions(+), 23 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -131,10 +148,10 @@ index 5dbab4a..e949832 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index 2508784..5e604fa 100644
+index 2508784..d05de25 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -287,6 +287,108 @@ from the test suite's directory:
+@@ -287,6 +287,124 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -206,26 +223,38 @@ index 2508784..5e604fa 100644
 +  page's own scripts can.  Grant it to code you trust as you trust your own
 +  scripts (the playground does: users run their own code).  Under Node it is
 +  always on.
-+* Events: JavaScript cannot call into the interpreter, so a callback is a
-+  handler whose calls are queued and taken by a Rexx thread:
-+  `btn~addEventListener("click", .js~handler(obj, "CLICKED"))`, then
-+  `.js~eventLoop` (sends `CLICKED` to `obj` with the call's arguments, until
-+  `.js~stopEventLoop`) or `ev = .js~nextEvent([seconds])` + `ev~dispatch`.
-+  The handler's function (one per handler and realm, so
-+  `removeEventListener` works) returns undefined at once: no answers (no
-+  sort comparators), and the browser has finished the dispatch by the time
-+  Rexx sees it (`event~currentTarget` is .nil, `event~target` is fine), so
-+  what must happen during it is an option: `.js~handler(obj, msg,
-+  "preventDefault stopPropagation stopImmediatePropagation")`; option
-+  `latest` keeps at most one event of the handler waiting, the newest
-+  (mousemove, scroll, resize), and `max n` at most n, dropping the oldest
-+  (`max 0` is an error; given both, `latest` wins).  Each event
-+  goes to one waiting thread; an error in a handler ends `eventLoop` as any
-+  error.  A handler stays alive from its first trip to JavaScript until
-+  `handler~release` (its events still waiting are dropped) or the end of
-+  the run; in the browser its functions do
-+  nothing once the run is over.  Under Node the program's end is the
-+  process's end, even with a server listening or a timer pending.
++* Handlers: `.js~handler(obj, "MSG" [, options])` is a function for
++  JavaScript (one per handler and realm, so `removeEventListener` works)
++  that sends `MSG` to `obj` with the call's arguments.  In the worker's realm
++  and under Node it is synchronous, as `.net~handler`: called while a Rexx
++  thread waits for JavaScript (`a~sort(.js~handler(self, "COMPARE"))`,
++  `forEach`, `map`, `dispatchEvent`), the method runs on that thread and
++  JavaScript gets its result (a condition is thrown as a `RexxError`);
++  meanwhile that thread cannot wait for JavaScript (`~await`, the page:
++  errors).  Called by JavaScript on its own (a timer, a Node server, a
++  Promise settling), the method runs at once on a thread of its own (one
++  call at a time, attached to the interpreter for the call), may wait for
++  JavaScript, and JavaScript gets undefined: the realm's thread cannot wait
++  for it, since what finishes later (sockets, the RexxAPI daemon under Node,
++  the page) needs that thread's event loop.  A condition JavaScript does not
++  pass on (there, or in an event listener) is written on the standard error.
++* Queued handlers: with option `queued`, and always in the page (whose
++  thread may not block), the function queues the call and returns undefined
++  at once, and a Rexx thread takes the calls: `.js~eventLoop` (sends each
++  until `.js~stopEventLoop`) or `ev = .js~nextEvent([seconds])` +
++  `ev~dispatch`.  The browser has finished the dispatch by the time Rexx
++  sees it (`event~currentTarget` is .nil, `event~target` is fine), so what
++  must happen during it is an option: `.js~handler(obj, msg,
++  "preventDefault stopPropagation stopImmediatePropagation")` (for
++  synchronous handlers too); option `latest` keeps at most one event of the
++  handler waiting, the newest (mousemove, scroll, resize), and `max n` at
++  most n, dropping the oldest (`max 0` is an error; given both, `latest`
++  wins); both imply `queued`.  Each event goes to one waiting thread; an
++  error in a handler ends `eventLoop` as any error.  A handler stays alive
++  from its first trip to JavaScript until `handler~release` (its events
++  still waiting are dropped) or the end of the run; in the browser its
++  functions do nothing once the run is over.  Under Node the program's end
++  is the process's end, even with a server listening or a timer pending.
 +* Implementation: `web-js.cpp` is the package `js` (`.JSObject`'s methods
 +  are native, so errors point at the caller's line); each operation is
 +  passed synchronously to the main runtime thread, where `js-bridge.js` (a
@@ -236,14 +265,18 @@ index 2508784..5e604fa 100644
 +  page; `js-bridge.js` dispatches: requests for the page realm go to the page
 +  by `postMessage` (`ooRexx.js` loads `js-realm.js` there on first use and
 +  answers), and the interpreter's call is finished when the answer comes
-+  back (about 0.3 ms a round trip in Chromium).  A handler's function hands
-+  its event to `js_event` (from the page by `postMessage`), which queues it
-+  for `.js~nextEvent`.
++  back (about 0.3 ms a round trip in Chromium).  Requests reach the main
++  runtime thread through a queue of the bridge, taken in a microtask, not
++  through Emscripten's proxying queue, which is not reentrant: while that
++  thread waits for a synchronous handler it keeps taking both (the pthreads'
++  system calls go through Emscripten's).  A synchronous handler's call costs
++  about 0.1 ms; a queued handler's function hands its event to `js_event`
++  (from the page by `postMessage`), which queues it for `.js~nextEvent`.
 +
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -296,6 +398,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -296,6 +414,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127);
    ADDRESS JDOR draws (see above).
@@ -428,10 +461,10 @@ index 0000000..57c5181
 +}
 diff --git a/wasm/js-bridge.js b/wasm/js-bridge.js
 new file mode 100644
-index 0000000..31f8729
+index 0000000..9fa9f47
 --- /dev/null
 +++ b/wasm/js-bridge.js
-@@ -0,0 +1,166 @@
+@@ -0,0 +1,214 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -489,9 +522,16 @@ index 0000000..31f8729
 + * whose reference carries its realm; REQUIRE, IMPORT and VALUE are local.
 + * Released handles (X records) go to their realm.
 + *
-+ * Events: the handlers' functions of the local realm, and those of the page
-+ * (forwarded by ooRexx-worker.js as Module.jsEvent(bytes)), hand their event
-+ * to the interpreter's queue (js_event in web-js.cpp).
++ * Events: the queued handlers' functions of the local realm, and those of the
++ * page (forwarded by ooRexx-worker.js as Module.jsEvent(bytes)), hand their
++ * event to the interpreter's queue (js_event in web-js.cpp).  A synchronous
++ * handler of the local realm runs its Rexx method through js_sync_call:
++ * called while a request of a Rexx thread is being done (serving), on that
++ * thread, and this thread waits for the result (the only place where
++ * JavaScript waits for Rexx), doing the requests that come meanwhile; called
++ * on its own, on the server thread, without waiting.  A Rexx thread that
++ * JavaScript waits for cannot wait for JavaScript: its requests that would
++ * finish later (a Promise, the page) are errors.
 + */
 +(function () {
 +  'use strict';
@@ -517,7 +557,35 @@ index 0000000..31f8729
 +    const chained = Module['onExit'];
 +    Module['onExit'] = (rc) => { if (chained) chained(rc); process.exit(rc); };
 +  }
-+  const local = orxJsRealm(LOCAL, emit);
++  // the requests being done now, innermost last (a synchronous handler called
++  // meanwhile runs on the thread of the last one)
++  const serving = [];
++  function syncCall(bytes) {
++    const req = serving.length ? serving[serving.length - 1] : 0;
++    const p = _js_alloc(bytes.length + 1), lenp = _js_alloc(4);
++    views();
++    HEAPU8.set(bytes, p);
++    const out = _js_sync_call(req, p, bytes.length, lenp);
++    views();
++    const reply = HEAPU8.slice(out, out + HEAP32[lenp >> 2]);
++    _js_free(p); _js_free(lenp); _js_free(out);
++    return reply;
++  }
++  const local = orxJsRealm(LOCAL, emit, syncCall);
++
++  // a RexxError nobody catches (a synchronous handler's condition thrown in an
++  // event listener, which JavaScript reports instead of passing on): written
++  // on the standard error, as the server thread does, rather than ending the
++  // process (Node) or the run (the page sees a worker's uncaught errors)
++  const uncaught = (e) => e && e.name === 'RexxError' &&
++    (err('Error in a JavaScript handler: ' + e.message), true);
++  if (isNode) {
++    process.on('uncaughtException', (e) => {
++      if (!uncaught(e)) { console.error(e); process.exit(1); }
++    });
++  } else {
++    self.addEventListener('error', (ev) => { if (uncaught(ev.error)) ev.preventDefault(); });
++  }
 +
 +  function granted(realm) {
 +    if (isNode) return realm === 'node';
@@ -553,8 +621,17 @@ index 0000000..31f8729
 +    return true;
 +  }
 +
-+  // called through wasm/web-js.cpp's proxied call (see the JsRequest layout there)
-+  Module['jsCall'] = function (ctx, req) {
++  // the requests queued by wasm/web-js.cpp (jsCall), in a microtask or while
++  // waiting for a synchronous handler
++  Module['jsDrain'] = function () {
++    let req;
++    while ((req = _js_next_request())) Module['jsCall'](req);
++  };
++
++  const WAITED = 'Error: JavaScript is waiting for this Rexx thread (a synchronous handler), ' +
++    'so it cannot wait for ';
++  // one request (see the JsRequest layout in wasm/web-js.cpp)
++  Module['jsCall'] = function (req) {
 +    const finish = (bytes) => {
 +      const p = _js_alloc(bytes.length + 1);
 +      views();
@@ -562,7 +639,7 @@ index 0000000..31f8729
 +      HEAPU8[p + bytes.length] = 0;
 +      HEAP32[(req + 12) >> 2] = p;
 +      HEAP32[(req + 16) >> 2] = bytes.length;
-+      _js_finish(ctx);
++      _js_done(req);
 +    };
 +    let op, rest, realm;
 +    try {
@@ -584,12 +661,16 @@ index 0000000..31f8729
 +
 +    if (!granted(realm)) { finish(local.errorText('Error: ' + refusal(realm))); return; }
 +    if (realm === LOCAL) {
-+      const out = local.handle(op, rest);
++      let out;
++      serving.push(req);
++      try { out = local.handle(op, rest); } finally { serving.pop(); }
 +      if (out instanceof Uint8Array) finish(out);
++      else if (_js_request_awaited(req)) finish(local.errorText(WAITED + 'a Promise now'));
 +      else out.then(finish);
 +      return;
 +    }
 +    // the page
++    if (_js_request_awaited(req)) { finish(local.errorText(WAITED + 'the page')); return; }
 +    const id = ++pageSeq;
 +    pageWaiting.set(id, finish);
 +    if (!toPage({ type: 'call', id, op, bytes: rest }, [rest.buffer])) {
@@ -600,10 +681,10 @@ index 0000000..31f8729
 +})();
 diff --git a/wasm/js-realm.js b/wasm/js-realm.js
 new file mode 100644
-index 0000000..7982786
+index 0000000..3e8e40e
 --- /dev/null
 +++ b/wasm/js-realm.js
-@@ -0,0 +1,457 @@
+@@ -0,0 +1,470 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -663,9 +744,14 @@ index 0000000..7982786
 + *  - handlers: a .JSHandler (record H) becomes a function of this realm, the
 + *    same one each time (so removeEventListener works); called, it does what
 + *    its options say to its first argument (preventDefault, stopPropagation,
-+ *    stopImmediatePropagation), passes emit(bytes) the event (H "id", or
-+ *    "id<tab>L" for option latest, + A arguments, for js_event in web-js.cpp)
-+ *    and returns undefined at once;
++ *    stopImmediatePropagation).  Synchronous (no option queued, and a realm
++ *    given syncCall: the Web Worker, Node), it passes syncCall(bytes) the call
++ *    (H "id" + A arguments) and returns what it answers: the Rexx method's
++ *    result (or a RexxError thrown) when a Rexx thread was waiting for
++ *    JavaScript, else undefined (the method runs on a thread of its own);
++ *    queued (option queued, or the page), it passes emit(bytes) the
++ *    event (H "id", or "id<tab>L" for option latest, + A arguments, for
++ *    js_event in web-js.cpp) and returns undefined at once;
 + *  - values, records and ops: see web-js.cpp.
 + */
 +var orxJsRealm = (function () {
@@ -673,7 +759,11 @@ index 0000000..7982786
 +  const isNode = typeof process !== 'undefined' && !!(process.versions && process.versions.node);
 +
 +  // a realm: REALM is its name (worker, node, page)
-+  return function makeRealm(REALM, emit) {
++  // a Rexx condition in a synchronous handler
++  class RexxError extends Error {
++    constructor(message) { super(message); this.name = 'RexxError'; }
++  }
++  return function makeRealm(REALM, emit, syncCall) {
 +  const enc = new TextEncoder(), dec = new TextDecoder('utf-8');
 +
 +  // ---- handles ------------------------------------------------------------
@@ -818,8 +908,9 @@ index 0000000..7982786
 +    const words = options.split(/\s+/).filter(Boolean);
 +    const opt = new Set(words);
 +    const max = opt.has('max') ? words[words.indexOf('max') + 1] : '';
++    const sync = !opt.has('queued') && typeof syncCall === 'function';
 +    f = function (...args) {
-+      if (closed || typeof emit !== 'function') return undefined;
++      if (closed || (!sync && typeof emit !== 'function')) return undefined;
 +      const e = args[0];
 +      if (opt.size && e !== null && typeof e === 'object') {
 +        try {
@@ -829,11 +920,14 @@ index 0000000..7982786
 +        } catch (x) { /* not an Event after all */ }
 +      }
 +      const w = new Writer();
-+      w.rec('H', opt.has('latest') ? id + '\tL' : max ? id + '\tM' + max : id);
++      w.rec('H', sync ? id : opt.has('latest') ? id + '\tL' : max ? id + '\tM' + max : id);
 +      w.rec('A', String(args.length));
 +      for (const a of args) { try { put(w, a); } catch (x) { w.rec('N', ''); } }
-+      emit(w.bytes());
-+      return undefined;
++      if (!sync) { emit(w.bytes()); return undefined; }
++      const r = new Reader(syncCall(w.bytes()));
++      const first = r.rec();
++      if (first.tag === 'R') return val(r);
++      throw new RexxError(dec.decode(first.d));
 +    };
 +    handlerFns.set(id, f);
 +    return f;
@@ -1062,10 +1156,10 @@ index 0000000..7982786
 +  };
 +})();
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..2f5eb61 100755
+index e1c1cd8..942c455 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -200,6 +200,105 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
+@@ -200,6 +200,109 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
  check "name resolution (host resolver)" '^localhost=1 127\.0\.0\.1$' '^invalid=0$' '^reverse=1 ' "^hostname=$(hostname)\$" '^hostid=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' -- \
    "$X dns.rex"
  
@@ -1088,19 +1182,20 @@ index e1c1cd8..2f5eb61 100755
 +check "JavaScript objects: require (npm), import, await, errors" '^a JSObject \(global, node\) 7 ' '^hi rexx$' '^count=2$' \
 +  '^twice=42$' '^exists=1$' '^await=later$' '^error=98\.900 SyntaxError$' -- "$X js.rex"
 +
-+# events: an HTTP server answered from Rexx (event loop on its own thread),
-+# several threads taking events, release; the program's end ends the process
-+# although the server still listens
++# handlers: an HTTP server answered from Rexx (a synchronous handler, run on
++# its own thread as each request comes), a comparator for sort (run on the
++# thread that sorts); queued: several threads taking events, release; the
++# program's end ends the process although the server still listens
 +cat > "$T/jsev.rex" <<'EOF'
 +srv = .js~require("node:http")~createServer(.js~handler(.web~new, "request"))
 +srv~listen(0, "127.0.0.1")
 +do while srv~address == .nil; call SysSleep 0.05; end
-+.js~start("eventLoop")
 +do i = 1 to 3
 +  say .js~fetch("http://127.0.0.1:"srv~address~port"/q?i="i)~await~text~await
 +end
-+.js~stopEventLoop
-+h = .js~handler(.nil, "string"); t = .js~setInterval(h, 5)
++a = .js~newArray(.js~num(3), .js~num(1), .js~num(2)); a~sort(.js~handler(.web~new, "compare"))
++say "sorted="a~join(",")
++h = .js~handler(.nil, "string", "queued"); t = .js~setInterval(h, 5)
 +w = .array~new; do i = 1 to 3; w[i] = .taker~new~start("take"); end
 +n = 0; do i = 1 to 3; n += w[i]~result; end
 +h~release; call SysSleep 0.05; say "taken="n "after release:" .js~nextEvent(0.2)
@@ -1109,6 +1204,9 @@ index e1c1cd8..2f5eb61 100755
 +::method request
 +  use arg req, res
 +  res~end("rexx answered" req~method req~url)
++::method compare
++  use arg x, y
++  return .js~num(x - y)
 +::class taker
 +::method take
 +  n = 0; do 5; if .js~nextEvent(5) \== .nil then n += 1; end
@@ -1129,7 +1227,7 @@ index e1c1cd8..2f5eb61 100755
 +call charout , "max 2:"; do forever; ev = .js~nextEvent(0.1); if ev == .nil then leave; call charout , "" ev~arguments[1]~detail; end; say
 +signal on syntax name badmax; x = .js~handler(.nil, "string", "max 0")
 +badmax: say "max 0:" (condition("O")~message~pos("whole number > 0") > 0)
-+e3 = .js~EventTarget~new; h = .js~handler(.nil, "string"); e3~addEventListener("e", h)
++e3 = .js~EventTarget~new; h = .js~handler(.nil, "string", "queued"); e3~addEventListener("e", h)
 +do i = 1 to 3; e3~dispatchEvent(.js~CustomEvent~new("e", .js~newObject(.directory~of(("detail", i))))); end
 +h~release; e3~dispatchEvent(.js~CustomEvent~new("e", .js~newObject(.directory~of(("detail", 4)))))
 +e3~addEventListener("e", h)        -- the same function: pinned again
@@ -1166,7 +1264,7 @@ index e1c1cd8..2f5eb61 100755
 +  '^box: boolean number bigint string number string object string$' '^unbox: 1 -5 3 plain$' '^byte 300: 1$' '^type B: 1$' -- "$X jsarr.rex"
 +
 +check "JavaScript events: HTTP server in Rexx, threads, release, exit" '^rexx answered GET /q\?i=1$' \
-+  '^rexx answered GET /q\?i=3$' '^taken=15 after release: The NIL object$' -- "$X jsev.rex"
++  '^rexx answered GET /q\?i=3$' '^sorted=1,2,3$' '^taken=15 after release: The NIL object$' -- "$X jsev.rex"
 +
  echo
  if (( ${#FAILED[@]} )); then
@@ -1185,10 +1283,10 @@ index 0c169f9..4aafd0c 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); }, onJdor,
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 48fc32b..f07c770 100755
+index 48fc32b..b572f5f 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
-@@ -175,6 +175,72 @@ CASES = [
+@@ -175,6 +175,91 @@ CASES = [
                   'shape u area a; areaAdd u b; shapeBounds u; say rc\nshape i area a; areaIntersect i b; shapeBounds i; say rc\n'
                   '::requires "jdor.cls"', {},
       lambda r: r["out"] == "0.0 0.0 15.0 10.0\n5.0 0.0 5.0 10.0\n"),
@@ -1237,13 +1335,32 @@ index 48fc32b..f07c770 100755
 +                      'syntax: say condition("O")~message\n::requires "js.cls"', {"js": {"worker": True, "page": True}},
 +     lambda r: 'cannot be used in realm "page"' in r["out"]),
 +  # events: .js~handler, .js~nextEvent, .js~eventLoop
-+  ("js events worker", 'c = .counter~new; h = .js~handler(c, "tick", "preventDefault")\n'
++  ("js events worker", 'c = .counter~new; h = .js~handler(c, "tick", "preventDefault queued")\n'
 +                       'say h; t = .js~setInterval(h, 10, "x"); .js~eventLoop; .js~clearInterval(t); h~release\n'
 +                       'say c~n .js~nextEvent(0) .js~nextEvent(0.2)\n'
 +                       '::class counter; ::attribute n; ::method init; expose n; n = 0\n'
 +                       '::method tick; expose n; use arg a; n += 1; if n = 3 then .js~stopEventLoop; say "tick" n a\n'
 +                       '::requires "js.cls"', {"js": {"worker": True}},
 +     lambda r: r["out"] == "a JSHandler (a COUNTER~TICK)\ntick 1 x\ntick 2 x\ntick 3 x\n3 The NIL object The NIL object\n"),
++  # synchronous handlers (the default in the worker's realm): a comparator, map,
++  # a condition as RexxError, no waiting for JavaScript meanwhile, a timer's
++  # call run on its own thread (which may wait); the page: always queued
++  ("js handlers sync", 'a = .js~newArray(.js~num(3), .js~num(1), .js~num(2)); a~sort(.js~handler(.o~new, "cmp"))\n'
++                       'say a~join(",") .js~newArray(.js~num(1), .js~num(2))~map(.js~handler(.o~new, "twice"))~join(",")\n'
++                       'signal on syntax name s1; .js~newArray(1)~forEach(.js~handler(.o~new, "bad"))\n'
++                       's1: say (condition("O")~message~pos("RexxError: Error 41.1") > 0)\n'
++                       'signal on syntax name s2; .js~newArray(1)~forEach(.js~handler(.o~new, "waits"))\n'
++                       's2: say (condition("O")~message~pos("cannot wait for a Promise") > 0)\n'
++                       'o = .o~new; .js~setTimeout(.js~handler(o, "later"), 1); do 50 while o~got == ""; call SysSleep 0.02; end; say o~got\n'
++                       'b = .js~page~Array~of(.js~num(3), .js~num(1)); b~sort(.js~handler(.o~new, "cmp")); say b~join(",") (.js~nextEvent(1) \\== .nil)\n'
++                       '::class o; ::attribute got; ::method init; expose got; got = ""\n'
++                       '::method cmp; use arg x, y; return .js~num(x - y)\n'
++                       '::method twice; use arg v; return .js~num(v * 2)\n'
++                       '::method bad; return 1 + "a"\n'
++                       '::method waits; return .js~Promise~resolve(1)~await\n'
++                       '::method later; expose got; got = "later" .js~Promise~resolve("ok")~await\n'
++                       '::requires "js.cls"', {"js": {"worker": True, "page": True}},
++     lambda r: r["out"] == "1,2,3 2,4\n1\n1\nlater ok\n3,1 1\n"),
 +  ("js page events", 'doc = .js~page~document; box = doc~createElement("input"); box~type = "checkbox"; doc~body~appendChild(box)\n'
 +                     'h = .js~handler(.nil, "string", "preventDefault"); box~addEventListener("click", h)\n'
 +                     'box~click; ev = .js~nextEvent(5); e = ev~arguments[1]\n'
@@ -1285,10 +1402,10 @@ index 37f6f14..63dfc90 100644
  }
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..f75e48e
+index 0000000..4122239
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,709 @@
+@@ -0,0 +1,979 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -1342,12 +1459,34 @@ index 0000000..f75e48e
 + *   A count + values (an Array)    T count + (K key, value) (a plain object)
 + *   F number   B boolean ("1"/"0")   I bigint   Y bytes (Uint8Array)
 + *   H "id<tab>options"  (to JavaScript) a .JSHandler: that realm's function
-+ *                       for it, which queues an event here when called
++ *                       for it (see Handlers below)
 + * A request starts with any number of X "realm<tab>id..." records (handles
 + * whose .JSObject was garbage collected), then the operands of the op.
 + * The reply is R + a value, or E + message + the thrown value.
 + *
-+ * Events: a handler's function, called by JavaScript in its realm, returns at
++ * Transport: a request goes into a queue here (queued) and the main runtime
++ * thread is told (kickMain); it takes the queue's requests in a microtask
++ * (Module.jsDrain), outside Emscripten's proxying queue, which is not
++ * reentrant: while that thread waits for a synchronous handler (below) it
++ * keeps taking both this queue and Emscripten's (the pthreads' system
++ * calls).  The requesting thread waits on its request's state.
++ *
++ * Handlers: a .JSHandler without option queued is synchronous in the local
++ * realm (the Web Worker, Node), as .net~handler: its function runs the Rexx
++ * method at once (js_sync_call).  Called while JavaScript does a request of a
++ * Rexx thread (a comparator for sort, forEach, dispatchEvent), it runs on
++ * that thread (so its guards are its own) and JavaScript waits for its result;
++ * a condition is thrown as a RexxError.  That thread cannot wait for
++ * JavaScript in turn while JavaScript waits for it (a Promise, the page):
++ * such a request is an error.  Called by JavaScript on its own (a timer, a
++ * Node server, a Promise settling), it runs on the server thread, attached to
++ * the interpreter for the call, and JavaScript does not wait (it gets
++ * undefined): the realm's thread must stay free, as what finishes later
++ * (sockets, the RexxAPI daemon under Node, the page) needs its event loop; a
++ * condition there is reported on the standard error.  In the page every
++ * handler is queued: the page's thread cannot wait.
++ *
++ * Events: a queued handler's function, called by JavaScript in its realm, returns at
 + * once and hands js_event() (on the main runtime thread; from the page by
 + * postMessage) the records H "id" + A (its arguments).  They wait in a queue
 + * until a Rexx thread takes them (.js~nextEvent, .js~eventLoop) and sends the
@@ -1363,6 +1502,11 @@ index 0000000..f75e48e
 +#include <emscripten/threading.h>
 +#include <oorexxapi.h>
 +#include <chrono>
++#include <cstdio>
++#include <climits>
++#include <cmath>
++#include <pthread.h>
++#include <thread>
 +#include <condition_variable>
 +#include <deque>
 +#include <map>
@@ -1383,10 +1527,20 @@ index 0000000..f75e48e
 +    int32_t     dataLen;    //  8: their length in bytes
 +    char       *reply;      // 12: set by JavaScript: malloc'ed reply
 +    int32_t     replyLen;   // 16: its length in bytes
++    int32_t     state;      // 20: REQ_WAITING, REQ_REPLIED (js_done), REQ_CALLBACK (js_sync_call)
++    int32_t     thread;     // 24: the requesting thread
++    void       *sync;       // 28: the SyncCall when REQ_CALLBACK
 +} JsRequest;
 +
-+EM_JS(void, js_bridge_call, (em_proxying_ctx *ctx, JsRequest *req), {
-+    Module['jsCall'](ctx, req);
++enum { REQ_WAITING = 0, REQ_REPLIED = 1, REQ_CALLBACK = 2 };
++
++// the main runtime thread takes the queued requests in a microtask
++EM_JS(void, js_schedule_drain, (void), {
++    queueMicrotask(() => Module['jsDrain']());
++});
++// ... or now, while it waits for a synchronous handler
++EM_JS(void, js_drain_now, (void), {
++    Module['jsDrain']();
 +});
 +
 +// the default realm of this process, decided on the calling thread
@@ -1395,13 +1549,20 @@ index 0000000..f75e48e
 +});
 +
 +EMSCRIPTEN_KEEPALIVE void *js_alloc(int n)                 { return malloc(n); }
-+EMSCRIPTEN_KEEPALIVE void  js_finish(em_proxying_ctx *ctx) { emscripten_proxy_finish(ctx); }
++EMSCRIPTEN_KEEPALIVE void  js_free(void *p)               { free(p); }
++
++// the reply is in place (JavaScript, on the main runtime thread)
++EMSCRIPTEN_KEEPALIVE void js_done(JsRequest *req)
++{
++    __atomic_store_n(&req->state, REQ_REPLIED, __ATOMIC_SEQ_CST);
++    emscripten_futex_wake(&req->state, INT_MAX);
++}
 +
 +void js_event(char *data, int len);
 +
-+static void jsOnMain(em_proxying_ctx *ctx, void *arg)
++static void kickMain(void *)
 +{
-+    js_bridge_call(ctx, (JsRequest *)arg);
++    js_schedule_drain();
 +}
 +
 +} // extern "C"
@@ -1446,20 +1607,76 @@ index 0000000..f75e48e
 +    s += data;
 +}
 +
-+// pass a request to the main runtime thread and wait for the reply
-+static std::string jsCall(int op, const std::string &data)
++// ---- transport and synchronous handlers -------------------------------------
++
++static std::mutex queueLock;
++static std::deque<JsRequest *> queued;              // requests for the main runtime thread
++
++extern "C" EMSCRIPTEN_KEEPALIVE JsRequest *js_next_request(void)
++{
++    std::lock_guard<std::mutex> lock(queueLock);
++    if (queued.empty()) return NULL;
++    JsRequest *req = queued.front();
++    queued.pop_front();
++    return req;
++}
++
++static int32_t selfId() { return (int32_t)(intptr_t)pthread_self(); }
++
++// one call of a synchronous handler: H + A records, then R/E records back
++struct SyncCall
++{
++    std::string call;
++    std::string answer;
++    int32_t state = 0;                              // 1: answered
++};
++
++static std::string runCallback(RexxThreadContext *c, const std::string &call);
++
++static void answered(SyncCall *sc)
++{
++    __atomic_store_n(&sc->state, 1, __ATOMIC_SEQ_CST);
++    emscripten_futex_wake(&sc->state, INT_MAX);
++}
++
++// pass a request to the main runtime thread and wait for the reply, running
++// the synchronous handlers JavaScript calls meanwhile
++static std::string jsCall(RexxThreadContext *c, int op, const std::string &data)
 +{
 +    JsRequest req = {};
 +    req.op = op;
 +    req.data = data.data();
 +    req.dataLen = (int32_t)data.size();
-+    if (!emscripten_proxy_sync_with_ctx(emscripten_proxy_get_system_queue(),
-+                                        emscripten_main_runtime_thread_id(), jsOnMain, &req))
++    req.thread = selfId();
 +    {
++        std::lock_guard<std::mutex> lock(queueLock);
++        queued.push_back(&req);
++    }
++    if (!emscripten_proxy_async(emscripten_proxy_get_system_queue(),
++                                emscripten_main_runtime_thread_id(), kickMain, NULL))
++    {
++        {
++            std::lock_guard<std::mutex> lock(queueLock);
++            for (auto it = queued.begin(); it != queued.end(); ++it) if (*it == &req) { queued.erase(it); break; }
++        }
 +        std::string r;
 +        putRec(r, 'E', "the JavaScript realm is not reachable");
 +        putRec(r, 'N', "");
 +        return r;
++    }
++    for (;;)
++    {
++        int32_t s = __atomic_load_n(&req.state, __ATOMIC_SEQ_CST);
++        if (s == REQ_REPLIED) break;
++        if (s == REQ_CALLBACK)
++        {
++            SyncCall *sc = (SyncCall *)req.sync;
++            sc->answer = runCallback(c, sc->call);
++            __atomic_store_n(&req.state, REQ_WAITING, __ATOMIC_SEQ_CST);
++            answered(sc);
++            continue;
++        }
++        emscripten_futex_wait(&req.state, s, INFINITY);
 +    }
 +    std::string r(req.reply ? req.reply : "", req.replyLen);
 +    free(req.reply);
@@ -1666,7 +1883,155 @@ index 0000000..f75e48e
 +
 +static RexxObjectPtr request(RexxThreadContext *c, int op, const std::string &data)
 +{
-+    return result(c, jsCall(op, data));
++    return result(c, jsCall(c, op, data));
++}
++
++// a synchronous handler's call, on a Rexx thread: the R/E records of its result
++static std::string runCallback(RexxThreadContext *c, const std::string &call)
++{
++    std::string out;
++    size_t pos = 0;
++    Rec r;
++    RexxObjectPtr handler = NULLOBJECT;
++    if (nextRec(call, pos, r) && r.tag == 'H')
++    {
++        std::lock_guard<std::mutex> lock(eventLock);
++        auto it = pinned.find(strtoul(r.data.c_str(), NULL, 10));
++        if (it != pinned.end()) handler = it->second;
++    }
++    if (handler == NULLOBJECT)                      // released meanwhile: undefined
++    {
++        putRec(out, 'R', "");
++        putRec(out, 'U', "");
++        return out;
++    }
++    RexxArrayObject args = (RexxArrayObject)toRexx(c, call, pos);
++    RexxObjectPtr target = c->SendMessage0(handler, "TARGET");
++    std::string message = c->ObjectToStringValue(c->SendMessage0(handler, "MESSAGE"));
++    RexxObjectPtr value = c->SendMessage(target, message.c_str(), args);
++    if (c->CheckCondition())
++    {
++        RexxDirectoryObject cond = c->GetConditionInfo();
++        RexxCondition info = {};
++        c->DecodeConditionInfo(cond, &info);
++        std::string name = info.conditionName ? c->CString(info.conditionName) : "a condition";
++        std::string msg;
++        if (name == "SYNTAX")
++        {
++            msg = "Error " + std::to_string(info.code / 1000) + "." + std::to_string(info.code % 1000) + ": ";
++            msg += info.errortext ? c->CString(info.errortext) : "";
++            std::string detail = info.message ? c->CString(info.message) : "";
++            if (!detail.empty()) msg += " (" + detail + ")";
++        }
++        else msg = "condition " + name + " raised in " + message;
++        c->ClearCondition();
++        putRec(out, 'E', msg);
++        putRec(out, 'N', "");
++        return out;
++    }
++    putRec(out, 'R', "");
++    fromRexx(c, out, value);
++    return out;
++}
++
++// the server thread: the calls of synchronous handlers made by JavaScript on
++// its own (a timer, a Node server), one at a time, each attached to the
++// interpreter for the call
++static RexxInstance *jsInstance = NULL;
++static std::mutex serverLock;
++static std::condition_variable serverCond;
++static std::deque<SyncCall *> serverQueue;
++static int32_t serverThread = 0;
++
++static void *serverMain(void *)
++{
++    __atomic_store_n(&serverThread, selfId(), __ATOMIC_SEQ_CST);
++    emscripten_futex_wake(&serverThread, INT_MAX);
++    for (;;)
++    {
++        SyncCall *sc;
++        {
++            std::unique_lock<std::mutex> lock(serverLock);
++            serverCond.wait(lock, [] { return !serverQueue.empty(); });
++            sc = serverQueue.front();
++            serverQueue.pop_front();
++        }
++        RexxThreadContext *tc = NULL;
++        if (jsInstance != NULL && jsInstance->AttachThread(&tc))
++        {
++            std::string answer = runCallback(tc, sc->call);
++            tc->DetachThread();
++            if (!answer.empty() && answer[0] == 'E')        // nobody to throw it to
++            {
++                size_t pos = 0;
++                Rec r;
++                nextRec(answer, pos, r);
++                fprintf(stderr, "Error in a JavaScript handler: %s\n", r.data.c_str());
++            }
++        }
++        delete sc;
++    }
++    return NULL;
++}
++
++// the threads the main runtime thread is waiting for (a stack: calls nest)
++static std::vector<int32_t> awaited;
++
++// a request of a thread JavaScript waits for cannot wait for JavaScript
++extern "C" EMSCRIPTEN_KEEPALIVE int js_request_awaited(JsRequest *req)
++{
++    for (int32_t t : awaited) if (t == req->thread) return 1;
++    return 0;
++}
++
++// a malloc'ed copy of a reply
++static char *replyCopy(const std::string &answer, int32_t *outLen)
++{
++    char *out = (char *)malloc(answer.size() + 1);
++    memcpy(out, answer.data(), answer.size());
++    out[answer.size()] = 0;
++    *outLen = (int32_t)answer.size();
++    return out;
++}
++
++// a synchronous handler called (on the main runtime thread): run it on the
++// Rexx thread whose request is being done (req) and wait, doing the requests
++// that come meanwhile; or hand it to the server thread and go on (undefined);
++// a malloc'ed R/E reply
++extern "C" EMSCRIPTEN_KEEPALIVE char *js_sync_call(JsRequest *req, const char *data, int len, int32_t *outLen)
++{
++    std::string undefinedReply;
++    putRec(undefinedReply, 'R', "");
++    putRec(undefinedReply, 'U', "");
++    if (req == NULL)
++    {
++        if (__atomic_load_n(&serverThread, __ATOMIC_SEQ_CST) != 0)
++        {
++            SyncCall *call = new SyncCall;
++            call->call.assign(data, len);
++            {
++                std::lock_guard<std::mutex> lock(serverLock);
++                serverQueue.push_back(call);
++            }
++            serverCond.notify_one();
++        }
++        return replyCopy(undefinedReply, outLen);
++    }
++    SyncCall sc;
++    sc.call.assign(data, len);
++    int32_t who = req->thread;
++    req->sync = &sc;
++    __atomic_store_n(&req->state, REQ_CALLBACK, __ATOMIC_SEQ_CST);
++    emscripten_futex_wake(&req->state, INT_MAX);
++    awaited.push_back(who);
++    while (__atomic_load_n(&sc.state, __ATOMIC_SEQ_CST) == 0)
++    {
++        js_drain_now();
++        emscripten_proxy_execute_queue(emscripten_proxy_get_system_queue());
++        emscripten_futex_wait(&sc.state, 0, 1.0);
++    }
++    awaited.pop_back();
++    return replyCopy(sc.answer, outLen);
 +}
 +
 +// the target record of a method: this .JSObject
@@ -1800,11 +2165,32 @@ index 0000000..f75e48e
 +RexxRoutine5(int, JsSetup, RexxObjectPtr, objectClass, RexxObjectPtr, typedClass,
 +             RexxObjectPtr, handlerClass, RexxObjectPtr, eventClass, RexxObjectPtr, undefinedValue)
 +{
++    jsInstance = context->threadContext->instance;
 +    if (jsUndefined == NULLOBJECT) jsUndefined = context->RequestGlobalReference(undefinedValue);
 +    if (jsObjectClass == NULLOBJECT) jsObjectClass = context->RequestGlobalReference(objectClass);
 +    if (jsTypedClass == NULLOBJECT) jsTypedClass = context->RequestGlobalReference(typedClass);
 +    if (jsHandlerClass == NULLOBJECT) jsHandlerClass = context->RequestGlobalReference(handlerClass);
 +    if (jsEventClass == NULLOBJECT) jsEventClass = context->RequestGlobalReference(eventClass);
++    return 0;
++}
++
++// JsSyncSetup(): ready for synchronous handlers (the server thread)
++RexxRoutine0(int, JsSyncSetup)
++{
++    static std::once_flag once;
++    jsInstance = context->threadContext->instance;
++    // the stack of a Rexx thread (std::thread's default, 64 KiB, overflows
++    // silently: WebAssembly has no guard page)
++    std::call_once(once, [] {
++        pthread_attr_t attr;
++        pthread_attr_init(&attr);
++        pthread_attr_setstacksize(&attr, 8 * 1024 * 1024);
++        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
++        pthread_t t;
++        pthread_create(&t, &attr, serverMain, NULL);
++        pthread_attr_destroy(&attr);
++    });
++    while (__atomic_load_n(&serverThread, __ATOMIC_SEQ_CST) == 0) emscripten_futex_wait(&serverThread, 0, 10.0);
 +    return 0;
 +}
 +
@@ -1974,6 +2360,7 @@ index 0000000..f75e48e
 +    REXX_TYPED_ROUTINE(JsImport, JsImport),
 +    REXX_TYPED_ROUTINE(JsValue, JsValue),
 +    REXX_TYPED_ROUTINE(JsHandlerId, JsHandlerId),
++    REXX_TYPED_ROUTINE(JsSyncSetup, JsSyncSetup),
 +    REXX_TYPED_ROUTINE(JsHandlerRelease, JsHandlerRelease),
 +    REXX_TYPED_ROUTINE(JsLoopGeneration, JsLoopGeneration),
 +    REXX_TYPED_ROUTINE(JsStopLoops, JsStopLoops),
@@ -2000,10 +2387,10 @@ index 0000000..f75e48e
 +}
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
 new file mode 100644
-index 0000000..f319ca4
+index 0000000..f619c65
 --- /dev/null
 +++ b/wasm/web/js.cls
-@@ -0,0 +1,417 @@
+@@ -0,0 +1,433 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -2106,22 +2493,35 @@ index 0000000..f319ca4
 + * in JavaScript (.js~Array and .js~Object are JavaScript's own).  A JavaScript exception is SYNTAX 98.900 "JavaScript error:
 + * TypeError: ..."; condition("O")~additional[2] is what was thrown.
 + *
-+ * Events: JavaScript cannot call into Rexx while it runs, so a callback is a
-+ * handler whose calls are queued, and a Rexx thread takes them:
++ * Handlers: .js~handler(object, message [, options]) is a .JSHandler; given
++ * to JavaScript, it is a function there (the same one each time, so
++ * removeEventListener works) that sends the message to the object with the
++ * call's arguments.  In the worker's realm and under Node it is synchronous,
++ * as .net~handler: the method runs at once.  Called while a Rexx thread waits
++ * for JavaScript (a comparator, forEach, map, dispatchEvent), it runs on that
++ * thread, and JavaScript gets its result (a condition is thrown as a
++ * RexxError); meanwhile it cannot wait for JavaScript in turn (~await, the
++ * page).  Called by JavaScript on its own (a timer, a Node server, a Promise
++ * settling), it runs on a thread of its own, one call at a time, and may wait
++ * for JavaScript; JavaScript does not wait for it (it gets undefined), and a
++ * condition is written on the standard error:
 + *
-+ *    btn~addEventListener("click", .js~handler(self, "CLICKED"))
++ *    a~sort(.js~handler(self, "COMPARE"))      -- COMPARE answers each comparison
++ *
++ * With option "queued" (implied by latest and max), and always in the
++ * page (whose thread cannot wait), the function queues the call and returns
++ * undefined at once, and a Rexx thread takes the calls:
++ *
++ *    btn~addEventListener("click", .js~handler(self, "CLICKED"))   -- the page
 + *    .js~eventLoop                     -- until .js~stopEventLoop
 + *    ::method clicked
 + *      use arg event                   -- the arguments of the JavaScript call
 + *
-+ * .js~handler(object, message [, options]) is a .JSHandler; given to
-+ * JavaScript, it is a function there (the same one each time, so
-+ * removeEventListener works) that queues the call and returns undefined at
-+ * once.  So it cannot answer anything (no sort comparators), and by the
++ * A queued handler cannot answer anything (no sort comparators), and by the
 + * time Rexx sees an event the browser has dispatched it (event~currentTarget
 + * is .nil; event~target is fine): what must happen during the dispatch goes
 + * in the options, words "preventDefault", "stopPropagation" and
-+ * "stopImmediatePropagation".  Option "latest" keeps at most one event of
++ * "stopImmediatePropagation" (for synchronous handlers too).  Option "latest" keeps at most one event of
 + * the handler waiting, the newest (for mousemove, scroll, resize, ...), and
 + * "max n" at most n, the newest n (older ones are dropped).  .js~nextEvent([seconds]) waits for the next
 + * event (none given: as long as it takes) and returns a .JSEvent (or .nil
@@ -2357,7 +2757,7 @@ index 0000000..f319ca4
 +  expose target message options id
 +  use strict arg target, message, options = ""
 +  message = message~upper
-+  known = "preventDefault stopPropagation stopImmediatePropagation latest max"
++  known = "preventDefault stopPropagation stopImmediatePropagation latest max queued"
 +  opts = ""
 +  words = options~space~makeArray(" ")
 +  do i = 1 to words~items
@@ -2374,8 +2774,11 @@ index 0000000..f319ca4
 +      opts = opts (n + 0)
 +    end
 +  end
++  -- latest and max n are about the queue: they make the handler queued
++  if (wordPos("latest", opts) > 0 | wordPos("max", opts) > 0) & wordPos("queued", opts) = 0 then opts = opts "queued"
 +  options = opts~strip
 +  id = JsHandlerId()
++  if wordPos("queued", options) = 0 then call JsSyncSetup
 +::method release                    -- no more events from it
 +  expose id
 +  call JsHandlerRelease id
