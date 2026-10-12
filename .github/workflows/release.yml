@@ -1,0 +1,119 @@
+# The npm package oorexxwasm (scripts/npm-package.sh): built from the Node
+# command-line build, installed with `npm install -g` on Linux, macOS and
+# Windows and checked there (npm/test/smoke.rex, js-proxy.rex,
+# js-extend.rex), and, for a tag vX.Y.Z, published to npm.
+#
+# Publishing uses npm's trusted publishing: npmjs.com is told, once, that
+# oorexxwasm is published from this repository by this workflow, and the job
+# proves who it is with GitHub's OIDC token (no npm token is stored here).
+# The package gets a provenance statement (built here, from this commit).
+#
+# On demand (Actions > release > Run workflow) it builds and checks the
+# package without publishing it.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version for the test package
+        default: 0.0.0-test
+
+permissions:
+  contents: read
+
+env:
+  EMVER: "6.0.12"
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      ORX_WASM_WORK: ${{ github.workspace }}/..
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Version
+        id: version
+        run: |
+          if [[ $GITHUB_REF == refs/tags/v* ]]; then v=${GITHUB_REF#refs/tags/v}; else v=${{ inputs.version }}; fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+      - name: Tools (svn)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq subversion
+      - name: Emscripten cache
+        uses: actions/cache@v6
+        with:
+          path: ${{ github.workspace }}/../emsdk
+          key: emsdk-${{ env.EMVER }}-${{ runner.os }}
+      - name: Set up (saved build, or compile)
+        run: scripts/setup-env.sh
+      - name: Package
+        run: |
+          scripts/npm-package.sh "${{ steps.version.outputs.version }}" "$ORX_WASM_WORK/build-wasm/bin-node" "$RUNNER_TEMP/npm"
+          mkdir -p "$RUNNER_TEMP/npm/tests"
+          cp npm/test/smoke.rex "$ORX_WASM_WORK"/oorexx/wasm/tests/js-proxy.rex "$ORX_WASM_WORK"/oorexx/wasm/tests/js-extend.rex "$RUNNER_TEMP/npm/tests/"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: npm-package
+          path: |
+            ${{ runner.temp }}/npm/oorexxwasm-*.tgz
+            ${{ runner.temp }}/npm/tests/
+
+  check:
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest, windows-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-package
+          path: pkg
+      - name: Install (npm install -g)
+        run: npm install -g pkg/oorexxwasm-*.tgz
+      - name: rexx -v
+        run: rexx -v
+      - name: Smoke test
+        run: mkdir scratch && cd scratch && rexx ../pkg/tests/smoke.rex
+      - name: Rexx objects in JavaScript (js-proxy.rex)
+        run: cd scratch && rexx ../pkg/tests/js-proxy.rex
+      - name: Rexx classes extending JavaScript classes (js-extend.rex)
+        run: cd scratch && rexx ../pkg/tests/js-extend.rex
+
+  publish:
+    needs: [package, check]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write           # npm's trusted publishing (OIDC)
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: npm with trusted publishing
+        run: npm install -g npm@latest
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-package
+          path: pkg
+      - name: Publish
+        run: npm publish pkg/oorexxwasm-*.tgz --access public --provenance
