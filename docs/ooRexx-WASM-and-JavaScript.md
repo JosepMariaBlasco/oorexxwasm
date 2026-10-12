@@ -8,6 +8,8 @@ Working draft · Josep Maria Blasco
 
 This document specifies a way for ooRexx programs to use JavaScript, both in the browser and under Node: `.JSObject`, which gives access to all of JavaScript as Rexx objects. All of it is implemented and can be tried in an online playground, [rexx.epbcn.com/oorexx-wasm](https://rexx.epbcn.com/oorexx-wasm/). It is offered for discussion.
 
+It works both ways. Rexx objects reach JavaScript too, which sends them messages, and a page can run Rexx as it runs JavaScript, with its own `<script type="text/rexx">` or by calling an interpreter it keeps (see [Rexx from the page](#rexx-from-the-page)).
+
 Any JavaScript object, function, array or Promise reaches Rexx as a `.JSObject`, by reference, and is used with ordinary messages. The way in is `.js`, which `::requires "js.cls"` defines: it holds everything JavaScript knows by name, such as `Math`, `Map` or `fetch` (in JavaScript terms, the global object).
 
 ```rexx
@@ -83,7 +85,7 @@ btn~addEventListener("click", .js~handler(self, "CLICKED", "preventDefault"))
 .js~eventLoop                     -- sends CLICKED for each call
 ```
 
-`.js~eventLoop` sends the message to the object, with the call's arguments, for each call until `.js~stopEventLoop`, from a handler or another thread. `.js~nextEvent([seconds])` takes one event instead (a `.JSEvent`, which `~dispatch` sends; `.nil` when the time is over), so a program can run its own loop. Several threads may wait; each event goes to one.
+`.js~eventLoop` sends the message to the object, with the call's arguments, for each call until `.js~stopEventLoop`, from a handler or another thread. `.js~nextEvent([seconds])` takes one event instead (a `.JSEvent`, which `~dispatch` sends; `.nil` when the time is over), so a program can run its own loop. Several threads may wait; each event goes to one. The page's calls of Rexx come through the same queue: the thread that takes them runs them in turn, and `~nextEvent` goes on waiting (see [Rexx from the page](#rexx-from-the-page)).
 
 Because a queued handler's function returns before Rexx sees the call, it cannot answer anything, and by then the browser has finished dispatching the event (`event~currentTarget` is `.nil`). What must happen during the dispatch goes in the options, for any handler: `preventDefault`, `stopPropagation`, `stopImmediatePropagation`. Option `latest` keeps only the newest event of the handler waiting, for mousemove or scroll; option `max n` keeps at most n, dropping the oldest. Both imply `queued`.
 
@@ -236,7 +238,7 @@ This needs a realm where JavaScript can wait for Rexx: the worker's and Node's. 
 
 - The same JavaScript object is always the same `.JSObject`: `o1 == o2` tests identity.
 - Each operation runs on the thread of its realm, so any Rexx thread may use any `.JSObject`.
-- `~await` blocks only the Rexx thread that waits.
+- `~await` blocks only the Rexx thread that waits; meanwhile that thread runs the page's calls of Rexx, if any come.
 - Names are looked up when the message arrives, so a property added later is found.
 - What a JavaScript exception threw is kept, in `condition("O")~additional[2]`.
 - A `.JSObject` keeps its JavaScript object alive while Rexx holds it, and no longer.
@@ -268,4 +270,4 @@ Replies on this list are very welcome.
 | Any other Rexx object goes to JavaScript as a `RexxProxy` (it went as its string): messages, BSF4ooRexx's `sendMessage` names, identity both ways | Values, Rexx objects in JavaScript |
 | Rexx classes extending JavaScript classes: `.js~extend(class, base [, names...])`, `.js~detach(o)`, as `.net~extend` | Classes |
 | Calls from the page to a Rexx object give a Promise of the result, queued as events (they were rejected) | Rexx objects in JavaScript, Rexx from the page |
-| Sessions, `rexx.start()`: `eval`, `routine`, `loadPackage`; and `<script type="text/rexx">` | Rexx from the page |
+| Sessions, `rexx.start()`: `eval`, `routine`, `loadPackage`; and `<script type="text/rexx">` | What this is, Events, Rexx from the page, Guarantees |
