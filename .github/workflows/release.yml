@@ -12,7 +12,7 @@
 # 2FA) on npmjs.com or with the npm CLI; only then can it be installed.
 #
 # On demand (Actions > release > Run workflow) it builds and checks the
-# package without publishing it.
+# package; with "publish" it also stages it, and tags the commit vX.Y.Z.
 name: release
 
 on:
@@ -21,8 +21,12 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version for the test package
+        description: Version (X.Y.Z; for a check only, anything)
         default: 0.0.0-test
+      publish:
+        description: Stage it on npm for approval, and tag the commit vX.Y.Z
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -102,10 +106,10 @@ jobs:
 
   publish:
     needs: [package, check]
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.publish == true
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      contents: write           # the tag vX.Y.Z (when run on demand)
       id-token: write           # npm's trusted publishing (OIDC)
     steps:
       - uses: actions/setup-node@v7
@@ -120,3 +124,9 @@ jobs:
           path: pkg
       - name: Stage for approval
         run: npm stage publish ./pkg/oorexxwasm-*.tgz --access public
+      - name: Tag the commit
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ needs.package.outputs.version }}
+        run: gh api repos/${{ github.repository }}/git/refs -f ref="refs/tags/$TAG" -f sha="${{ github.sha }}"
