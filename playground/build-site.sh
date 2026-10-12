@@ -17,6 +17,8 @@ mkdir -p "$OUT/samples/bsf4oorexx"
 cp "$HERE"/samples/bsf4oorexx/NOTICE "$HERE"/samples/bsf4oorexx/LICENSE-Apache-2.0.txt "$OUT/samples/bsf4oorexx/"
 cp "$HERE"/fonts/*.woff2 "$HERE"/fonts/OFL-IBM-Plex.txt "$OUT/fonts/"
 cp "$HERE/htaccess" "$OUT/.htaccess"
+# a diagnostic page for WebAssembly memory limits (iOS), not linked from the Playground
+cp "$HERE/memtest.html" "$OUT/"
 # the Rexx Parser (vendored subset, import-rexx-parser.sh): CSS for the editor
 mkdir -p "$OUT/rexx-parser"
 # every style for the style chooser, as on the Parser's site ("test*" are dev fixtures)

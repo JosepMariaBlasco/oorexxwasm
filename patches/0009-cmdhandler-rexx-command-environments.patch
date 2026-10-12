@@ -809,10 +809,10 @@ index 3f6ba84..81037c7 100755
  done
  cp "$SRC/wasm/web/js.cls" "$OUT/"
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index 70c2a26..3ffa933 100755
+index e75964b..554421a 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
-@@ -71,7 +71,7 @@ done
+@@ -73,7 +73,7 @@ done
  PRELOAD=()
  for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp.cls \
             rxftp/rxftp.cls rxregexp/rxregexp.cls json/json.cls yaml/yaml.cls \

@@ -48,10 +48,10 @@ index 81037c7..80c5ae2 100755
  launcher() {   # launcher NAME [rexx.js option]
    cat > "$OUT/$1" <<SH
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index 3ffa933..36a3782 100755
+index 554421a..86bad73 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
-@@ -76,6 +76,8 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+@@ -78,6 +78,8 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
  done
  # JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
  PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls"

@@ -29,6 +29,16 @@ Workbench, a separate page.
   script for how the set was chosen). `VERSION` says which release.
 - `rexx-parser-support/hlserver.rex` — the editor's highlighting server.
 - `htaccess` — Apache config, installed as `.htaccess`.
+- `memtest.html` — a diagnostic page, copied to the site but not linked from
+  the playground: how many shared WebAssembly memories the browser lets a page
+  create (2 GiB and 512 MiB maximum), whether it gives them back when their
+  worker ends (idle, parked in `Atomics.wait`, woken first, with nested
+  workers), and 30 ooRexx runs, plain and stopped while waiting for input.
+  "Copy results" puts a plain-text report on the clipboard. Written for
+  `RangeError: Out of memory` on iOS, where WebKit charges each shared memory's
+  declared maximum against a budget of the page's process; the web build caps
+  the maximum at 512 MiB for that reason (`wasm/build-web.sh`). Headless WebKit
+  on Linux: 22 memories of 2 GiB at once, 65 of 512 MiB.
 - `build-site.sh [BIN_WEB] [OUT]` — assembles the site (default
   `$ORX_WASM_WORK/site`; `$ORX_WASM_WORK` is the directory that contains this
   repository's clone, see the top README).

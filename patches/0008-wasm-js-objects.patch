@@ -131,10 +131,10 @@ index 5dbab4a..e949832 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index 9947869..57e2196 100644
+index 2508784..5e604fa 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -280,6 +280,108 @@ from the test suite's directory:
+@@ -287,6 +287,108 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -243,7 +243,7 @@ index 9947869..57e2196 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -289,6 +391,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -296,6 +398,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127);
    ADDRESS JDOR draws (see above).
@@ -298,10 +298,10 @@ index 47b554f..3f6ba84 100755
  launcher() {   # launcher NAME [rexx.js option]
    cat > "$OUT/$1" <<SH
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index db384d5..70c2a26 100755
+index 2a8c896..e75964b 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
-@@ -46,7 +46,8 @@
+@@ -48,7 +48,8 @@
  #   EXTRA_OBJECTS="a.o b.o" wasm/build-web.sh ...  (more objects to link in:
  #   wasm/build-test.sh)
  # Output: OUTDIR/{rexx.js,rexx.wasm,rexx.data,ooRexx.js,ooRexx-worker.js,
@@ -311,7 +311,7 @@ index db384d5..70c2a26 100755
  set -euo pipefail
  SRC=$(cd "$(dirname "$0")/.." && pwd)
  BUILD=$(cd "${1:-$SRC/build-wasm}" && pwd)
-@@ -60,6 +61,11 @@ EMXX=$(sed -E 's/ .*//' "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
+@@ -62,6 +63,11 @@ EMXX=$(sed -E 's/ .*//' "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
  # in CMakeLists.txt (exnref: a module that mixes encodings does not compile)
  "$EMXX" -O3 -std=gnu++11 -pthread -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0 -DHAVE_CONFIG_H -DOPSYS_EMSCRIPTEN \
    -I"$SRC/api" -I"$SRC/api/platform/unix" -I"$BUILD" -c "$SRC/wasm/web-jdor.cpp" -o "$BUILD/web-jdor.o"
@@ -323,7 +323,7 @@ index db384d5..70c2a26 100755
  
  # the portable extension classes (not ncurses: no native library here)
  PRELOAD=()
-@@ -69,7 +75,8 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+@@ -71,7 +77,8 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
    PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
  done
  # JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
@@ -333,13 +333,14 @@ index db384d5..70c2a26 100755
            "--preload-file" "$SRC/wasm/web/BSF.CLS@/usr/lib/ooRexx/BSF.CLS"
            "--preload-file" "$SRC/wasm/web/BSF.CLS@/usr/lib/ooRexx/bsf.cls")
  
-@@ -83,12 +90,13 @@ wasm,websocket,mainScriptUrlOrBlob]"
+@@ -95,13 +102,14 @@ wasm,websocket,mainScriptUrlOrBlob]"
  cmd=$(cat "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
  cmd=$(sed -E 's/--preload-file [^ ]+//g; s/-sENVIRONMENT=[^ ]+//' <<<"$cmd")
  cmd=${cmd//-o bin\/rexx.js/-o $OUT\/rexx.js}
 -(cd "$BUILD" && eval "$cmd" "$BUILD/web-stdin.o" "$BUILD/web-jdor.o" ${EXTRA_OBJECTS:-} \
 +(cd "$BUILD" && eval "$cmd" "$BUILD/web-stdin.o" "$BUILD/web-jdor.o" "$BUILD/web-js.o" "$BUILD/extra-packages.o" ${EXTRA_OBJECTS:-} \
     -Wl,--wrap=read,--wrap=write \
+    -sMAXIMUM_MEMORY=$MAX_MEMORY \
     -sENVIRONMENT=web,worker -sMODULARIZE=1 -sEXPORT_NAME=createOoRexx \
     "-sINCOMING_MODULE_JS_API=$INCOMING" \
 -   --pre-js "$SRC/wasm/web-pre.js" --pre-js "$SRC/wasm/web-jdor.js" \
@@ -2421,7 +2422,7 @@ index 0000000..f319ca4
 +  if kind == "U" then return "undefined"
 +  return value
 diff --git a/wasm/web/ooRexx-worker.js b/wasm/web/ooRexx-worker.js
-index 7de8c97..bd06285 100644
+index 4bd75fb..01aedbc 100644
 --- a/wasm/web/ooRexx-worker.js
 +++ b/wasm/web/ooRexx-worker.js
 @@ -41,16 +41,23 @@

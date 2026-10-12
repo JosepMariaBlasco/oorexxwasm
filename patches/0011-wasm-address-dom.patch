@@ -32,10 +32,10 @@ part of the posted RFE.
  create mode 100644 wasm/web/dom.cls
 
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index 36a3782..284931c 100755
+index 86bad73..db9a4e3 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
-@@ -74,10 +74,12 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+@@ -76,10 +76,12 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
             csvStream/csvStream.cls dateparser/dateparser.cls cmdhandler/cmdhandler.cls; do
    PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
  done

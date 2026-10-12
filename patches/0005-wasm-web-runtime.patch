@@ -40,15 +40,15 @@ onInput}) -> {write, close, stop, done}.
 ---
  common/platform/unix/SysProcess.cpp  |   9 ++
  interpreter/concurrency/Activity.cpp |  54 +++++++
- wasm/README.md                       |  63 ++++++++
- wasm/build-web.sh                    |  83 +++++++++++
+ wasm/README.md                       |  70 +++++++++
+ wasm/build-web.sh                    |  96 +++++++++++++
  wasm/tests/web-api.html              |  76 ++++++++++
  wasm/tests/web-api.py                | 163 +++++++++++++++++++++
  wasm/web-pre.js                      | 205 ++++++++++++++++++++++++++
  wasm/web-stdin.cpp                   | 157 ++++++++++++++++++++
- wasm/web/ooRexx-worker.js            | 111 ++++++++++++++
+ wasm/web/ooRexx-worker.js            | 127 ++++++++++++++++
  wasm/web/ooRexx.js                   | 207 +++++++++++++++++++++++++++
- 10 files changed, 1128 insertions(+)
+ 10 files changed, 1164 insertions(+)
  create mode 100755 wasm/build-web.sh
  create mode 100644 wasm/tests/web-api.html
  create mode 100755 wasm/tests/web-api.py
@@ -171,10 +171,10 @@ index 8848967..3b1f460 100644
      if (callDebugInputExit(activation, value))
      {
 diff --git a/wasm/README.md b/wasm/README.md
-index c2c2a0f..1cd8b38 100644
+index c2c2a0f..a19bd19 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -143,6 +143,69 @@ threads, SysSleep, RxSock and `.StreamSocket` over WebSocket, external data
+@@ -143,6 +143,76 @@ threads, SysSleep, RxSock and `.StreamSocket` over WebSocket, external data
  queue, rxregexp, rxmath, deep recursion (Error 11, at a depth set by the
  browser; see the limits below).
  
@@ -208,6 +208,13 @@ index c2c2a0f..1cd8b38 100644
 +  that MEMFS stamps files with the interpreter's clock (a file written now no
 +  longer looks older than the moment it was written at); MEMFS still reads
 +  file times back in whole milliseconds (its `stat()` goes through a JS Date);
++* the memory may grow to 512 MiB (`-sMAXIMUM_MEMORY`;
++  `ORX_WASM_WEB_MAX_MEMORY=bytes` changes it), not Emscripten's 2 GiB: each
++  run creates a shared `WebAssembly.Memory`, and WebKit charges its declared
++  maximum against a budget of the page's process (about 6 GiB on iOS), so
++  with 2 GiB an iPhone could make only a few runs before new ones failed with
++  `RangeError: Out of memory`.  When the memory cannot be created, the run's
++  error says so (`web/ooRexx-worker.js`);
 +* `.RexxInfo~libraryPath` is `/usr/lib/ooRexx/`, the directory of the
 +  preloaded classes; `.RexxInfo~executable` is .nil: the executable
 +  (`rexx.wasm`, `rexx.js`) was loaded from a URL, or the browser's cache,
@@ -246,10 +253,10 @@ index c2c2a0f..1cd8b38 100644
  * WebSocket transport (browser, and the MEMFS build under Node): listening
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
 new file mode 100755
-index 0000000..62f7ae3
+index 0000000..36dea45
 --- /dev/null
 +++ b/wasm/build-web.sh
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,96 @@
 +#!/usr/bin/env bash
 +#/*----------------------------------------------------------------------------*/
 +#/*                                                                            */
@@ -295,6 +302,8 @@ index 0000000..62f7ae3
 +#
 +# Usage: wasm/build-web.sh [BUILD_DIR=build-wasm] [OUTDIR=BUILD_DIR/bin-web]
 +#   (BUILD_DIR: a build made by wasm/build-wasm.sh; EM_CONFIG from it)
++#   ORX_WASM_WEB_MAX_MEMORY=bytes wasm/build-web.sh ...  (the most the memory
++#   may grow to; default 512 MiB, see below)
 +# Output: OUTDIR/{rexx.js,rexx.wasm,rexx.data,ooRexx.js,ooRexx-worker.js}
 +set -euo pipefail
 +SRC=$(cd "$(dirname "$0")/.." && pwd)
@@ -314,6 +323,16 @@ index 0000000..62f7ae3
 +  PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
 +done
 +
++# The most the memory may grow to.  Every run creates a shared
++# WebAssembly.Memory, and WebKit charges its declared maximum, not its size,
++# against a budget of the whole page process when the memory is created; on
++# iOS that budget is about 6 GiB, so with Emscripten's default maximum (2 GiB)
++# a page could make only a few runs before new ones failed with "RangeError:
++# Out of memory" until the browser was restarted.  512 MiB is far more than
++# the test suite needs, and lets many more runs coexist with memories not yet
++# reclaimed.
++MAX_MEMORY=${ORX_WASM_WEB_MAX_MEMORY:-536870912}
++
 +# Emscripten's default list plus mainScriptUrlOrBlob: the pthreads must load
 +# rexx.js, not the worker script that hosts the runtime
 +INCOMING="[ENVIRONMENT,arguments,canvas,dynamicLibraries,elementPointerLock,instantiateWasm,\
@@ -326,6 +345,7 @@ index 0000000..62f7ae3
 +cmd=${cmd//-o bin\/rexx.js/-o $OUT\/rexx.js}
 +(cd "$BUILD" && eval "$cmd" "$BUILD/web-stdin.o" \
 +   -Wl,--wrap=read,--wrap=write \
++   -sMAXIMUM_MEMORY=$MAX_MEMORY \
 +   -sENVIRONMENT=web,worker -sMODULARIZE=1 -sEXPORT_NAME=createOoRexx \
 +   "-sINCOMING_MODULE_JS_API=$INCOMING" \
 +   --pre-js "$SRC/wasm/web-pre.js" \
@@ -960,10 +980,10 @@ index 0000000..0167faa
 +}
 diff --git a/wasm/web/ooRexx-worker.js b/wasm/web/ooRexx-worker.js
 new file mode 100644
-index 0000000..732e019
+index 0000000..c87af29
 --- /dev/null
 +++ b/wasm/web/ooRexx-worker.js
-@@ -0,0 +1,111 @@
+@@ -0,0 +1,127 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -1051,7 +1071,7 @@ index 0000000..732e019
 +    locateFile: (p) => base + p,
 +    instantiateWasm(imports, receive) {
 +      WebAssembly.instantiate(msg.wasmModule, imports).then((inst) => receive(inst, msg.wasmModule),
-+        (e) => post({ type: 'error', message: 'instantiate: ' + e }));
++        (e) => post({ type: 'error', message: 'instantiate: ' + describe(e) }));
 +      return {};
 +    },
 +    getPreloadedPackage: () => msg.data,
@@ -1072,9 +1092,25 @@ index 0000000..732e019
 +  M = cfg;
 +  createOoRexx(cfg).catch((e) => {
 +    if (e && e.name === 'ExitStatus') return;
-+    post({ type: 'error', message: String(e && e.stack || e) });
++    post({ type: 'error', message: describe(e) });
 +  });
 +};
++
++// an exception as text: name, message and stack (Safari's stack has neither
++// the name nor the message), and what to do when the memory for the run could
++// not be created (the browser's budget for WebAssembly memories is used up)
++function describe(e) {
++  if (!(e instanceof Error)) return String(e);
++  const head = e.name + ': ' + e.message;
++  const stack = String(e.stack || '');
++  let text = stack.startsWith(head) ? stack : stack ? head + '\n' + stack : head;
++  if (e instanceof RangeError && /\bMemory\b/.test(stack + ' ' + e.message)) {
++    text = 'The browser could not reserve the memory for this run (' + head + ').\n' +
++      'It may still hold the memory of earlier runs: reload the page, and if that does not\n' +
++      'help, close the browser and open it again.\n\n' + text;
++  }
++  return text;
++}
 diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
 new file mode 100644
 index 0000000..73eb864

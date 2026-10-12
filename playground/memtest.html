@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebAssembly memory test</title>
+<!--
+  A diagnostic page for "RangeError: Out of memory" when a page creates one
+  shared WebAssembly.Memory per run (as the ooRexx Playground does).  It
+  measures how many shared memories the browser lets a page create, and
+  whether they are given back when the worker that owns them is terminated:
+  idle, parked in Atomics.wait, woken first, or with nested workers (as
+  Emscripten's pthreads).  The last two tests do the same with ooRexx itself
+  (ooRexx.js, next to this page).  Needs the same cross-origin isolation as
+  the Playground (.htaccess).
+-->
+<style>
+  :root { --bg: #fbfbf8; --fg: #1d1d1b; --mute: #6b6b66; --line: #deded8; --ok: #1d7a3e; --bad: #b3261e; --acc: #2a5db0; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --fg: #ececea; --mute: #9b9b96; --line: #33332f; --ok: #6cc28a; --bad: #f08a80; --acc: #8fb3f0; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 -apple-system, system-ui, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 4px 0 6px; }
+  p { margin: 6px 0; }
+  .mute { color: var(--mute); font-size: 13px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0; }
+  button { font: inherit; padding: 9px 14px; border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--fg); }
+  button.main { background: var(--acc); border-color: var(--acc); color: #fff; }
+  button:disabled { opacity: .45; }
+  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
+  td { border-top: 1px solid var(--line); padding: 8px 6px; vertical-align: top; }
+  td.id { width: 2em; font-weight: 600; }
+  td.res { width: 40%; font-variant-numeric: tabular-nums; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); }
+  pre { white-space: pre-wrap; word-break: break-word; background: transparent; border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12px; }
+  .warn { border: 1px solid var(--bad); color: var(--bad); border-radius: 8px; padding: 10px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>WebAssembly memory test</h1>
+  <p>Open this page in a <b>fresh</b> browser (on iOS: close Safari from the app switcher first), tap
+    <b>Run all</b>, wait until it says “done” (about two minutes), then tap <b>Copy results</b> and send them.</p>
+  <p class="mute">A failed test can leave memory behind and spoil the tests after it; they run in an order that keeps
+    that to the end. A single test can be run alone, again best in a fresh browser.</p>
+  <div id="iso"></div>
+  <div class="bar">
+    <button class="main" id="all">Run all</button>
+    <button id="copy">Copy results</button>
+  </div>
+  <table id="tests"></table>
+  <p class="mute" id="state"></p>
+  <pre id="log"></pre>
+</main>
+<script>
+'use strict';
+const MiB = 1 << 20;
+const PAGE = 65536;
+const INITIAL = 64 * MiB;                         // what ooRexx starts with
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const $ = (id) => document.getElementById(id);
+const log = (s) => { $('log').textContent += s + '\n'; };
+
+// The worker: creates a shared memory of INITIAL bytes with the given maximum,
+// says so, then (mode) stays idle, parks in Atomics.wait on a small control
+// buffer, or also starts four nested workers that park the same way.
+const WORKER = `
+'use strict';
+const CHILD = 'onmessage = (ev) => { const m = ev.data; postMessage("child"); Atomics.wait(new Int32Array(m.ctl), 0, 0); postMessage("child woke"); };';
+onmessage = (ev) => {
+  const m = ev.data;
+  let mem;
+  try {
+    mem = new WebAssembly.Memory({ initial: m.initial / 65536, maximum: m.maximum / 65536, shared: true });
+  } catch (e) {
+    postMessage({ type: 'fail', text: e.name + ': ' + e.message });
+    return;
+  }
+  self.keep = mem;
+  if (m.mode === 'nested') {
+    const url = URL.createObjectURL(new Blob([CHILD], { type: 'text/javascript' }));
+    let n = 0;
+    for (let i = 0; i < 4; i++) {
+      const w = new Worker(url);
+      w.onmessage = (e) => { if (e.data === 'child' && ++n === 4) { postMessage({ type: 'ok' }); Atomics.wait(new Int32Array(m.ctl), 0, 0); } };
+      w.postMessage({ ctl: m.ctl, mem });
+    }
+    return;
+  }
+  postMessage({ type: 'ok' });
+  if (m.mode === 'parked' || m.mode === 'woken') {
+    Atomics.wait(new Int32Array(m.ctl), 0, 0);
+    postMessage({ type: 'woke' });
+  }
+};`;
+const workerUrl = URL.createObjectURL(new Blob([WORKER], { type: 'text/javascript' }));
+
+// one worker with one memory; resolves with {ok, text, worker, ctl}
+function spawn(maximum, mode) {
+  return new Promise((resolve) => {
+    const w = new Worker(workerUrl);
+    const ctl = new SharedArrayBuffer(8);
+    const t = setTimeout(() => resolve({ ok: false, text: 'no answer in 10 s', worker: w, ctl }), 10000);
+    w.onmessage = (ev) => {
+      if (ev.data.type === 'ok') { clearTimeout(t); resolve({ ok: true, worker: w, ctl }); }
+      if (ev.data.type === 'fail') { clearTimeout(t); resolve({ ok: false, text: ev.data.text, worker: w, ctl }); }
+    };
+    w.onerror = (e) => { clearTimeout(t); resolve({ ok: false, text: 'worker error: ' + (e.message || e), worker: w, ctl }); };
+    w.postMessage({ initial: INITIAL, maximum, mode, ctl });
+  });
+}
+
+// wake a parked worker, wait until it says so, then terminate it
+function wakeAndEnd(r) {
+  return new Promise((resolve) => {
+    const t = setTimeout(() => { r.worker.terminate(); resolve(); }, 2000);
+    r.worker.onmessage = (ev) => { if (ev.data.type === 'woke') { clearTimeout(t); r.worker.terminate(); resolve(); } };
+    Atomics.store(new Int32Array(r.ctl), 0, 1);
+    Atomics.notify(new Int32Array(r.ctl), 0);
+  });
+}
+
+// how many memories can live at once
+async function budget(maximum, cap) {
+  const live = [];
+  let res;
+  for (let i = 1; i <= cap; i++) {
+    const r = await spawn(maximum, 'idle');
+    live.push(r.worker);
+    if (!r.ok) { res = { ok: true, text: `${i - 1} at once (number ${i} failed: ${r.text})`, count: i - 1 }; break; }
+  }
+  if (!res) res = { ok: true, text: `${cap} at once, no failure (stopped there)`, count: cap };
+  for (const w of live) w.terminate();
+  await sleep(1500);
+  return res;
+}
+
+// create, end, again: does the browser give the memory back?
+async function sequence(maximum, mode, runs) {
+  for (let i = 1; i <= runs; i++) {
+    const r = await spawn(maximum, mode);
+    if (!r.ok) { r.worker.terminate(); await sleep(1000); return { ok: false, text: `failed at run ${i}: ${r.text}` }; }
+    if (mode === 'woken') await wakeAndEnd(r); else r.worker.terminate();
+    await sleep(250);
+  }
+  return { ok: true, text: `${runs}/${runs} runs` };
+}
+
+// the same with ooRexx (ooRexx.js next to this page)
+let rexxP = null;
+function loadRexx() {
+  if (!rexxP) {
+    rexxP = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'ooRexx.js';
+      s.onload = () => OoRexx.load('./').then(resolve, reject);
+      s.onerror = () => reject(new Error('ooRexx.js not found next to this page'));
+      document.head.appendChild(s);
+    });
+  }
+  return rexxP;
+}
+async function rexxRuns(runs, waiting) {
+  let rexx;
+  try { rexx = await loadRexx(); } catch (e) { return { ok: false, text: 'not run: ' + e.message }; }
+  const src = waiting ? "say 'waiting'; parse pull x" : "say 'hello'";
+  for (let i = 1; i <= runs; i++) {
+    let out = '';
+    const run = rexx.run({ args: ['t.rex'], files: { '/home/rexx/t.rex': src },
+      onOut: (t) => { out += t; }, onErr: (t) => { out += t; },
+      onInput: () => run.stop() });
+    const timer = setTimeout(() => run.stop(), 15000);
+    const r = await run.done;
+    clearTimeout(timer);
+    const good = waiting ? r.stopped && !r.error : r.rc === 0 && /hello/.test(out);
+    if (!good) return { ok: false, text: `failed at run ${i}: ${(r.error || out || 'rc ' + r.rc).split('\n').slice(0, 3).join(' | ')}` };
+    await sleep(250);
+  }
+  return { ok: true, text: `${runs}/${runs} runs` };
+}
+
+const G2 = 2048 * MiB, M512 = 512 * MiB;
+const TESTS = [
+  ['A', 'How many 2 GiB memories at once', () => budget(G2, 40)],
+  ['B', 'How many 512 MiB memories at once', () => budget(M512, 160)],
+  ['C', '2 GiB, one after another, worker idle when ended', () => sequence(G2, 'idle', 30)],
+  ['D', '512 MiB, one after another, worker idle when ended', () => sequence(M512, 'idle', 30)],
+  ['E', '2 GiB, worker parked in Atomics.wait, woken before it is ended', () => sequence(G2, 'woken', 30)],
+  ['F', 'ooRexx: 30 runs of say', () => rexxRuns(30, false)],
+  ['G', '2 GiB, worker ended while parked in Atomics.wait', () => sequence(G2, 'parked', 30)],
+  ['H', '512 MiB, worker and four nested workers ended while parked', () => sequence(M512, 'nested', 30)],
+  ['I', 'ooRexx: 30 runs stopped while waiting for input', () => rexxRuns(30, true)],
+];
+
+const results = {};
+function row(id, title) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td class="id">${id}</td><td>${title}<br><button data-id="${id}">Run</button></td><td class="res" id="r${id}"><span class="mute">not run</span></td>`;
+  $('tests').appendChild(tr);
+}
+for (const [id, title] of TESTS) row(id, title);
+
+let busy = false;
+function setBusy(b) { busy = b; for (const x of document.querySelectorAll('button')) if (x.id !== 'copy') x.disabled = b; }
+async function runOne(id) {
+  const [, title, fn] = TESTS.find((t) => t[0] === id);
+  $('r' + id).innerHTML = '<span class="mute">running…</span>';
+  $('state').textContent = `Running ${id}: ${title}`;
+  const t0 = performance.now();
+  let r;
+  try { r = await fn(); } catch (e) { r = { ok: false, text: 'exception: ' + e.name + ': ' + e.message }; }
+  const s = ((performance.now() - t0) / 1000).toFixed(1);
+  results[id] = `${id} ${title}: ${r.ok ? 'OK' : 'FAIL'} — ${r.text} (${s} s)`;
+  $('r' + id).innerHTML = `<span class="${r.ok ? 'ok' : 'bad'}">${r.ok ? 'OK' : 'FAIL'}</span> — ${r.text}`;
+  log(results[id]);
+}
+$('tests').addEventListener('click', async (ev) => {
+  const id = ev.target.dataset && ev.target.dataset.id;
+  if (!id || busy) return;
+  setBusy(true); await runOne(id); setBusy(false); $('state').textContent = 'done';
+});
+$('all').onclick = async () => {
+  if (busy) return;
+  setBusy(true);
+  for (const [id] of TESTS) await runOne(id);
+  setBusy(false); $('state').textContent = 'done';
+};
+function report() {
+  return ['WebAssembly memory test', new Date().toISOString(), navigator.userAgent,
+    'crossOriginIsolated: ' + self.crossOriginIsolated, 'cores: ' + (navigator.hardwareConcurrency || '?'), '',
+    ...TESTS.map(([id]) => results[id] || `${id}: not run`)].join('\n');
+}
+$('copy').onclick = async () => {
+  const text = report();
+  try { await navigator.clipboard.writeText(text); $('state').textContent = 'Results copied.'; }
+  catch (e) { $('log').textContent = text; $('state').textContent = 'Could not copy: select the text below and copy it.'; }
+};
+if (!self.crossOriginIsolated) {
+  $('iso').innerHTML = '<p class="warn">This page is not cross-origin isolated, so it cannot create shared memories. ' +
+    'It must be served with the Playground’s headers (Cross-Origin-Opener-Policy and Cross-Origin-Embedder-Policy).</p>';
+  setBusy(true); $('copy').disabled = false;
+}
+log(navigator.userAgent);
+</script>
+</body>
+</html>

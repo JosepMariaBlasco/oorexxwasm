@@ -60,10 +60,10 @@ index e78f195..56ffb5b 100644
      }
  #endif
 diff --git a/wasm/README.md b/wasm/README.md
-index 1cd8b38..ed1d7a7 100644
+index a19bd19..8c21c8e 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -206,6 +206,29 @@ API in headless Chromium (Python Playwright): output, interactive and fixed
+@@ -213,6 +213,29 @@ API in headless Chromium (Python Playwright): output, interactive and fixed
  stdin, EOF, stop, threads, files in and out, extension classes, rexxtry,
  trace and error marks, debug input.
  
@@ -320,24 +320,24 @@ index 0000000..eda1d7c
 +  EXTRA_OBJECTS="${objects[*]}" "$SRC/wasm/build-web.sh" "$BUILD" "$BUILD/bin-web-test"
 +fi
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index 62f7ae3..0b7a11c 100755
+index 36dea45..585e5ca 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
-@@ -43,6 +43,8 @@
- #
- # Usage: wasm/build-web.sh [BUILD_DIR=build-wasm] [OUTDIR=BUILD_DIR/bin-web]
+@@ -45,6 +45,8 @@
  #   (BUILD_DIR: a build made by wasm/build-wasm.sh; EM_CONFIG from it)
+ #   ORX_WASM_WEB_MAX_MEMORY=bytes wasm/build-web.sh ...  (the most the memory
+ #   may grow to; default 512 MiB, see below)
 +#   EXTRA_OBJECTS="a.o b.o" wasm/build-web.sh ...  (more objects to link in:
 +#   wasm/build-test.sh)
  # Output: OUTDIR/{rexx.js,rexx.wasm,rexx.data,ooRexx.js,ooRexx-worker.js}
  set -euo pipefail
  SRC=$(cd "$(dirname "$0")/.." && pwd)
-@@ -72,7 +74,7 @@ wasm,websocket,mainScriptUrlOrBlob]"
+@@ -84,7 +86,7 @@ wasm,websocket,mainScriptUrlOrBlob]"
  cmd=$(cat "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
  cmd=$(sed -E 's/--preload-file [^ ]+//g; s/-sENVIRONMENT=[^ ]+//' <<<"$cmd")
  cmd=${cmd//-o bin\/rexx.js/-o $OUT\/rexx.js}
 -(cd "$BUILD" && eval "$cmd" "$BUILD/web-stdin.o" \
 +(cd "$BUILD" && eval "$cmd" "$BUILD/web-stdin.o" ${EXTRA_OBJECTS:-} \
     -Wl,--wrap=read,--wrap=write \
+    -sMAXIMUM_MEMORY=$MAX_MEMORY \
     -sENVIRONMENT=web,worker -sMODULARIZE=1 -sEXPORT_NAME=createOoRexx \
-    "-sINCOMING_MODULE_JS_API=$INCOMING" \
