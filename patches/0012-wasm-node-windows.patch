@@ -1,0 +1,718 @@
+diff -ruN a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
+--- a/common/platform/unix/SysProcess.cpp
++++ b/common/platform/unix/SysProcess.cpp
+@@ -258,15 +258,77 @@
+  */
+ EM_JS(int, wasmScriptDirectory, (char *buf, int size), {
+     if (typeof process !== 'object' || !process.versions || !process.versions.node ||
+-        typeof scriptDirectory !== 'string' || scriptDirectory.length === 0 ||
+-        scriptDirectory.charAt(0) !== '/')
++        typeof scriptDirectory !== 'string' || scriptDirectory.length === 0)
+     {
+         return 0;
+     }
+-    if (lengthBytesUTF8(scriptDirectory) >= size) return 0;
+-    stringToUTF8(scriptDirectory, buf, size);
++    var dir = scriptDirectory;
++    // Windows: C:\dir\ -> C:/dir/ (see SysProcess::isWindowsHost()).  No
++    // backslashes in EM_JS code: the preprocessor passes them on as they are
++    var win = process.platform === 'win32';
++    if (win) dir = dir.split(String.fromCharCode(92)).join('/');
++    if (dir.charAt(0) !== '/' && !(win && /^[A-Za-z]:/.test(dir) && dir.charAt(2) === '/'))
++    {
++        return 0;
++    }
++    if (lengthBytesUTF8(dir) >= size) return 0;
++    stringToUTF8(dir, buf, size);
+     return 1;
+ });
++
++EM_JS(int, wasmWindowsHost, (void), {
++    return (typeof process === 'object' && process.versions && process.versions.node &&
++            process.platform === 'win32') ? 1 : 0;
++});
++
++/**
++ * WASM: true when running under Node on Windows.  The file system is then the
++ * host's (NODERAWFS), whose names are Windows names: the Unix platform code
++ * takes them with forward slashes (C:/dir/file, //server/share/file), accepts
++ * backslashes on input, and separates PATH lists with ';'.
++ */
++bool SysProcess::isWindowsHost()
++{
++    static int windows = -1;
++    if (windows < 0)
++    {
++        windows = wasmWindowsHost();
++    }
++    return windows != 0;
++}
++
++// the host's realpath (Node's fs.realpathSync) with forward slashes, into buf
++EM_JS(int, wasmRealPath, (const char *name, char *buf, int size), {
++    try
++    {
++        var r = require('fs').realpathSync(UTF8ToString(name)).split(String.fromCharCode(92)).join('/');
++        if (lengthBytesUTF8(r) >= size) return 0;
++        stringToUTF8(r, buf, size);
++        return 1;
++    }
++    catch (e)
++    {
++        return 0;
++    }
++});
++
++/**
++ * realpath() for the Unix platform code.  On a Windows host musl's realpath()
++ * cannot work (it takes C:/dir as a relative name), so ask the host.
++ *
++ * @param name   The name to resolve.
++ *
++ * @return The resolved name (to be freed), or NULL if it does not exist.
++ */
++char *SysProcess::realPath(const char *name)
++{
++    if (!isWindowsHost())
++    {
++        return realpath(name, NULL);
++    }
++    char buf[PATH_MAX];
++    return wasmRealPath(name, buf, sizeof(buf)) ? strdup(buf) : NULL;
++}
+ #endif
+ 
+ #if defined(__EMSCRIPTEN__)
+@@ -605,7 +667,7 @@
+ #endif // __EMSCRIPTEN__
+ 
+     // this is the file location with any symbolic links resolved.
+-    char *modulePath = realpath(path_p, NULL);
++    char *modulePath = realPath(path_p);
+     if (modulePath == NULL)
+     {
+         return NULL;
+@@ -635,7 +697,7 @@
+     char dir[PATH_MAX];
+     if (wasmScriptDirectory(dir, sizeof(dir)) && access(dir, F_OK) == 0)
+     {
+-        char *resolved = realpath(dir, NULL);
++        char *resolved = realPath(dir);
+         if (resolved != NULL)
+         {
+             size_t len = strlen(resolved);
+diff -ruN a/common/platform/unix/SysProcess.hpp b/common/platform/unix/SysProcess.hpp
+--- a/common/platform/unix/SysProcess.hpp
++++ b/common/platform/unix/SysProcess.hpp
+@@ -47,6 +47,7 @@
+ 
+ #include <sys/types.h>
+ #include <unistd.h>
++#include <stdlib.h>
+ 
+ enum
+ {
+@@ -67,6 +68,16 @@
+      static int hostErrno(int e);
+      static int localErrno(int e);   // the reverse, e.g. for strerror()
+      static const char* getLibraryLocation();
++#if defined(__EMSCRIPTEN__)
++     // WASM under Node on Windows: file names are Windows names written
++     // with forward slashes (C:/dir/file), PATH lists are ;-separated
++     static bool isWindowsHost();
++     // realpath(), also for such names (malloc'ed, NULL on failure)
++     static char *realPath(const char *name);
++#else
++     static inline bool isWindowsHost() { return false; }
++     static inline char *realPath(const char *name) { return realpath(name, NULL); }
++#endif
+      static void beep(int frequency, int duration);
+ 
+  protected:
+diff -ruN a/interpreter/platform/unix/SysFileSystem.cpp b/interpreter/platform/unix/SysFileSystem.cpp
+--- a/interpreter/platform/unix/SysFileSystem.cpp
++++ b/interpreter/platform/unix/SysFileSystem.cpp
+@@ -68,6 +68,18 @@
+ #include "Utilities.hpp"
+ #include "ActivityManager.hpp"
+ #include "FileNameBuffer.hpp"
++#include "SysProcess.hpp"
++#include "SystemInterpreter.hpp"
++#include <ctype.h>
++
++/**
++ * A directory delimiter: '/', and on a Windows host (WASM under Node, see
++ * SysProcess::isWindowsHost()) also '\\'.
++ */
++static inline bool isPathDelimiter(char c)
++{
++    return c == '/' || (c == '\\' && SysProcess::isWindowsHost());
++}
+ 
+ const char SysFileSystem::EOF_Marker = 0x1A;
+ const char *SysFileSystem::EOL_Marker = "\n";
+@@ -148,7 +160,7 @@
+     while (pathName < endPtr)
+     {
+         // find the first directory element?
+-        if (*endPtr == '/')
++        if (isPathDelimiter(*endPtr))
+         {
+             // extract the directory information, including the final delimiter
+             // and return as a string object.
+@@ -180,7 +192,7 @@
+     while (pathName < endPtr)
+     {
+         // find the first directory element?
+-        if (*endPtr == '/')
++        if (isPathDelimiter(*endPtr))
+         {
+             return OREF_NULL;    // found a directory portion before an extension...we're extensionless
+         }
+@@ -216,7 +228,7 @@
+     while (pathName < endPtr)
+     {
+         // find the first directory element?
+-        if (*endPtr == '/')
++        if (isPathDelimiter(*endPtr))
+         {
+             // extract the directory information, including the final delimiter
+             // and return as a string object.
+@@ -245,7 +257,7 @@
+     while (name < endPtr)
+     {
+         // find the first directory element?
+-        if (*endPtr == '/')
++        if (isPathDelimiter(*endPtr))
+         {
+             return false;        // found a directory portion before an extension...we're extensionless
+         }
+@@ -273,6 +285,15 @@
+ {
+     // hasDirectory() means we have enough absolute directory
+     // information at the beginning to bypass performing path searches.
++    if (SysProcess::isWindowsHost())
++    {
++        // also C:..., \\..., .\\ and ..\\ (a drive letter is enough: C:file
++        // is relative to that drive's directory, not to be searched for)
++        return name[0] == '~' || isPathDelimiter(name[0]) ||
++              (isalpha((unsigned char)name[0]) && name[1] == ':') ||
++              (name[0] == '.' && isPathDelimiter(name[1])) ||
++              (name[0] == '.' && name[1] == '.' && isPathDelimiter(name[2]));
++    }
+     return name[0] == '~' || name[0] == '/' ||
+           (name[0] == '.' && name[1] == '/') ||
+           (name[0] == '.' && name[1] == '.' && name[2] == '/');
+@@ -417,9 +438,11 @@
+     //
+     // Most allocators let that pass unnoticed. OpenBSD's does not, and the test
+     // suite died there with a SIGSEGV inside strchr called from this function.
++    // ':', or ';' on a Windows host (getPathSeparator())
++    const char listSeparator = *getPathSeparator();
+     for (const char *p = path; *p != '\0'; )
+     {
+-        const char *q = strchr(p, ':');
++        const char *q = strchr(p, listSeparator);
+         size_t subLength = (q == NULL) ? strlen(p) : (size_t)(q - p);
+ 
+         // skip empty entries, the "::" in a path case
+@@ -478,12 +501,22 @@
+     // does it start with the user home marker?
+     // this is the typical case.  This is a directory based off of
+     // the current users home directory.
+-    if (name.at(1) == '\0' || name.at(1) == '/')
++    if (name.at(1) == '\0' || isPathDelimiter(name.at(1)))
+     {
+         // save everything after the first character
+         tempName = ((const char *)name) + 1;
+         // start with the home directory
+-        name = getenv("HOME");
++        const char *home = getenv("HOME");
++        // Windows hosts have USERPROFILE (HOME only in some shells)
++        if (home == NULL && SysProcess::isWindowsHost())
++        {
++            home = getenv("USERPROFILE");
++        }
++        if (home == NULL)
++        {
++            return false;
++        }
++        name = home;
+         // We don't need to add a slash : If we have "~" alone, then no final slash expected (same as for "~user"). If "~/..." then we have the slash already
+         name += (const char *)tempName;
+     }
+@@ -550,6 +583,11 @@
+         return false;
+     }
+ 
++    if (SysProcess::isWindowsHost())
++    {
++        return canonicalizeWindowsName(name);
++    }
++
+     // does it start with the user home marker?
+     if (name.startsWith('~'))
+     {
+@@ -590,6 +628,117 @@
+ 
+ 
+ /**
++ * Windows host: the length of the root part of a name with forward slashes,
++ * "C:" or "//server/share"; 0 if it has none.
++ */
++static size_t windowsRootLength(const char *name)
++{
++    if (isalpha((unsigned char)name[0]) && name[1] == ':')
++    {
++        return 2;
++    }
++    if (name[0] == '/' && name[1] == '/' && name[2] != '/' && name[2] != '\0')
++    {
++        const char *server = strchr(name + 2, '/');
++        if (server == NULL)
++        {
++            return strlen(name);
++        }
++        const char *share = strchr(server + 1, '/');
++        return share == NULL ? strlen(name) : (size_t)(share - name);
++    }
++    return 0;
++}
++
++
++/**
++ * canonicalizeName() on a Windows host (WASM under Node, see
++ * SysProcess::isWindowsHost()): backslashes become forward slashes, the name
++ * gets the current directory, or the current drive (\\dir), and . and .. are
++ * removed after the root part (C: with its letter in upper case, or
++ * //server/share): C:/dir/file.
++ *
++ * @param name   The current working name.
++ *
++ * @return true if this was valid enough to normalize.
++ */
++bool SysFileSystem::canonicalizeWindowsName(FileNameBuffer &name)
++{
++    if (name.startsWith('~') && !resolveTilde(name))
++    {
++        return false;
++    }
++    for (size_t i = 0; name.at(i) != '\0'; i++)
++    {
++        if (name.at(i) == '\\')
++        {
++            name.at(i) = '/';
++        }
++    }
++
++    FileNameBuffer full;
++    size_t root = windowsRootLength(name);
++    if (root == 0 || (root == 2 && name.at(2) != '/'))
++    {
++        FileNameBuffer current;
++        if (!getCurrentDirectory(current))
++        {
++            return false;
++        }
++        size_t currentRoot = windowsRootLength(current);
++        if (root == 0 && name.startsWith('/'))
++        {
++            // \\dir: the root of the current drive
++            full.set(current, currentRoot);
++            full += name;
++        }
++        else if (root == 0)
++        {
++            full = current;
++            full += '/';
++            full += name;
++        }
++        // C:file: relative to the current directory if that is on drive C:,
++        // otherwise to C:'s root (Node keeps no directory per drive)
++        else if (currentRoot == 2 && toupper((unsigned char)current.at(0)) == toupper((unsigned char)name.at(0)))
++        {
++            full = current;
++            full += '/';
++            full += ((const char *)name) + 2;
++        }
++        else
++        {
++            full.set(name, 2);
++            full += '/';
++            full += ((const char *)name) + 2;
++        }
++    }
++    else
++    {
++        full = name;
++    }
++
++    root = windowsRootLength(full);
++    FileNameBuffer rest;
++    if (full.at(root) == '\0')
++    {
++        rest = "/";
++    }
++    else if (!normalizePathName(((const char *)full) + root, rest))
++    {
++        return false;
++    }
++    name.set(full, root);
++    if (root == 2)
++    {
++        name.at(0) = (char)toupper((unsigned char)name.at(0));
++    }
++    name += rest;
++    return true;
++}
++
++
++/**
+  * Normalize an absolute Unix path name.  Removes duplicate and trailing
+  * slashes, resolves and removes ./ or ../  This works for any path name,
+  * whether the resovled name exists or not.
+@@ -1198,6 +1347,11 @@
+  */
+ bool SysFileSystem::isCaseSensitive(const char *name)
+ {
++    // Windows host: NTFS names are case-insensitive (by default)
++    if (SysProcess::isWindowsHost())
++    {
++        return false;
++    }
+ #if defined HAVE_PC_CASE_SENSITIVE || defined HAVE_FS_CASEFOLD_FL
+     AutoFree tmp = strdup(name);
+ 
+@@ -1261,6 +1415,25 @@
+  */
+ int SysFileSystem::getRoots(FileNameBuffer &roots)
+ {
++    // Windows host: the drives, "C:/" and so on, each ending with a null
++    if (SysProcess::isWindowsHost())
++    {
++        char list[26 * 4];
++        size_t length = 0;
++        int count = 0;
++        for (char drive = 'A'; drive <= 'Z'; drive++)
++        {
++            char root[4] = { drive, ':', '/', '\0' };
++            if (isDirectory(root))
++            {
++                memcpy(list + length, root, 4);
++                length += 4;
++                count++;
++            }
++        }
++        roots.set(list, length);
++        return count;
++    }
+     // just one root to return
+     roots = "/";
+     return 1;
+@@ -1285,7 +1458,8 @@
+  */
+ const char* SysFileSystem::getPathSeparator()
+ {
+-    return ":";
++    // Windows host: PATH lists are ;-separated (C: has a colon)
++    return SysProcess::isWindowsHost() ? ";" : ":";
+ }
+ 
+ 
+@@ -1313,6 +1487,17 @@
+     {
+         if (getcwd(directory, directory.capacity()) != NULL)
+         {
++            // Windows host: C:\\dir -> C:/dir
++            if (SysProcess::isWindowsHost())
++            {
++                for (size_t i = 0; directory.at(i) != '\0'; i++)
++                {
++                    if (directory.at(i) == '\\')
++                    {
++                        directory.at(i) = '/';
++                    }
++                }
++            }
+             return true;
+         }
+         // erange indicates the buffer was too small. Anything else is a
+@@ -1746,6 +1931,13 @@
+  */
+ const char* SysFileSystem::getPathEnd(const char *name)
+ {
++    // Windows host: the last '/' or '\\'
++    if (SysProcess::isWindowsHost())
++    {
++        const char *slash = strrchr(name, '/');
++        const char *backslash = strrchr(name, '\\');
++        return (backslash != NULL && (slash == NULL || backslash > slash)) ? backslash : slash;
++    }
+     return strrchr(name, PathDelimiter);             // find the last backslash in name
+ }
+ 
+@@ -1772,6 +1964,16 @@
+  */
+ bool SysFileSystem::getTemporaryPath(FileNameBuffer &temporary)
+ {
++    // Windows host: TEMP or TMP, as Windows programs do
++    if (SysProcess::isWindowsHost())
++    {
++        if (SystemInterpreter::getEnvironmentVariable("TEMP", temporary) ||
++            SystemInterpreter::getEnvironmentVariable("TMP", temporary))
++        {
++            canonicalizeName(temporary);
++            return true;
++        }
++    }
+     if (!SystemInterpreter::getEnvironmentVariable("TMPDIR", temporary))
+     {
+         temporary = "/tmp";
+diff -ruN a/interpreter/platform/unix/SysFileSystem.hpp b/interpreter/platform/unix/SysFileSystem.hpp
+--- a/interpreter/platform/unix/SysFileSystem.hpp
++++ b/interpreter/platform/unix/SysFileSystem.hpp
+@@ -109,6 +109,7 @@
+      static bool  hasExtension(const char *name);
+      static bool  hasDirectory(const char *name);
+      static bool  canonicalizeName(FileNameBuffer &resolvedName);
++     static bool  canonicalizeWindowsName(FileNameBuffer &resolvedName);
+      static bool  normalizePathName(const char *name, FileNameBuffer &resolvedName);
+      static RexxString* extractDirectory(RexxString *file);
+      static RexxString* extractExtension(RexxString *file);
+diff -ruN a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform/unix/SystemCommands.cpp
+--- a/interpreter/platform/unix/SystemCommands.cpp
++++ b/interpreter/platform/unix/SystemCommands.cpp
+@@ -58,6 +58,7 @@
+ #include "SysInterpreterInstance.hpp"
+ #include "SysThread.hpp"
+ #include "SysFile.hpp"                // HOST_ERRNO
++#include "SysProcess.hpp"
+ 
+ #include "RexxInternalApis.h"
+ #include <sys/types.h>
+@@ -195,6 +196,14 @@
+  */
+ RexxString *SystemInterpreter::getDefaultAddressName()
+ {
++#if defined(__EMSCRIPTEN__)
++    // WASM under Node on Windows: commands go to cmd.exe, as with ooRexx for
++    // Windows, whose initial environment is CMD
++    if (SysProcess::isWindowsHost())
++    {
++        return new_string("CMD");
++    }
++#endif
+     return GlobalNames::INITIALADDRESS;
+ }
+ 
+@@ -843,6 +852,7 @@
+ #define WASM_CMD_OUTPUT     2
+ #define WASM_CMD_ERROR      4
+ #define WASM_CMD_SAME       8      // OUTPUT and ERROR to the same target
++#define WASM_CMD_VERBATIM  16      // Windows: argv as it is (cmd.exe /s /c "...")
+ 
+ // special return codes of wasmCommandRun
+ #define WASM_CMD_NO_PROCESSES  (-100000)
+@@ -882,17 +892,34 @@
+ 
+     var file = args[0];
+     var rest = args.slice(1);
+-    if (flags & 8)
++    var win = process.platform === 'win32';
++    var same = null;                           // Windows: the file for OUTPUT+ERROR
++    if ((flags & 8) && !win)
+     {   // OUTPUT and ERROR interleaved into one target
+         rest = ['-c', 'exec 2>&1; exec "$0" "$@"', file].concat(rest);
+         file = '/bin/sh';
+     }
++    else if (flags & 8)
++    {   // Windows has no /bin/sh: both go to one file, opened once
++        try
++        {
++            same = { name: require('path').join(os.tmpdir(), 'orx-wasm-cmd-' + process.pid + '-' +
++                                                Date.now() + '-' + Math.random().toString(36).slice(2)) };
++            same.fd = fs.openSync(same.name, 'w+');
++        }
++        catch (e)
++        {
++            return 127;
++        }
++    }
+     var options = {
+         cwd: dir, env: env, argv0: args[0],
+         maxBuffer: 0x7fffffff,
++        windowsVerbatimArguments: !!(flags & 16),
++        windowsHide: true,
+         stdio: [(flags & 1) ? 'pipe' : 'inherit',
+-                (flags & 2) ? 'pipe' : 'inherit',
+-                ((flags & 4) && !(flags & 8)) ? 'pipe' : 'inherit']
++                same ? same.fd : (flags & 2) ? 'pipe' : 'inherit',
++                same ? same.fd : ((flags & 4) && !(flags & 8)) ? 'pipe' : 'inherit']
+     };
+     if (flags & 1)
+     {
+@@ -910,8 +937,17 @@
+     }
+     catch (e)
+     {
++        if (same)
++        {
++            try { fs.closeSync(same.fd); fs.unlinkSync(same.name); } catch (e2) { }
++        }
+         return 127;
+     }
++    if (same)
++    {
++        try { r.stdout = fs.readFileSync(same.name); } catch (e) { r.stdout = null; }
++        try { fs.closeSync(same.fd); fs.unlinkSync(same.name); } catch (e) { }
++    }
+     globalThis.__orxCmd = [r.stdout || null, r.stderr || null];
+     if (r.error)
+     {
+@@ -971,9 +1007,10 @@
+  * WASM version of the process part of ioCommandHandler (see above).
+  */
+ static RexxObjectPtr wasmCommandHandler(RexxExitContext *context, CSTRING commandString,
+-                                        char **argv, RexxIORedirectorContext *ioContext)
++                                        char **argv, RexxIORedirectorContext *ioContext,
++                                        bool verbatim)
+ {
+-    int flags = 0;
++    int flags = verbatim ? WASM_CMD_VERBATIM : 0;
+     CSTRING inputBuffer = NULL;
+     size_t inputLength = 0;
+ 
+@@ -1080,6 +1117,44 @@
+             argv[1] = NULL;
+         }
+     }
++#if defined(__EMSCRIPTEN__)
++    // WASM under Node on Windows: CMD (and "", COMMAND, SYSTEM) is cmd.exe,
++    // called as Node and ooRexx for Windows call it, /d /s /c "command", with
++    // the command line passed on as it is; other shells (BASH from Git for
++    // Windows, ...) are looked for in PATH
++    else if (SysProcess::isWindowsHost())
++    {
++        if (strlen(environment) == 0 ||
++            Utilities::strCaselessCompare("cmd", environment) == 0 ||
++            Utilities::strCaselessCompare("command", environment) == 0 ||
++            Utilities::strCaselessCompare("system", environment) == 0)
++        {
++            const char *comspec = getenv("COMSPEC");
++            AutoFree line = (char *)malloc(strlen(commandString) + 3);
++            if (line == NULL)
++            {
++                return ErrorFailure(context, commandString);
++            }
++            strcpy(line, "\"");
++            strcat(line, commandString);
++            strcat(line, "\"");
++            argv[0] = (char *)(comspec != NULL ? comspec : "cmd.exe");
++            argv[1] = (char *)"/d";
++            argv[2] = (char *)"/s";
++            argv[3] = (char *)"/c";
++            argv[4] = line;
++            argv[5] = NULL;
++            return wasmCommandHandler(context, commandString, argv, ioContext, true);
++        }
++        strncpy(shell, environment, sizeof(shell) - 1);
++        shell[sizeof(shell) - 1] = '\0';
++        Utilities::strlower(shell);
++        argv[0] = (char *)shell;
++        argv[1] = (char *)"-c";
++        argv[2] = (char *)commandString;
++        argv[3] = NULL;
++    }
++#endif
+     else
+     {   // Set up the full path to the requested shell.
+         strcpy(shell, SYSSHELLPATH);
+@@ -1106,7 +1181,7 @@
+     }
+ 
+ #if defined(__EMSCRIPTEN__)
+-    return wasmCommandHandler(context, commandString, argv, ioContext);
++    return wasmCommandHandler(context, commandString, argv, ioContext, false);
+ #else
+     if (ioContext->IsRedirectionRequested())
+     {
+@@ -1321,6 +1396,13 @@
+     _instance->addCommandHandler("",        (REXXPFN)ioCommandHandler, HandlerType::REDIRECTING);
+     _instance->addCommandHandler("COMMAND", (REXXPFN)ioCommandHandler, HandlerType::REDIRECTING);
+     _instance->addCommandHandler("SYSTEM",  (REXXPFN)ioCommandHandler, HandlerType::REDIRECTING);
++#if defined(__EMSCRIPTEN__)
++    // WASM under Node on Windows: CMD, the initial environment there
++    if (SysProcess::isWindowsHost())
++    {
++        _instance->addCommandHandler("CMD", (REXXPFN)ioCommandHandler, HandlerType::REDIRECTING);
++    }
++#endif
+ 
+     // The command handlers for shells other than "sh" will only work
+     // if a shell with this named is installed on the system
+diff -ruN a/interpreter/platform/unix/SystemInterpreter.cpp b/interpreter/platform/unix/SystemInterpreter.cpp
+--- a/interpreter/platform/unix/SystemInterpreter.cpp
++++ b/interpreter/platform/unix/SystemInterpreter.cpp
+@@ -43,6 +43,8 @@
+ #include "Interpreter.hpp"
+ #include "GlobalNames.hpp"
+ #include "FileNameBuffer.hpp"
++#include "SysProcess.hpp"
++#include "Utilities.hpp"
+ 
+ sigset_t SystemInterpreter::oldmask;
+ sigset_t SystemInterpreter::newmask;
+@@ -177,6 +179,19 @@
+  */
+ bool SystemInterpreter::getEnvironmentVariable(const char *variable, FileNameBuffer &buffer)
+ {
++#if defined(__EMSCRIPTEN__)
++    // Windows host: names are case-insensitive; wasm/node-pre.js gives the
++    // runtime the host's in upper case
++    if (SysProcess::isWindowsHost())
++    {
++        FileNameBuffer upper;
++        upper = variable;
++        Utilities::strupper(upper);
++        const char *value = getenv(upper);
++        buffer = value != NULL ? value : "";
++        return value != NULL;
++    }
++#endif
+     const char *value = getenv(variable);
+     if (value != NULL)
+     {
+@@ -198,6 +213,16 @@
+  */
+ void SystemInterpreter::setEnvironmentVariable(const char *variableName, const char *value)
+ {
++#if defined(__EMSCRIPTEN__)
++    // Windows host: names are case-insensitive (see getEnvironmentVariable)
++    FileNameBuffer upper;
++    if (SysProcess::isWindowsHost())
++    {
++        upper = variableName;
++        Utilities::strupper(upper);
++        variableName = upper;
++    }
++#endif
+     // A NULL value is an unset operation
+     if (value == NULL)
+     {
+diff -ruN a/wasm/node-pre.js b/wasm/node-pre.js
+--- a/wasm/node-pre.js
++++ b/wasm/node-pre.js
+@@ -36,8 +36,11 @@
+ /*----------------------------------------------------------------------------*/
+ // Pre-js of the Node command-line build (wasm/build-node.sh).
+ Module['preRun'] = (Module['preRun'] || []).concat([function() {
+-  // the host environment is the environment of the Rexx process
+-  for (var k in process.env) ENV[k] = process.env[k];
++  // the host environment is the environment of the Rexx process.  Windows:
++  // the names in upper case (Path -> PATH), as the interpreter's Unix code
++  // asks for them; Windows treats them case-insensitively anyway
++  var win = process.platform === 'win32';
++  for (var k in process.env) ENV[win ? k.toUpperCase() : k] = process.env[k];
+   // LINES()/CHARS() on STDIN: SysFile::hasData() asks ioctl(FIONREAD), which
+   // Emscripten answers 0 (success) without writing the count, so the caller
+   // saw whatever its variable held (LINES() was always 1).  Answer it for the

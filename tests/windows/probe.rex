@@ -40,6 +40,7 @@ call probe "File~absolutePath",     "return .File~new('probe-b.txt')~absolutePat
 call probe "File~parent",           "return .File~new("quote(f)")~parent"
 call probe "close absolute",        "return stream("quote(f)", 'c', 'close')"
 call probe "SysFileDelete absolute","return SysFileDelete("quote(f)")"
+call probe "SysMkDir sub",           "return SysMkDir('sub')"
 call probe "SysMkDir/SysRmDir",     "return SysMkDir('probe-d') SysRmDir('probe-d')"
 call probe "SysFileTree",           "call SysFileTree '*', 'x.', 'FO'; return x.0 x.1"
 call probe "File~listFiles",        "return .File~new('.')~listFiles~items"
@@ -56,6 +57,20 @@ call probe "echo with output",      "address system 'echo hello' with output ste
 call probe "cd (shell builtin)",    "address system 'cd' with output stem o.; return rc o.1"
 call probe "dir or ls",             "address system 'dir /b' with output stem o. error stem e.; return rc o.0 e.0"
 call probe "a command not found",   "address system 'no-such-command-x' with output stem o. error stem e.; return rc"
+
+call probe "address cmd: ver",       "address cmd 'ver' with output stem o.; return rc o.0"
+call probe "address cmd: set ORXP",  "address cmd 'set ORXP=1 && set ORXP' with output stem o.; return rc o.1"
+call probe "2>&1 into one stem",     "address cmd 'echo out & echo err 1>&2' with output stem o. error stem o.; return rc o.0 o.1 o.2"
+call probe "address bash",           "address bash 'echo $0' with output stem o.; return rc o.1"
+call probe "value env Path=PATH",    "return value('Path',,'ENVIRONMENT') == value('PATH',,'ENVIRONMENT')"
+call probe "SysTempFileName",        "return SysTempFileName('orx????.tmp')"
+call probe "File~listRoots",         "r = .File~listRoots; return r~items r[1]"
+call probe "File~isCaseSensitive",   "return .File~isCaseSensitive"
+call probe "qualify('\a\b.txt')",  "return qualify('\a\b.txt')"
+call probe "qualify('..\x')",       "return qualify('..\x')"
+call probe "qualify('~/x')",         "return qualify('~/x')"
+call probe "SysFileTree backslash",  "call lineout 'sub\t.txt', 'x'; call lineout 'sub\t.txt'; call SysFileTree 'sub\*.txt', 'x.', 'FO'; call SysFileDelete 'sub\t.txt'; return x.0 x.1"
+call probe "filespec drive/path",    "f = 'C:\dir\sub\name.ext'; return filespec('d', f) '|' filespec('p', f) '|' filespec('n', f)"
 
 -- the queues (the session queue; a named queue needs the RexxAPI daemon)
 call probe "session queue",         "push 'pushed'; parse pull x; return x"

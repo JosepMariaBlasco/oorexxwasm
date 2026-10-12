@@ -1093,12 +1093,12 @@ index 0000000..92f276a
 +  address t "RETURN thread ok"
 +  return rc
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 9dab3c8..85fc4eb 100755
+index 2b4865e..22de054 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -327,6 +327,10 @@ check "JavaScript objects: a collected RexxProxy lets its Rexx object go" '^300$
- check "JavaScript objects: Rexx classes extending JavaScript classes" '^31 passed, 0 failed$' '!^FAIL ' -- \
-   "$X '$(cd "$(dirname "$0")" && pwd)/js-extend.rex'"
+@@ -332,6 +332,10 @@ check "JavaScript objects: Rexx classes extending JavaScript classes" '^31 passe
+ check "a logic error ends the process with a non-zero status" '^Logic error: cannot locate startup image' '^status=[1-9]' -- \
+   "mkdir noimg && cp '$NB/rexx.js' '$NB/rexx.wasm' noimg/ && cd noimg && PATH=/usr/bin:/bin '$(command -v node)' rexx.js -e 'say 1'; echo status=\$?"
  
 +# --- command environments written in Rexx (extensions/cmdhandler, portable test)
 +check "command handlers in Rexx (cmdhandler.cls)" '^[0-9]+ passed, 0 failed$' '!^FAIL ' -- \
