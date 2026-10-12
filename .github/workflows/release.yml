@@ -87,7 +87,7 @@ jobs:
           name: npm-package
           path: pkg
       - name: Install (npm install -g)
-        run: npm install -g pkg/oorexxwasm-*.tgz
+        run: npm install -g ./pkg/oorexxwasm-*.tgz
       - name: rexx -v
         run: rexx -v
       - name: Smoke test
@@ -116,4 +116,4 @@ jobs:
           name: npm-package
           path: pkg
       - name: Publish
-        run: npm publish pkg/oorexxwasm-*.tgz --access public --provenance
+        run: npm publish ./pkg/oorexxwasm-*.tgz --access public --provenance
