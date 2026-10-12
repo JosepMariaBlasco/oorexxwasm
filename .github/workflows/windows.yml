@@ -94,6 +94,13 @@ jobs:
           set +e
           probe=$(cygpath -w "$PWD/pkg/tests/probe.rex"); scratch=$(cygpath -w "$PWD/scratch")
           cd "$(npm root -g)/oorexxwasm/lib" && node rexx.js "$probe" "$scratch"; echo "exit status $?"
+      - name: probe from lib/, the program also there (a relative name)
+        continue-on-error: true
+        run: |
+          set +e
+          scratch=$(cygpath -w "$PWD/scratch")
+          lib="$(npm root -g)/oorexxwasm/lib"
+          cp pkg/tests/probe.rex "$lib/" && cd "$lib" && node rexx.js probe.rex "$scratch"; echo "exit status $?"
       - name: Smoke test
         continue-on-error: true
         run: set +e; cd scratch && rexx ../pkg/tests/smoke.rex; echo "exit status $?"
