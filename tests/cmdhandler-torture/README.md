@@ -40,7 +40,20 @@ What they found, with the fix for each:
   command handlers (allocating objects) without the interpreter lock, so a
   thread registering an environment while another ran Rexx code corrupted
   the object heap (`t03`: hangs and crashes).  An ooRexx fix, outside this
-  series: until it is in the base revision, `t03` can hang or crash.
+  series.
+- Resolving an environment that is not in the instance's table (the lookup
+  of a classic registered subcommand handler) wrote into a new
+  `CommandHandler` that nothing anchored, with the kernel lock released
+  (`CommandHandler::resolve`: `UnsafeBlock` around
+  `RexxResolveSubcom(name, &entryPoint)`); another thread's garbage
+  collection could free it, and a garbage handler was then cached for that
+  environment (`t03`: a crash in 2–6 % of the runs under load, when a
+  sender's first command came before the environment's first
+  registration).  It happens in plain ooRexx, with no extension: commands
+  to an unknown environment from one thread while others run.  An ooRexx
+  fix, outside this series.
+  With both fixes `t03` passed 200 of 200 runs under load; until they are
+  in the base revision it can hang or crash.
 - `ApiContext(RexxIORedirectorContext *, bool)`, used by the non-blocking
   redirector queries (`IsInputRedirected` …), left `clearConditions`
   uninitialized: its destructor could clear the activation's condition, and
