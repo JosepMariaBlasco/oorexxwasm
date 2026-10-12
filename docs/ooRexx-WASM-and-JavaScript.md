@@ -73,6 +73,39 @@ Because the function returns before Rexx sees the call, it cannot answer anythin
 
 A handler stays alive from its first trip to JavaScript until `handler~release` or the end of the run.
 
+## Waiting
+
+Calling JavaScript from Rexx always works the same way: the Rexx thread sends the request to the thread of the realm and waits for the answer. Every Rexx thread is a thread of its own (a Web Worker in the browser, a worker thread under Node), and a worker may wait.
+
+The other way round is where realms differ, because for JavaScript to call Rexx and use the answer, the JavaScript thread itself has to wait while a Rexx thread runs the method:
+
+| Where the JavaScript runs | Can it wait? |
+| --- | --- |
+| The page's realm, `.js~page` | No. The page's thread also draws the screen and handles the mouse and keyboard, and browsers do not let it block (`Atomics.wait` throws there): while it waited, the page would freeze. |
+| The worker's realm, `.js`, in the browser | Yes. A worker draws nothing, and may block. |
+| Node, `.js` | Yes. Node's main thread may block. |
+
+What the page *can* do is call Rexx without waiting: send the call, go on, and receive the answer later. In JavaScript that answer-to-come is a Promise. A Promise is enough wherever JavaScript accepts one (`await` in an `async` function, `then`), because the thread is free until the answer arrives. It is not enough where JavaScript needs a plain value at once, before the function it called returns: a comparator for `sort`, a callback for `filter` or `map`, a getter, an event listener that must decide during the dispatch whether to call `preventDefault`. In those places the page cannot use Rexx's answer, whatever the bridge does.
+
+This is why a handler in the page is always queued, and why the browser has finished dispatching an event by the time Rexx sees it. What can be done:
+
+- **Say it in advance.** What must happen during the dispatch, and is always the same, goes in the handler's options: `.js~handler(self, "SUBMIT", "preventDefault")`.
+- **Write the part that cannot wait in JavaScript, from Rexx.** `Function` makes a JavaScript function in any realm, and it runs at once, without Rexx:
+
+  ```rexx
+  cmp = .js~page~Function~new("a", "b", "return a - b")
+  list~sort(cmp)                                    -- sorted in the page, no Rexx involved
+
+  enter = .js~page~Function~new("e", "if (e.key === 'Enter') e.preventDefault()")
+  field~addEventListener("keydown", enter)          -- decides during the dispatch
+  field~addEventListener("keydown", .js~handler(self, "KEY"))   -- Rexx hears of it afterwards
+  ```
+
+- **Do the work in Rexx, or in the worker's realm.** Bring the data over, compute there, and hand the page the result: a sorted array instead of a comparator.
+- **Let JavaScript take a Promise** where it can: code of one's own written with `async`/`await` waits for Rexx without blocking the page.
+
+A queued handler given where JavaScript needs a value at once does not fail: JavaScript receives `undefined`, and Rexx receives the calls later, as events. `.js~newArray(3, 1, 2)~sort(.js~handler(o, "COMPARE"))` leaves the array as it was, with three calls queued.
+
 ## Pitfalls
 
 - **Case-insensitive names can pick the wrong property.** `.js~page~Event` finds `window.event`, the current event, before `window.Event`, the constructor. Use the exact form: `w["Event"]~new("input")`.
@@ -110,3 +143,4 @@ Replies on this list are very welcome.
 | `.js~box(type, x)` with BSF4ooRexx's type indicators, and `.js~unbox(o)` | Values |
 | What the implementation guarantees, stated | Guarantees |
 | `~at(i)` and `~put(v, i)` are `o[i]` and `o[i] = v`, as in Rexx's collections (JavaScript's `at` is `o~invoke("at", i)`) | Messages, Pitfalls |
+| Why JavaScript cannot wait for Rexx in the page, and what to do instead | Waiting |
