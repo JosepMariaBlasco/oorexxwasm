@@ -2,7 +2,7 @@
 
 [ooRexx](https://www.oorexx.org/) 5.3.0 (SVN trunk r13268) compiled to
 WebAssembly, for Node.js 22 or later: `rexx`, `rexxc`, `rxqueue` and
-`rxsubcom`, on any platform Node runs on.
+`rxsubcom`. It runs on Linux and macOS; Windows is not supported yet.
 
 This is an experimental port, not an official distribution of the Rexx
 Language Association. The port, its patches and its documentation are at

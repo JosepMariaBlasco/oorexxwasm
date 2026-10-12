@@ -43,7 +43,8 @@ cat > "$PKG/package.json" <<JSON
     "rxsubcom": "bin/rxsubcom.js"
   },
   "files": ["bin", "lib", "README.md", "CPLv1.0.txt"],
-  "engines": { "node": ">=22" }
+  "engines": { "node": ">=22" },
+  "os": ["!win32"]
 }
 JSON
 (cd "$OUT" && npm pack "$PKG" --silent)
