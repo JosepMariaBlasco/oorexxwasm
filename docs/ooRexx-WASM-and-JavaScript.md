@@ -126,6 +126,36 @@ In the page, what can be done:
 
 A queued handler given where JavaScript needs a value at once does not fail: JavaScript receives `undefined`, and Rexx receives the calls later, as events. `.js~page~Array~of(3, 1, 2)~sort(.js~handler(o, "COMPARE"))` leaves the array as it was, with three calls queued; in the worker's realm the same `sort` works.
 
+## Classes
+
+A Rexx class can extend a JavaScript class, so that JavaScript calls the Rexx methods where it would call the class's own, as `.net~extend` does in ooRexx/.NET:
+
+```rexx
+c = .MyCar~new("Seat", 2020)
+say c~describe                    -- Car's describe() calls this.age(): "Seat is 7"
+
+::requires "js.cls"
+::class MyCar subclass JSObject
+::method activate class
+  .js~extend(self, "Car")         -- a JavaScript class, or its name
+::method init
+  use arg name, year
+  self~init:super(name, year)     -- new Car(name, year)
+::method age
+  return self~age:super + 1       -- Car's own age()
+```
+
+`.js~extend(class, base [, names...])`, once per class (its `ACTIVATE` class method is the natural place), makes a JavaScript class that extends `base`, named as the Rexx class, and answers it. `base` is a `.JSObject` or the name of a class as a script sees it, also one declared with `class Car {}`. The class must be a subclass of `JSObject`.
+
+- **What is overridden.** Every method of `base` and of its prototype chain whose name matches a method of the Rexx class, case-insensitively, as messages are; a getter is the method `NAME`, a setter `"NAME="`. The Rexx class's methods count with those of its superclasses below `JSObject`, but not `INIT`, `UNINIT` and `UNKNOWN`, nor private ones, and they are looked at when `extend` runs. The `names` are exact JavaScript names that `base` does not have, added as methods, for code that looks for them (a custom element's `connectedCallback`).
+- **The call.** JavaScript calls an override as it calls a synchronous handler (see [Events](#events) and [Waiting](#waiting)): on the Rexx thread that is waiting for JavaScript, with its result; or, when JavaScript calls on its own, on a thread of its own, without waiting. A condition is a `RexxError`.
+- **Making one.** `.MyCar~new(args...)` makes the JavaScript object with `new`, passing `args` to the base's constructor; the Rexx class's `INIT` calls `self~init:super(args...)`. A base constructor that calls an override reaches the Rexx method, and `self` can already be used there.
+- **The base's members.** `self~name:super(args)` is the base's own member, not the override: its method, its getter, `self~"NAME=":super(v)` its setter. A member that is not overridden is reached as with any `.JSObject`: `c~honk`.
+- **Identity.** The JavaScript object comes back to Rexx as the Rexx object itself: `.js~newArray(c)[1] == c`, and it is a `MyCar`.
+- **Lifetime.** The Rexx object and the JavaScript object keep each other alive until `.js~detach(c)`. After it, and for an object JavaScript makes itself (`new MyCar(...)` in JavaScript), the overrides run the base's members.
+
+This needs a realm where JavaScript can wait for Rexx: the worker's and Node's. In the page, `extend` is an error.
+
 ## Pitfalls
 
 - **Case-insensitive names can pick the wrong property.** `.js~page~Event` finds `window.event`, the current event, before `window.Event`, the constructor. Use the exact form: `w["Event"]~new("input")`.
@@ -165,3 +195,4 @@ Replies on this list are very welcome.
 | `~at(i)` and `~put(v, i)` are `o[i]` and `o[i] = v`, as in Rexx's collections (JavaScript's `at` is `o~invoke("at", i)`) | Messages, Pitfalls |
 | Why JavaScript cannot wait for Rexx in the page, and what to do instead | Waiting |
 | Handlers are synchronous in the worker's realm and under Node, as `.net~handler` (a comparator for `sort` works); option `queued` (implied by `latest` and `max`), and the page, keep them queued; a condition is a `RexxError` | Events, Waiting |
+| Rexx classes extending JavaScript classes: `.js~extend(class, base [, names...])`, `.js~detach(o)`, as `.net~extend` | Classes |

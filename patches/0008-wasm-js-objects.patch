@@ -108,25 +108,27 @@ copied as arrays and plain objects.
   several threads;
   iteration, options latest and max, release).  Documented in wasm/README.md.
 ---
- interpreter/package/PackageManager.cpp |   6 +-
- wasm/README.md                         | 120 +++
- wasm/build-node.sh                     |  17 +-
- wasm/build-web.sh                      |  18 +-
- wasm/extra-packages.cpp                |  69 ++
- wasm/js-bridge.js                      | 214 ++++++
- wasm/js-realm.js                       | 470 ++++++++++++
- wasm/tests/qualify-node-cli.sh         | 103 +++
- wasm/tests/web-api.html                |   2 +-
- wasm/tests/web-api.py                  |  85 +++
- wasm/web-jdor.cpp                      |  12 +-
- wasm/web-js.cpp                        | 979 +++++++++++++++++++++++++
- wasm/web/js.cls                        | 433 +++++++++++
- wasm/web/ooRexx-worker.js              |  15 +-
- wasm/web/ooRexx.js                     |  52 ++
- 15 files changed, 2572 insertions(+), 23 deletions(-)
+ interpreter/package/PackageManager.cpp |    6 +-
+ wasm/README.md                         |  142 +++
+ wasm/build-node.sh                     |   17 +-
+ wasm/build-web.sh                      |   18 +-
+ wasm/extra-packages.cpp                |   69 ++
+ wasm/js-bridge.js                      |  216 +++++
+ wasm/js-realm.js                       |  632 ++++++++++++++
+ wasm/tests/js-extend.rex               |  154 ++++
+ wasm/tests/qualify-node-cli.sh         |  107 +++
+ wasm/tests/web-api.html                |    2 +-
+ wasm/tests/web-api.py                  |   92 ++
+ wasm/web-jdor.cpp                      |   12 +-
+ wasm/web-js.cpp                        | 1104 ++++++++++++++++++++++++
+ wasm/web/js.cls                        |  547 ++++++++++++
+ wasm/web/ooRexx-worker.js              |   15 +-
+ wasm/web/ooRexx.js                     |   52 ++
+ 16 files changed, 3162 insertions(+), 23 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
+ create mode 100644 wasm/tests/js-extend.rex
  create mode 100644 wasm/web-js.cpp
  create mode 100644 wasm/web/js.cls
 
@@ -148,10 +150,10 @@ index 5dbab4a..e949832 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index 2508784..d05de25 100644
+index 2508784..ea15644 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -287,6 +287,124 @@ from the test suite's directory:
+@@ -287,6 +287,146 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -255,6 +257,28 @@ index 2508784..d05de25 100644
 +  still waiting are dropped) or the end of the run; in the browser its
 +  functions do nothing once the run is over.  Under Node the program's end
 +  is the process's end, even with a server listening or a timer pending.
++* Rexx classes extending JavaScript classes: `.js~extend(.MyClass, base
++  [, names...])`, once per class (its `ACTIVATE` class method is the natural
++  place), with `MyClass` a subclass of `JSObject` and `base` a JavaScript
++  class (a `.JSObject`) or its name as a script sees it (`"Car"`, also for a
++  `class Car {}` at a script's top level).  As `.net~extend` in ooRexx/.NET:
++  it makes a JavaScript class extending `base`, named as the Rexx class, and
++  answers it.  Every method, getter (`NAME`) and setter (`"NAME="`) of
++  `base`'s prototype chain whose name matches, case-insensitively, a public
++  method of `MyClass` (or of its superclasses below `JSObject`; not `INIT`,
++  `UNINIT`, `UNKNOWN`) is overridden: JavaScript calls the Rexx method, as a
++  synchronous handler (on the waiting Rexx thread, or on a thread of its own
++  without waiting).  `names` are exact JavaScript names the base does not
++  have, added as methods (`connectedCallback`).  `.MyClass~new(args...)`
++  makes the JavaScript object with `new` and `args` (`MyClass`'s `INIT`
++  calls `self~init:super(args...)`); a base constructor that calls an
++  override reaches the Rexx method, and `self` can already be used there.
++  `self~name:super(args)` is the base's member (the methods of a mixin
++  class, private, which the class inherits).  The instance comes back from
++  JavaScript as the Rexx object itself.  The two keep each other alive until
++  `.js~detach(o)`; after it, and for instances JavaScript makes itself, the
++  base's members run.  Only where JavaScript can wait for Rexx: the
++  worker's realm and Node, not the page.  Tests: `tests/js-extend.rex` (31).
 +* Implementation: `web-js.cpp` is the package `js` (`.JSObject`'s methods
 +  are native, so errors point at the caller's line); each operation is
 +  passed synchronously to the main runtime thread, where `js-bridge.js` (a
@@ -276,7 +300,7 @@ index 2508784..d05de25 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -296,6 +414,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -296,6 +436,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127);
    ADDRESS JDOR draws (see above).
@@ -461,10 +485,10 @@ index 0000000..57c5181
 +}
 diff --git a/wasm/js-bridge.js b/wasm/js-bridge.js
 new file mode 100644
-index 0000000..9fa9f47
+index 0000000..580e33f
 --- /dev/null
 +++ b/wasm/js-bridge.js
-@@ -0,0 +1,214 @@
+@@ -0,0 +1,216 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -603,7 +627,9 @@ index 0000000..9fa9f47
 +  // the realm a request is for (r: just after the X records)
 +  function realmOf(op, r) {
 +    if (op === 1) return r.str();
-+    if (op >= 2 && op <= 9 && r.more() && r.peek() === 'O') return dec.decode(r.rec().d).split('\t')[0];
++    if (((op >= 2 && op <= 9) || (op >= 13 && op <= 16)) && r.more() && r.peek() === 'O') {
++      return dec.decode(r.rec().d).split('\t')[0];
++    }
 +    return LOCAL;
 +  }
 +
@@ -681,10 +707,10 @@ index 0000000..9fa9f47
 +})();
 diff --git a/wasm/js-realm.js b/wasm/js-realm.js
 new file mode 100644
-index 0000000..3e8e40e
+index 0000000..84c23ff
 --- /dev/null
 +++ b/wasm/js-realm.js
-@@ -0,0 +1,470 @@
+@@ -0,0 +1,632 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -752,6 +778,12 @@ index 0000000..3e8e40e
 + *    queued (option queued, or the page), it passes emit(bytes) the
 + *    event (H "id", or "id<tab>L" for option latest, + A arguments, for
 + *    js_event in web-js.cpp) and returns undefined at once;
++ *  - classes (.js~extend, only with syncCall): a class extending the base
++ *    whose overrides pass syncCall M "peer<tab>NAME" (+ S the instance's
++ *    reference the first time, U after) + A arguments, as a synchronous
++ *    handler; an instance made by Rexx (CONSTRUCT) has a peer, the Rexx
++ *    object's id, until DETACH, and goes to Rexx as P "peer"; without one
++ *    the overrides run the base's members;
 + *  - values, records and ops: see web-js.cpp.
 + */
 +var orxJsRealm = (function () {
@@ -841,6 +873,7 @@ index 0000000..3e8e40e
 +      case 'Y': return d.slice();
 +      case 'O': { const [realm, id] = s().split('\t'); return deref(realm, Number(id)); }
 +      case 'H': return handlerFunction(s());
++      case 'V': return byName(s());
 +      case 'A': {
 +        const n = Number(s()), a = new Array(n);
 +        for (let i = 0; i < n; i++) a[i] = val(r);
@@ -889,6 +922,13 @@ index 0000000..3e8e40e
 +          for (const x of v.items) put(w, x);
 +          return;
 +        }
++        if (v instanceof RefForRexx) { w.rec('S', v.ref); return; }
++        {
++          // an instance of a Rexx class extending a JavaScript class: the Rexx
++          // object itself
++          const p = peers.get(v);
++          if (p) { w.rec('P', String(p.peer)); return; }
++        }
 +        // a Promise in Rexx's hands is handled: ~await gets its rejection, and
 +        // nothing else must (Node ends the process on an unhandled rejection)
 +        if (v instanceof Promise) v.catch(() => {});
@@ -897,6 +937,7 @@ index 0000000..3e8e40e
 +    }
 +  }
 +  class RexxArray { constructor(items) { this.items = items; } }   // an Array for Rexx (a copy)
++  class RefForRexx { constructor(ref) { this.ref = ref; } }        // "realm<tab>id<tab>display", counted once
 +
 +  // ---- handlers -----------------------------------------------------------
 +  const handlerFns = new Map();
@@ -921,22 +962,159 @@ index 0000000..3e8e40e
 +      }
 +      const w = new Writer();
 +      w.rec('H', sync ? id : opt.has('latest') ? id + '\tL' : max ? id + '\tM' + max : id);
-+      w.rec('A', String(args.length));
-+      for (const a of args) { try { put(w, a); } catch (x) { w.rec('N', ''); } }
++      putArgs(w, args);
 +      if (!sync) { emit(w.bytes()); return undefined; }
-+      const r = new Reader(syncCall(w.bytes()));
-+      const first = r.rec();
-+      if (first.tag === 'R') return val(r);
-+      throw new RexxError(dec.decode(first.d));
++      return callRexx(w);
 +    };
 +    handlerFns.set(id, f);
 +    return f;
++  }
++  function putArgs(w, args) {
++    w.rec('A', String(args.length));
++    for (const a of args) { try { put(w, a); } catch (x) { w.rec('N', ''); } }
++  }
++  // a synchronous call of Rexx: the method's result, or its condition thrown
++  function callRexx(w) {
++    const r = new Reader(syncCall(w.bytes()));
++    const first = r.rec();
++    if (first.tag === 'R') return val(r);
++    throw new RexxError(dec.decode(first.d));
 +  }
 +  function close() {
 +    closed = true;
 +    handlerFns.clear();
 +    for (let i = 1; i < objs.length; i++) objs[i] = undefined;
 +    ids.clear();
++  }
++
++  // ---- Rexx classes extending JavaScript classes (.js~extend) -------------
++  // peers: an instance of an extending class made by Rexx (.MyClass~new) ->
++  // {peer: the Rexx object's id (pinned in web-js.cpp), ref, fresh}; until
++  // .js~detach.  The instance's handle is counted once, for the Rexx object.
++  const peers = new WeakMap();
++  const constructing = [];          // [ext, peer id] of the constructions under way
++  function bind(o, peer) {
++    const id = handle(o);
++    const p = { peer, ref: REALM + '\t' + id + '\t' + className(o) + ' #' + id, fresh: true };
++    peers.set(o, p);
++    return p;
++  }
++  // the peer of this (bound here when a base constructor calls an override)
++  function peerOf(o) {
++    let p = peers.get(o);
++    if (p || !constructing.length) return p;
++    const [ext, peer] = constructing[constructing.length - 1];
++    if (o instanceof ext && (typeof o === 'object' || typeof o === 'function')) p = bind(o, peer);
++    return p;
++  }
++  // a global by name, as a script of the realm sees it (class Car {} at the
++  // top level of a script is not a property of globalThis)
++  function byName(name) {
++    if (!/^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$/.test(name)) throw new TypeError('"' + name + '" is not a JavaScript name');
++    return new Function('return ' + name)();
++  }
++  // the members of a prototype chain, by upper-cased name: [name, descriptor]
++  // of the nearest object that has each (not the constructor, nor __xxx__)
++  function members(proto) {
++    const m = new Map();
++    for (let p = proto; p !== null; p = Object.getPrototypeOf(p)) {
++      for (const k of Object.getOwnPropertyNames(p)) {
++        if (k === 'constructor' || k.startsWith('__')) continue;
++        const u = k.toUpperCase();
++        let l = m.get(u);
++        if (!l) m.set(u, l = new Map());
++        if (!l.has(k)) l.set(k, Object.getOwnPropertyDescriptor(p, k));
++      }
++    }
++    return m;
++  }
++  // extend(base, class name, Rexx method names, exact names): the new class,
++  // and what it overrides: "kind<tab>name<tab>REXXNAME<tab>base?" (kind: C a
++  // method, G a getter, S a setter; base?: 1 when the base has one)
++  function extend(base, clsName, rexxNames, exact) {
++    if (typeof syncCall !== 'function') {
++      throw new Error('a Rexx class can only extend a JavaScript class where JavaScript can wait for Rexx ' +
++        '(the worker\'s realm, Node), not in realm "' + REALM + '"');
++    }
++    if (typeof base !== 'function' || typeof base.prototype !== 'object' || base.prototype === null) {
++      throw new TypeError(an(className(base)) + ' is not a class');
++    }
++    const Ext = ({ [clsName]: class extends base {} })[clsName];
++    const proto = Ext.prototype, baseProto = base.prototype;
++    const rexx = new Set(rexxNames);
++    const all = members(baseProto), done = [];
++    const call = (o, NAME, args) => {
++      const p = peerOf(o);
++      if (!p) return undefined;
++      const w = new Writer();
++      w.rec('M', p.peer + '\t' + NAME);
++      if (p.fresh) { w.rec('S', p.ref); p.fresh = false; } else w.rec('U', '');
++      putArgs(w, args);
++      return callRexx(w);
++    };
++    const method = (k, NAME) => function (...args) {
++      if (!peerOf(this)) {           // no Rexx object (detached, or made by JavaScript)
++        const f = Reflect.get(baseProto, k, this);
++        return typeof f === 'function' ? Reflect.apply(f, this, args) : undefined;
++      }
++      return call(this, NAME, args);
++    };
++    for (const [u, l] of all) {
++      for (const [k, d] of l) {
++        if (typeof d.value === 'function' && rexx.has(u)) {
++          Object.defineProperty(proto, k, { value: method(k, u), writable: true, configurable: true });
++          done.push('C\t' + k + '\t' + u + '\t1');
++        } else if (d.get || d.set) {
++          const g = d.get && rexx.has(u), s = d.set && rexx.has(u + '=');
++          if (!g && !s) continue;
++          Object.defineProperty(proto, k, {
++            configurable: true,
++            get: g ? function () { return peerOf(this) ? call(this, u, []) : Reflect.get(baseProto, k, this); }
++                   : function () { return Reflect.get(baseProto, k, this); },
++            set: s ? function (v) { if (peerOf(this)) call(this, u + '=', [v]); else Reflect.set(baseProto, k, v, this); }
++                   : function (v) { Reflect.set(baseProto, k, v, this); },
++          });
++          if (g) done.push('G\t' + k + '\t' + u + '\t1');
++          if (s) done.push('S\t' + k + '\t' + u + '=\t1');
++        }
++      }
++    }
++    // the exact names asked for that the base does not have (a custom
++    // element's connectedCallback, a protocol of one's own): new methods
++    for (const k of exact) {
++      const u = k.toUpperCase();
++      if (Object.prototype.hasOwnProperty.call(proto, k)) continue;
++      if (!rexx.has(u)) throw new TypeError(clsName + ' has no method ' + u + ' for ' + k);
++      Object.defineProperty(proto, k, { value: method(k, u), writable: true, configurable: true });
++      done.push('C\t' + k + '\t' + u + '\t' + (typeof Reflect.get(baseProto, k) === 'function' ? 1 : 0));
++    }
++    return new RexxArray([Ext, new RexxArray(done)]);
++  }
++  // new ext(...args) for the Rexx object peer: the instance's reference
++  function construct(ext, peer, args) {
++    constructing.push([ext, peer]);
++    let o;
++    try { o = Reflect.construct(ext, args); } finally { constructing.pop(); }
++    const p = peers.get(o) || bind(o, peer);
++    if (p.peer !== peer) throw new Error('the constructor of ' + className(o) + ' returned another object');
++    p.fresh = false;
++    return new RefForRexx(p.ref);
++  }
++  // the base's member: get (G), set (S) or call (C), for self~name:super
++  function superMember(t, ext, kind, k, args) {
++    const baseProto = Object.getPrototypeOf(ext.prototype);
++    if (kind === 'G') return Reflect.get(baseProto, k, t);
++    if (kind === 'S') { Reflect.set(baseProto, k, args[0], t); return undefined; }
++    const f = Reflect.get(baseProto, k, t);
++    if (typeof f !== 'function') throw new TypeError(k + ' is not a function of the base of ' + className(t));
++    return Reflect.apply(f, t, args);
++  }
++  // .js~detach(o): the Rexx object's id, which web-js.cpp unpins
++  function detach(o) {
++    const p = peers.get(o);
++    if (!p) return '';
++    peers.delete(o);
++    return String(p.peer);
 +  }
 +
 +  // ---- case-insensitive names --------------------------------------------
@@ -1112,6 +1290,16 @@ index 0000000..3e8e40e
 +      }
 +      case 11: return importModule(r.str());
 +      case 12: return val(r);
++      case 13: {
++        const base = val(r), name = r.str(), rexxNames = val(r), exact = val(r);
++        return extend(base, name, rexxNames, exact);
++      }
++      case 14: { const ext = val(r), peer = Number(r.str()), args = val(r); return construct(ext, peer, args); }
++      case 15: {
++        const t = val(r), ext = val(r), kind = r.str(), k = r.str(), args = val(r);
++        return superMember(t, ext, kind, k, args);
++      }
++      case 16: return detach(val(r));
 +    }
 +    throw new Error('unknown op ' + op);
 +  }
@@ -1155,11 +1343,171 @@ index 0000000..3e8e40e
 +  return { realm: REALM, handle: handleRequest, release, close, errorText, Reader };
 +  };
 +})();
+diff --git a/wasm/tests/js-extend.rex b/wasm/tests/js-extend.rex
+new file mode 100644
+index 0000000..46bf571
+--- /dev/null
++++ b/wasm/tests/js-extend.rex
+@@ -0,0 +1,154 @@
++/* js-extend.rex: tests of Rexx classes extending JavaScript classes          */
++/* (.js~extend, wasm/web/js.cls), in the realm where Rexx runs: the worker's   */
++/* in the browser, Node's under Node.  Prints one line per check; exits 1 if  */
++/* any fails.                                                                 */
++.local~ok = 0; .local~bad = 0
++js = .js
++mk = js~Function~new("src", "return new Function(src)()")   -- a value made by a JavaScript script
++
++-- a JavaScript class, with a method that calls another (age), a getter and
++-- setter (label), a constructor that calls an overridable method (kind)
++car = mk~invoke(.nil, "return class Car {" -
++  "  constructor(name, year) { this.name = name; this.year = year; this.made = this.kind(); }" -
++  "  age() { return 2026 - this.year; }" -
++  "  describe() { return this.name + ' is ' + this.age(); }" -
++  "  kind() { return 'car'; }" -
++  "  honk() { return 'beep'; }" -
++  "  get label() { return '[' + this.name + ']'; }" -
++  "  set label(v) { this.name = v; }" -
++  "  static wheels() { return 4; }" -
++  "}")
++js["Car"] = car
++
++ext = .js~extend(.MyCar, "Car")
++call check "extend answers a JavaScript class", ext~typeOf == "function"
++call check "its name is the Rexx class's", ext["name"] == "MYCAR"
++call check "it extends the base", ext["prototype"]~instanceOf(car)
++
++c = .MyCar~new("Seat", 2020)
++call check "an instance is a JSObject and a MyCar", c~isA(.JSObject) & c~isA(.MyCar)
++call check "the JavaScript object is a Car", c~instanceOf(car) & c~instanceOf(ext)
++call check "Rexx calls its own method", c~age == 7
++call check "JavaScript calls the override (describe -> this.age())", c~describe == "Seat is 7"
++call check "~name:super reaches JavaScript's age()", c~baseAge == 6
++call check "a method not overridden is JavaScript's", c~honk == "beep"
++call check "INIT ran and passed the arguments on", c~inits == 1 & c["year"] == 2020
++call check "the base constructor reached the override (self usable)", c["made"] == "rexx kind of Seat"
++call check "getter overridden", c["label"] == "<Seat>"
++call check "getter: ~label:super", c~superLabel == "[Seat]"
++c["label"] = "Ibiza"
++call check "setter overridden (Rexx saw it, then the base's)", c~lastSet == "Ibiza" & c["name"] == "IBIZA"
++
++-- identity: the instance comes back from JavaScript as the Rexx object itself
++a = js~newArray(c, "x")
++back = a[1]
++call check "identity: back from JavaScript as the same Rexx object", back == c & back~isA(.MyCar)
++call check "identity: the same object, Rexx's ==", back~identityHash == c~identityHash
++
++-- a condition in an override is a RexxError in JavaScript
++probe = mk~invoke(.nil, "return (o) => { try { o.age(); return 'no error' } catch (e) { return e.name + ': ' + e.message } }")
++c~failNext = 1
++r = probe~invoke(.nil, c)
++call check "a condition is a RexxError in JavaScript", r~left(10) == "RexxError:" & r~pos("Error 41") > 0
++call check "and it does not stay", c~describe == "IBIZA is 7"
++
++-- a JavaScript caller with its own array of them: sort with a method of the instances
++cars = js~newArray(.MyCar~new("B", 2001), .MyCar~new("A", 2010), .MyCar~new("C", 1990))
++sorter = mk~invoke(.nil, "return (l) => l.sort((x, y) => x.age() - y.age()).map((x) => x.name).join(',')")
++call check "JavaScript sorts by the Rexx override", sorter~invoke(.nil, cars) == "A,B,C"
++
++-- exact names the base does not have
++.js~extend(.Greeter, js~Object, "greetMe")
++g = .Greeter~new
++call check "an exact name added: JavaScript calls it", mk~invoke(.nil, "return (o) => o.greetMe('Ana')")~invoke(.nil, g) == "hola Ana"
++call check "without the exact name it is not there", mk~invoke(.nil, "return (o) => typeof o.other")~invoke(.nil, g) == "undefined"
++
++-- a Rexx subclass of the extending class
++s = .SportsCar~new("Cupra", 2024)
++call check "a Rexx subclass: JavaScript reaches the inherited override", s~describe == "Cupra is 3"
++call check "a Rexx subclass: ~kind:super is MyCar's", s~kind == "fast rexx kind of Cupra"
++
++-- made by JavaScript (no Rexx object): the base's behaviour
++plain = ext~new("Plain", 2000)
++call check "made by JavaScript: no Rexx object, the base's methods", plain~describe == "Plain is 26" & \plain~isA(.MyCar)
++
++-- detach
++d = .MyCar~new("Gone", 2016)
++call check "before detach", d~describe == "Gone is 11"
++.js~detach(d)
++call check "after detach JavaScript runs the base's", d~describe == "Gone is 10"
++call check "after detach it comes back as a plain JSObject", \js~newArray(d)[1]~isA(.MyCar)
++
++-- errors
++signal on syntax name e1
++.js~extend(.MyCar, "Car")
++call check "extending twice is an error", .false
++e1: call check "extending twice is an error", condition("O")~code == 98.900
++signal on syntax name e2
++.js~extend(.NotJs, "Car")
++call check "a class that is not a JSObject is refused", .false
++e2: call check "a class that is not a JSObject is refused", condition("O")~message~pos("JSObject") > 0
++signal on syntax name e3
++.js~extend(.Lone, "NoSuchClassAnywhere")
++call check "an unknown base is an error", .false
++e3: call check "an unknown base is an error", condition("O")~code == 98.900
++signal on syntax name e4
++.js~extend(.Lone, js~Math)
++call check "a base that is not a class is an error", .false
++e4: call check "a base that is not a class is an error", condition("O")~message~pos("not a class") > 0
++signal off syntax
++
++say
++say .ok "passed," .bad "failed"
++exit .bad > 0
++
++check: procedure
++  use arg name, ok
++  if ok then do; .local~ok += 1; say "ok   " name; end
++  else do; .local~bad += 1; say "FAIL " name; end
++  return
++
++::requires "js.cls"
++
++::class MyCar subclass JSObject
++::attribute inits get
++::attribute lastSet get
++::attribute failNext set
++::method init
++  expose inits
++  use arg name, year
++  inits = 0
++  self~init:super(name, year)
++  inits += 1
++::method age
++  expose failNext
++  if failNext == 1 then do
++    failNext = 0
++    return 1 + "no number"
++  end
++  return self~age:super + 1
++::method baseAge
++  return self~age:super
++::method kind                       -- called by Car's constructor
++  return "rexx kind of" self["name"]
++::method label                      -- the getter
++  return "<"self["name"]">"
++::method superLabel
++  return self~label:super
++::method "LABEL="                   -- the setter
++  expose lastSet
++  use arg v
++  lastSet = v
++  self~"LABEL=":super(v~upper)
++
++::class SportsCar subclass MyCar
++::method kind
++  return "fast" self~kind:super
++
++::class Greeter subclass JSObject
++::method greetMe
++  use arg who
++  return "hola" who
++
++::class NotJs
++::class Lone subclass JSObject
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..942c455 100755
+index e1c1cd8..fa3fbe0 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -200,6 +200,109 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
+@@ -200,6 +200,113 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
  check "name resolution (host resolver)" '^localhost=1 127\.0\.0\.1$' '^invalid=0$' '^reverse=1 ' "^hostname=$(hostname)\$" '^hostid=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' -- \
    "$X dns.rex"
  
@@ -1266,6 +1614,10 @@ index e1c1cd8..942c455 100755
 +check "JavaScript events: HTTP server in Rexx, threads, release, exit" '^rexx answered GET /q\?i=1$' \
 +  '^rexx answered GET /q\?i=3$' '^sorted=1,2,3$' '^taken=15 after release: The NIL object$' -- "$X jsev.rex"
 +
++# --- Rexx classes extending JavaScript classes (.js~extend, portable test)
++check "JavaScript objects: Rexx classes extending JavaScript classes" '^31 passed, 0 failed$' '!^FAIL ' -- \
++  "$X '$(cd "$(dirname "$0")" && pwd)/js-extend.rex'"
++
  echo
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
@@ -1283,10 +1635,10 @@ index 0c169f9..4aafd0c 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); }, onJdor,
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 48fc32b..b572f5f 100755
+index 48fc32b..2ca35ac 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
-@@ -175,6 +175,91 @@ CASES = [
+@@ -175,6 +175,98 @@ CASES = [
                   'shape u area a; areaAdd u b; shapeBounds u; say rc\nshape i area a; areaIntersect i b; shapeBounds i; say rc\n'
                   '::requires "jdor.cls"', {},
       lambda r: r["out"] == "0.0 0.0 15.0 10.0\n5.0 0.0 5.0 10.0\n"),
@@ -1361,6 +1713,13 @@ index 48fc32b..b572f5f 100755
 +                       '::method later; expose got; got = "later" .js~Promise~resolve("ok")~await\n'
 +                       '::requires "js.cls"', {"js": {"worker": True, "page": True}},
 +     lambda r: r["out"] == "1,2,3 2,4\n1\n1\nlater ok\n3,1 1\n"),
++  # Rexx classes extending JavaScript classes (.js~extend), in the worker's realm: the portable test
++  ("js extend", open(f"{SRC}/wasm/tests/js-extend.rex").read(), {"js": {"worker": True}},
++     lambda r: "31 passed, 0 failed" in r["out"] and r["rc"] == 0),
++  ("js extend page", 'signal on syntax; .js~extend(.el, .js~page~HTMLElement)\n'
++                     'syntax: say (condition("O")~message~pos("where JavaScript can wait for Rexx") > 0)\n'
++                     '::requires "js.cls"\n::class el subclass JSObject', {"js": {"worker": True, "page": True}},
++     lambda r: r["out"] == "1\n"),
 +  ("js page events", 'doc = .js~page~document; box = doc~createElement("input"); box~type = "checkbox"; doc~body~appendChild(box)\n'
 +                     'h = .js~handler(.nil, "string", "preventDefault"); box~addEventListener("click", h)\n'
 +                     'box~click; ev = .js~nextEvent(5); e = ev~arguments[1]\n'
@@ -1402,10 +1761,10 @@ index 37f6f14..63dfc90 100644
  }
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..4122239
+index 0000000..1999dfc
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,979 @@
+@@ -0,0 +1,1104 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -1460,6 +1819,9 @@ index 0000000..4122239
 + *   F number   B boolean ("1"/"0")   I bigint   Y bytes (Uint8Array)
 + *   H "id<tab>options"  (to JavaScript) a .JSHandler: that realm's function
 + *                       for it (see Handlers below)
++ *   V "name"            (to JavaScript) a global by name, as a script sees it
++ *   P "id"              (back) an instance of a Rexx class extending a
++ *                       JavaScript class: the Rexx object itself (pinned)
 + * A request starts with any number of X "realm<tab>id..." records (handles
 + * whose .JSObject was garbage collected), then the operands of the op.
 + * The reply is R + a value, or E + message + the thrown value.
@@ -1485,6 +1847,11 @@ index 0000000..4122239
 + * (sockets, the RexxAPI daemon under Node, the page) needs its event loop; a
 + * condition there is reported on the standard error.  In the page every
 + * handler is queued: the page's thread cannot wait.
++ *
++ * Classes (.js~extend): the overrides of a JavaScript class extending another
++ * call the Rexx object's method as a synchronous handler calls its message
++ * (records M "id<tab>NAME" + S/U + A).  The Rexx object of an instance (made
++ * by .MyClass~new, JsConstruct) is pinned, as a handler, until .js~detach.
 + *
 + * Events: a queued handler's function, called by JavaScript in its realm, returns at
 + * once and hands js_event() (on the main runtime thread; from the page by
@@ -1581,6 +1948,10 @@ index 0000000..4122239
 +    OP_REQUIRE = 10,    // name                        -> require(name) (Node)
 +    OP_IMPORT = 11,     // name                        -> import(name), a Promise
 +    OP_VALUE = 12,      // value                       -> the value as JavaScript has it
++    OP_EXTEND = 13,     // base, class name, NAMES, names -> [new class, its overrides]
++    OP_CONSTRUCT = 14,  // class, peer id, args        -> "realm<tab>id<tab>display"
++    OP_SUPER = 15,      // target, class, kind, name, args -> the base's member
++    OP_DETACH = 16,     // target                      -> the peer id it had ("" if none)
 +};
 +
 +// ---- records ----------------------------------------------------------------
@@ -1791,6 +2162,12 @@ index 0000000..4122239
 +                                                   c->String(r.data.substr(t2 + 1).c_str()));
 +            return c->SendMessage(jsObjectClass, "NEW", args);
 +        }
++        case 'P':                                   // an extending class's instance: its Rexx object
++        {
++            std::lock_guard<std::mutex> lock(eventLock);
++            auto it = pinned.find(strtoul(r.data.c_str(), NULL, 10));
++            return it != pinned.end() ? it->second : c->Nil();
++        }
 +        case 'A':
 +        {
 +            size_t n = strtoul(r.data.c_str(), NULL, 10);
@@ -1893,11 +2270,27 @@ index 0000000..4122239
 +    size_t pos = 0;
 +    Rec r;
 +    RexxObjectPtr handler = NULLOBJECT;
-+    if (nextRec(call, pos, r) && r.tag == 'H')
++    // H "id": a handler; M "id<tab>NAME": an override, method NAME of the
++    // Rexx object id (an instance of a class extending a JavaScript class),
++    // then S "realm<tab>id<tab>display" the first time (its JavaScript object,
++    // when a base constructor calls an override before the Rexx side knows it)
++    bool override = false;
++    std::string message;
++    if (nextRec(call, pos, r) && (r.tag == 'H' || r.tag == 'M'))
 +    {
++        override = r.tag == 'M';
++        if (override)
++        {
++            size_t t = r.data.find('\t');
++            message = t == std::string::npos ? "" : r.data.substr(t + 1);
++        }
 +        std::lock_guard<std::mutex> lock(eventLock);
 +        auto it = pinned.find(strtoul(r.data.c_str(), NULL, 10));
 +        if (it != pinned.end()) handler = it->second;
++    }
++    if (override && nextRec(call, pos, r) && r.tag == 'S' && handler != NULLOBJECT)
++    {
++        c->SendMessage1(handler, "JSBIND", c->String(r.data.c_str()));
 +    }
 +    if (handler == NULLOBJECT)                      // released meanwhile: undefined
 +    {
@@ -1906,8 +2299,12 @@ index 0000000..4122239
 +        return out;
 +    }
 +    RexxArrayObject args = (RexxArrayObject)toRexx(c, call, pos);
-+    RexxObjectPtr target = c->SendMessage0(handler, "TARGET");
-+    std::string message = c->ObjectToStringValue(c->SendMessage0(handler, "MESSAGE"));
++    RexxObjectPtr target = handler;
++    if (!override)
++    {
++        target = c->SendMessage0(handler, "TARGET");
++        message = c->ObjectToStringValue(c->SendMessage0(handler, "MESSAGE"));
++    }
 +    RexxObjectPtr value = c->SendMessage(target, message.c_str(), args);
 +    if (c->CheckCondition())
 +    {
@@ -2331,6 +2728,89 @@ index 0000000..4122239
 +    return request(context->threadContext, OP_VALUE, s);
 +}
 +
++// ---- Rexx classes extending JavaScript classes (.js~extend) ---------------------
++
++// JsExtend(base, class name, NAMES, names): base a .JSObject (a class) or the
++// name of a global; NAMES the Rexx class's methods, names the exact JavaScript
++// names to add; an Array [the new class, its overrides]
++RexxRoutine4(RexxObjectPtr, JsExtend, RexxObjectPtr, base, CSTRING, name, RexxArrayObject, rexxNames,
++             RexxArrayObject, exact)
++{
++    RexxThreadContext *c = context->threadContext;
++    std::string s = newRequest();
++    if (isA(c, base, jsObjectClass)) fromRexx(c, s, base);
++    else putRec(s, 'V', c->ObjectToStringValue(base));
++    putRec(s, 'S', name);
++    args(c, s, rexxNames, 1);
++    args(c, s, exact, 1);
++    return request(c, OP_EXTEND, s);
++}
++
++// JsConstruct(object, class, args): new class(...args) for this Rexx object,
++// pinned (its peer) until .js~detach; "realm<tab>id<tab>display"
++RexxRoutine3(RexxObjectPtr, JsConstruct, RexxObjectPtr, self, RexxObjectPtr, ext, RexxArrayObject, list)
++{
++    RexxThreadContext *c = context->threadContext;
++    size_t id;
++    {
++        std::lock_guard<std::mutex> lock(eventLock);
++        id = ++lastHandlerId;
++        pinned[id] = c->RequestGlobalReference(self);
++    }
++    std::string s = newRequest();
++    fromRexx(c, s, ext);
++    putRec(s, 'S', std::to_string(id));
++    args(c, s, list, 1);
++    std::string reply = jsCall(c, OP_CONSTRUCT, s);
++    if (reply.empty() || reply[0] != 'R')           // failed: no peer
++    {
++        RexxObjectPtr h = NULLOBJECT;
++        {
++            std::lock_guard<std::mutex> lock(eventLock);
++            auto it = pinned.find(id);
++            if (it != pinned.end()) { h = it->second; pinned.erase(it); }
++        }
++        if (h != NULLOBJECT) c->ReleaseGlobalReference(h);
++    }
++    return result(c, reply);
++}
++
++// JsSuper(object, class (or its "realm<tab>id"), kind, name, args): the base's member (G get, S set,
++// C call), for self~name:super
++RexxRoutine5(RexxObjectPtr, JsSuper, RexxObjectPtr, self, RexxObjectPtr, ext, CSTRING, kind, CSTRING, name,
++             RexxArrayObject, list)
++{
++    RexxThreadContext *c = context->threadContext;
++    std::string s = newRequest();
++    fromRexx(c, s, self);
++    if (isA(c, ext, jsObjectClass)) fromRexx(c, s, ext);
++    else putRec(s, 'O', c->ObjectToStringValue(ext));      // its "realm<tab>id"
++    putRec(s, 'S', kind);
++    putRec(s, 'S', name);
++    args(c, s, list, 1);
++    return request(c, OP_SUPER, s);
++}
++
++// JsDetach(object): JavaScript forgets its Rexx object, which is unpinned
++RexxRoutine1(int, JsDetach, RexxObjectPtr, self)
++{
++    RexxThreadContext *c = context->threadContext;
++    std::string s = newRequest();
++    fromRexx(c, s, self);
++    RexxObjectPtr r = request(c, OP_DETACH, s);
++    if (r == NULLOBJECT) return 0;
++    size_t id = 0;
++    if (!c->ObjectToStringSize(r, &id) || id == 0) return 0;
++    RexxObjectPtr h = NULLOBJECT;
++    {
++        std::lock_guard<std::mutex> lock(eventLock);
++        auto it = pinned.find(id);
++        if (it != pinned.end()) { h = it->second; pinned.erase(it); }
++    }
++    if (h != NULLOBJECT) c->ReleaseGlobalReference(h);
++    return 0;
++}
++
 +static RexxMethodEntry jsMethods[] =
 +{
 +    REXX_METHOD(js_unknown, js_unknown),
@@ -2365,6 +2845,10 @@ index 0000000..4122239
 +    REXX_TYPED_ROUTINE(JsLoopGeneration, JsLoopGeneration),
 +    REXX_TYPED_ROUTINE(JsStopLoops, JsStopLoops),
 +    REXX_TYPED_ROUTINE(JsNextEvent, JsNextEvent),
++    REXX_TYPED_ROUTINE(JsExtend, JsExtend),
++    REXX_TYPED_ROUTINE(JsConstruct, JsConstruct),
++    REXX_TYPED_ROUTINE(JsSuper, JsSuper),
++    REXX_TYPED_ROUTINE(JsDetach, JsDetach),
 +    REXX_LAST_ROUTINE()
 +};
 +
@@ -2387,10 +2871,10 @@ index 0000000..4122239
 +}
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
 new file mode 100644
-index 0000000..f619c65
+index 0000000..1fbc726
 --- /dev/null
 +++ b/wasm/web/js.cls
-@@ -0,0 +1,433 @@
+@@ -0,0 +1,547 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -2533,6 +3017,32 @@ index 0000000..f619c65
 + * the first time it goes to JavaScript until handler~release (its calls still
 + * waiting, and later ones, are dropped) or the end of the run; in the browser the functions do
 + * nothing once the run is over.
++ *
++ * Classes: a Rexx class can extend a JavaScript class, as with .net~extend
++ * in ooRexx/.NET (only where JavaScript can wait for Rexx: the worker's
++ * realm, Node):
++ *
++ *    ::class MyCar subclass JSObject
++ *    ::method activate class
++ *      .js~extend(self, "Car")             -- a JavaScript class, or its name
++ *    ::method init
++ *      use arg name, year
++ *      self~init:super(name, year)         -- new Car(name, year)
++ *    ::method age                          -- JavaScript's calls of age() come here
++ *      return self~age:super + 1           -- Car's age()
++ *
++ * .js~extend(class, base [, names...]) makes a JavaScript class extending
++ * base, named as the Rexx class, and answers it.  Every method, getter
++ * (NAME) and setter ("NAME=") of base's prototype chain whose name matches,
++ * case-insensitively, a public method of the class (or of its superclasses
++ * below JSObject; not INIT, UNINIT, UNKNOWN) is overridden: JavaScript calls
++ * the Rexx method as a synchronous handler.  names: exact JavaScript names
++ * the base does not have, added as methods.  .MyCar~new(args...) makes the
++ * JavaScript object (a base constructor that calls an override reaches the
++ * Rexx method, with self usable); self~name:super is the base's member (a
++ * mixin's private methods); the instance comes back from JavaScript as the
++ * Rexx object itself.  Both live until .js~detach(o); after it, and for
++ * instances JavaScript makes itself, the base's members run.
 + */
 +call JsSetup .JSObject, .JSTyped, .JSHandler, .JSEvent, .JSTyped~undefined
 +.environment~js = .JSGlobal~new(JsDefaultRealm(), 0, "global")
@@ -2541,10 +3051,40 @@ index 0000000..f619c65
 +
 +/** A JavaScript object (or function, array, Promise, symbol) of a realm. */
 +::class JSObject public
++::method extensions class           -- class -> its JavaScript class (.js~extend)
++  expose extensions
++  if \var("EXTENSIONS") then extensions = .IdentityTable~new
++  return extensions
++::method extensionOf class          -- the JavaScript class of a class or of a superclass, or .nil
++  use strict arg cls
++  do while cls \== .JSObject, cls~isSubclassOf(.JSObject)
++    ext = self~extensions[cls]
++    if ext \== .nil then return ext
++    cls = cls~superClass
++  end
++  return .nil
 +::method init
 +  expose jsref jsrealm jsdisplay
++  if self~class \== .JSObject then do
++    ext = .JSObject~extensionOf(self~class)
++    if ext \== .nil then do        -- .MyClass~new(args...): new MyClass(...args) in JavaScript
++      signal on syntax
++      self~jsBind(JsConstruct(self, ext, arg(1, "A")))
++      return
++    end
++  end
 +  use strict arg jsrealm, id, jsdisplay
 +  jsref = jsrealm || "09"x || id
++  return
++syntax: raise propagate
++::method jsBind unguarded           -- for the bridge: the JavaScript object of an extending class's instance
++  expose jsref jsrealm jsdisplay
++  use strict arg ref
++  if var("JSREF") then return
++  parse var ref realm "09"x id "09"x display
++  jsdisplay = display
++  jsrealm = realm
++  jsref = realm || "09"x || id
 +::method jsRef                      -- realm<tab>id, for the bridge
 +  expose jsref
 +  return jsref
@@ -2719,6 +3259,64 @@ index 0000000..f619c65
 +  signal on syntax
 +  use strict arg d = (.directory~new)
 +  return JsValue(d)
++syntax: raise propagate
++::method extend unguarded           -- .js~extend(class, base [, names...]): see Classes above
++  signal on syntax
++  use strict arg cls, base, ...
++  if \cls~isA(.Class) then raise syntax 98.900 array(".js~extend: the first argument must be a class, found" cls)
++  if \cls~isSubclassOf(.JSObject) | cls == .JSGlobal then
++    raise syntax 98.900 array(".js~extend:" cls~id "must be a subclass of JSObject")
++  if .JSObject~extensions~hasIndex(cls) then
++    raise syntax 98.900 array(".js~extend:" cls~id "already extends" .JSObject~extensions[cls])
++  if \base~isA(.JSObject) & \base~isA(.String) then
++    raise syntax 98.900 array(".js~extend: the base must be a JSObject (a class) or the name of one, found" base)
++  -- the methods of the class and of its superclasses below JSObject, public
++  names = .Set~new
++  c = cls
++  do while c \== .JSObject
++    sup = c~methods(.nil)
++    do while sup~available
++      if sup~item \== .nil, \sup~item~isPrivate then names~put(sup~index)
++      sup~next
++    end
++    c = c~superClass
++  end
++  names~removeItem("INIT"); names~removeItem("UNINIT"); names~removeItem("UNKNOWN")
++  exact = .array~new
++  do i = 3 to arg()
++    exact~append(arg(i)~string)
++  end
++  r = JsExtend(base, cls~id, names~makeArray, exact)
++  ext = r[1]
++  -- self~name:super, the base's member: a mixin's private methods, after
++  -- JSObject in the search order (so found before its UNKNOWN)
++  mixin = .Object~mixinClass(cls~id "BASE")
++  extref = "'" || ext~jsRef~changeStr("09"x, "'||'09'x||'") || "'"
++  do o over r[2]
++    parse var o kind "09"x jsname "09"x rexxname "09"x hasBase
++    jsname = jsname~changeStr("'", "''")
++    if hasBase \== 1 then iterate
++    -- the class's own JavaScript class (ext), not that of the instance's class
++    if kind == "S" then
++      src = "signal on syntax; use arg v; call JsSuper self," extref", 'S', '"jsname"', .array~of(v);" -
++            "return; syntax: raise propagate"
++    else
++      src = "signal on syntax; return JsSuper(self," extref", '"kind"', '"jsname"', arg(1, 'A'));" -
++            "syntax: raise propagate"
++    m = .Method~new(rexxname, src, .context~package)
++    m~setPrivate
++    mixin~define(rexxname, m)
++  end
++  cls~inherit(mixin)
++  .JSObject~extensions[cls] = ext
++  return ext
++syntax: raise propagate
++::method detach unguarded           -- .js~detach(o): JavaScript forgets o (and o can be collected)
++  signal on syntax
++  use strict arg o
++  if \o~isA(.JSObject) then raise syntax 98.900 array(".js~detach: not a JSObject:" o)
++  call JsDetach o
++  return
 +syntax: raise propagate
 +::method handler unguarded          -- .js~handler(object, message [, options]): see Events above
 +  signal on syntax
