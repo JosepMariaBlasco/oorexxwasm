@@ -128,6 +128,16 @@ jobs:
           address path 'node' lib'/rexx.js' 'six.rex' with output stem o. error stem e.; say 'f' rc o.0 o.1 '|' e.0 e.1
           EOF
           sed -i 's/^          //' nest.rex; rexx nest.rex "$(cygpath -m "$lib")"
+      - name: exit status (daemon / in-process RexxAPI)
+        continue-on-error: true
+        run: |
+          set +e
+          rexx -e "exit 7"; echo "exit 7 -> $?"
+          rexx -e "push 1; exit 8"; echo "push; exit 8 -> $?"
+          ORX_WASM_RXAPI=inprocess rexx -e "push 1; exit 9"; echo "inprocess push; exit 9 -> $?"
+          node "$(npm root -g)/oorexxwasm/lib/rexx.js" -e "push 1; exit 10"; echo "node rexx.js push; exit 10 -> $?"
+          cmd //d //s //c "rexx -e \"push 1; exit 11\""; echo "cmd rexx push; exit 11 -> $?"
+          ORX_WASM_RXAPI_DEBUG=1 rexx -e "push 1; exit 12"; echo "debug push; exit 12 -> $?"
       - name: Smoke test
         continue-on-error: true
         run: set +e; cd scratch && rexx ../pkg/tests/smoke.rex; echo "exit status $?"
