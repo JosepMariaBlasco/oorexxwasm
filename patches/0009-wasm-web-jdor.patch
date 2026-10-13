@@ -79,7 +79,7 @@ index 786af1f..e949832 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index 4b16426..49e9ddc 100644
+index d0a2cda..5d6085c 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -224,7 +224,58 @@ off, or changes the strings.
@@ -142,7 +142,7 @@ index 4b16426..49e9ddc 100644
  
  ## The test suite's API groups (`wasm/build-test.sh`)
  
-@@ -428,7 +479,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -435,7 +486,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.

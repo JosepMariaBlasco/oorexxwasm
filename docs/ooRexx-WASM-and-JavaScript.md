@@ -227,7 +227,7 @@ say c~describe                    -- Car's describe() calls this.age(): "Seat is
 - **Making one.** `.MyCar~new(args...)` makes the JavaScript object with `new`, passing `args` to the base's constructor; the Rexx class's `INIT` calls `self~init:super(args...)`. A base constructor that calls an override reaches the Rexx method, and `self` can already be used there.
 - **The base's members.** `self~name:super(args)` is the base's own member, not the override: its method, its getter, `self~"NAME=":super(v)` its setter. A member that is not overridden is reached as with any `.JSObject`: `c~honk`.
 - **Identity.** The JavaScript object comes back to Rexx as the Rexx object itself: `.js~newArray(c)[1] == c`, and it is a `MyCar`.
-- **Lifetime.** This is the one place that needs a hand. The Rexx object holds its JavaScript object, and the JavaScript object holds its Rexx object, for the overrides. Each collector sees only its own half of that cycle, so neither can tell that nothing else uses the pair: they live until `.js~detach(c)` ends the link, or until the end of the run. ooRexx/.NET's `.net~detach` is there for the same reason. After `detach`, and for an object JavaScript makes itself (`new MyCar(...)` in JavaScript), the overrides run the base's members. Everything else, `.JSObject`s, `RexxProxy`s and handlers, is released by the collectors alone.
+- **Lifetime.** The Rexx object and its JavaScript object are a pair, which lives while Rexx holds the one or JavaScript holds the other, and the collectors release it, as they release everything else: nothing needs a hand. Each collector sees only its own side, so the bridge lets the link that keeps the other half alive point one way at a time. While Rexx holds the Rexx object, it holds its JavaScript object. When Rexx no longer does, the bridge holds the Rexx object, and the JavaScript object only weakly, so that JavaScript's collector decides: if JavaScript no longer holds it either, the pair is over; if JavaScript hands it to Rexx again, Rexx holds it again. The class's `UNINIT`, if it has one, runs once, when the pair is over, not when only Rexx lets it go. A class that extends a JavaScript class, and the JavaScript class it makes, are released as any class is. For an object JavaScript makes itself (`new MyCar(...)` in JavaScript), the overrides run the base's members.
 
 This needs a realm where JavaScript can wait for Rexx: the worker's and Node's. In the page, `extend` is an error.
 
@@ -275,13 +275,13 @@ Further replies on the list are very welcome.
 | Why JavaScript cannot wait for Rexx in the page, and what to do instead | Waiting |
 | Handlers are synchronous in the worker's realm and under Node, as `.net~handler` (a comparator for `sort` works); option `queued` (implied by `latest` and `max`), and the page, keep them queued; a condition is a `RexxError` | Events, Waiting |
 | Any other Rexx object goes to JavaScript as a `RexxProxy` (it went as its string): messages, BSF4ooRexx's `sendMessage` names, identity both ways | Values, Rexx objects in JavaScript |
-| Rexx classes extending JavaScript classes: `.js~extend(class, base [, names...])`, `.js~detach(o)`, as `.net~extend` | Classes |
+| Rexx classes extending JavaScript classes: `.js~extend(class, base [, names...])`, as `.net~extend` | Classes |
 | Calls from the page to a Rexx object give a Promise of the result, queued as events (they were rejected) | Rexx objects in JavaScript, Rexx from the page |
 | Sessions, `rexx.start()`: `eval`, `routine`, `loadPackage`; and `<script type="text/rexx">` | What this is, Events, Rexx from the page, Guarantees |
 | `.js~eventLoop` is `.js~runEventLoop`; the event queue explained | Events, Rexx from the page |
 | The bridge's own methods start with `js.` (`js.typeOf`, `js.className`, `js.instanceOf`, `js.hasProperty`, `js.propertyNames`, `js.byteString`), as BSF4ooRexx's with `bsf.`; exact names with `js.getStrict`, `js.setStrict`, `js.invokeStrict` (was `invoke`); a function is called with JavaScript's `f~call(this, args...)` | Messages, Pitfalls |
 | `.js~newObject(name, value, ...)`, with exact names | Values, Pitfalls |
 | A handler is released when JavaScript collects its function (`handler~release` is optional) | Events |
-| Why `.js~detach` is needed for `.js~extend`, and only there | Classes |
+| The pairs of `.js~extend` are released by the collectors, as everything else: no `.js~detach` (it was needed for them) | Classes |
 | `ooRexx.js`'s global is `ooRexx` (was `OoRexx`) | Rexx from the page |
 | Questions to decide: answered | Questions decided |

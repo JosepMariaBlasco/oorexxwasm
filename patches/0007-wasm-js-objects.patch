@@ -110,27 +110,29 @@ copied as arrays and plain objects.
   iteration, options latest and max, release).  Documented in wasm/README.md.
 ---
  interpreter/package/PackageManager.cpp |   16 +
- wasm/README.md                         |  174 +++
+ wasm/README.md                         |  181 +++
  wasm/build-node.sh                     |   17 +-
  wasm/build-web.sh                      |   17 +-
  wasm/extra-packages.cpp                |   66 ++
- wasm/js-bridge.js                      |  241 +++++
- wasm/js-realm.js                       |  771 ++++++++++++++
- wasm/tests/js-extend.rex               |  154 +++
- wasm/tests/js-proxy.rex                |  127 +++
- wasm/tests/qualify-node-cli.sh         |  164 +++
+ wasm/js-bridge.js                      |  241 ++++
+ wasm/js-realm.js                       |  817 +++++++++++++
+ wasm/tests/js-extend-gc.rex            |   88 ++
+ wasm/tests/js-extend.rex               |  157 +++
+ wasm/tests/js-proxy.rex                |  127 ++
+ wasm/tests/qualify-node-cli.sh         |  167 +++
  wasm/tests/web-api.html                |    4 +-
- wasm/tests/web-api.py                  |  191 +++-
- wasm/tests/web-scripts.html            |   62 ++
+ wasm/tests/web-api.py                  |  191 ++-
+ wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 1354 ++++++++++++++++++++++++
- wasm/web/js.cls                        |  638 +++++++++++
+ wasm/web-js.cpp                        | 1513 ++++++++++++++++++++++++
+ wasm/web/js.cls                        |  670 +++++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
- wasm/web/ooRexx.js                     |  181 ++++
- 18 files changed, 4188 insertions(+), 12 deletions(-)
+ wasm/web/ooRexx.js                     |  181 +++
+ 19 files changed, 4526 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
+ create mode 100644 wasm/tests/js-extend-gc.rex
  create mode 100644 wasm/tests/js-extend.rex
  create mode 100644 wasm/tests/js-proxy.rex
  create mode 100644 wasm/tests/web-scripts.html
@@ -173,10 +175,10 @@ index 9324d0b..786af1f 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index e674dcb..ccdb8b5 100644
+index e674dcb..a70b7a5 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -236,6 +236,178 @@ from the test suite's directory:
+@@ -236,6 +236,185 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -318,10 +320,17 @@ index e674dcb..ccdb8b5 100644
 +  override reaches the Rexx method, and `self` can already be used there.
 +  `self~name:super(args)` is the base's member (the methods of a mixin
 +  class, private, which the class inherits).  The instance comes back from
-+  JavaScript as the Rexx object itself.  The two keep each other alive until
-+  `.js~detach(o)`; after it, and for instances JavaScript makes itself, the
-+  base's members run.  Only where JavaScript can wait for Rexx: the
-+  worker's realm and Node, not the page.  Tests: `tests/js-extend.rex` (31).
++  JavaScript as the Rexx object itself.  The pair (the Rexx object and its
++  JavaScript object) lives while Rexx holds the one or JavaScript the other,
++  and the two collectors release it: while Rexx holds it, the Rexx object
++  holds its JavaScript object; when Rexx no longer does (a sentinel's
++  `UNINIT`, `.JSPeerSentinel`), the bridge holds the Rexx object and
++  JavaScript holds its object only weakly, until it collects it (the class's
++  `UNINIT` runs then, once) or hands it to Rexx again (`web-js.cpp`,
++  *Classes*).  For instances JavaScript makes itself, the base's members run.
++  Only where JavaScript can wait for Rexx: the worker's realm and Node, not
++  the page.  Tests: `tests/js-extend.rex` (31), `tests/js-extend-gc.rex` (8,
++  Node with `--expose-gc`).
 +* Rexx from the page (browser): `rexx.start(opts)` (`ooRexx.js`, the options
 +  of `run()`) is a Promise of a session, a run of `.js~session` (`js.cls`),
 +  which hands the page a `.JSSession` (operation 17, `SESSION`) and takes
@@ -355,7 +364,7 @@ index e674dcb..ccdb8b5 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -244,6 +416,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -244,6 +423,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).
@@ -783,10 +792,10 @@ index 0000000..ea8b80b
 +})();
 diff --git a/wasm/js-realm.js b/wasm/js-realm.js
 new file mode 100644
-index 0000000..4d9b2c0
+index 0000000..e802bed
 --- /dev/null
 +++ b/wasm/js-realm.js
-@@ -0,0 +1,771 @@
+@@ -0,0 +1,817 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -859,8 +868,9 @@ index 0000000..4d9b2c0
 + *    whose overrides pass syncCall M "peer<tab>NAME" (+ S the instance's
 + *    reference the first time, U after) + A arguments, as a synchronous
 + *    handler; an instance made by Rexx (CONSTRUCT) has a peer, the Rexx
-+ *    object's id, until DETACH, and goes to Rexx as P "peer"; without one
-+ *    the overrides run the base's members;
++ *    object's id, and goes to Rexx as P "peer"; without one the overrides
++ *    run the base's members.  The pair is released by the two collectors
++ *    (see Classes below: W, Q);
 + *  - values, records and ops: see web-js.cpp.
 + */
 +var orxJsRealm = (function () {
@@ -920,14 +930,22 @@ index 0000000..4d9b2c0
 +    counts[id]++;
 +    return id;
 +  }
++  // weak: id -> WeakRef of an extending class's instance that only
++  // JavaScript holds (see Classes below); objs[id] is undefined meanwhile
++  const weak = new Map();
 +  function release(id) {
-+    if (!(id > 0) || objs[id] === undefined || --counts[id] > 0) return;
-+    ids.delete(objs[id]); objs[id] = undefined; free.push(id);
++    if (!(id > 0) || !(counts[id] > 0) || --counts[id] > 0) return;
++    let o = objs[id];
++    if (o === undefined && weak.has(id)) { o = weak.get(id).deref(); weak.delete(id); }
++    if (o !== undefined) ids.delete(o);
++    objs[id] = undefined; free.push(id);
 +  }
 +  function deref(realm, id) {
 +    if (realm !== REALM) throw new Error('a JavaScript object of realm "' + realm + '" cannot be used in realm "' + REALM + '"');
-+    if (!(id in objs) || (id > 0 && objs[id] === undefined)) throw new Error('stale JavaScript object reference #' + id);
-+    return objs[id];
++    let o = objs[id];
++    if (o === undefined && weak.has(id)) o = weak.get(id).deref();
++    if (!(id in objs) || (id > 0 && o === undefined)) throw new Error('stale JavaScript object reference #' + id);
++    return o;
 +  }
 +
 +  // ---- records ------------------------------------------------------------
@@ -1042,7 +1060,7 @@ index 0000000..4d9b2c0
 +          // an instance of a Rexx class extending a JavaScript class: the Rexx
 +          // object itself
 +          const p = peers.get(v);
-+          if (p) { w.rec('P', String(p.peer)); return; }
++          if (p) { crossing(v, p); w.rec('P', String(p.peer)); return; }
 +        }
 +        // a Promise in Rexx's hands is handled: ~await gets its rejection, and
 +        // nothing else must (Node ends the process on an unhandled rejection)
@@ -1197,15 +1215,58 @@ index 0000000..4d9b2c0
 +
 +  // ---- Rexx classes extending JavaScript classes (.js~extend) -------------
 +  // peers: an instance of an extending class made by Rexx (.MyClass~new) ->
-+  // {peer: the Rexx object's id (pinned in web-js.cpp), ref, fresh}; until
-+  // .js~detach.  The instance's handle is counted once, for the Rexx object.
++  // {peer: the Rexx object's id in web-js.cpp, ref, fresh, h: its handle,
++  // sent: how many times it went to Rexx (P, or an override's call), weak}.
++  // The instance's handle is counted once, for the Rexx object.
++  //
++  // The pair (the Rexx object and this one) lives while either side holds
++  // either half; neither collector sees both, so the link that keeps the
++  // other half alive points one way at a time:
++  //  - while Rexx holds its object, the handle holds this one, and
++  //    web-js.cpp holds the Rexx object only weakly;
++  //  - when Rexx no longer holds it (its UNINIT, see web-js.cpp), web-js.cpp
++  //    holds the Rexx object, and asks (W "h<tab>peer<tab>sent", with the
++  //    next request) that the handle hold this one weakly: JavaScript's
++  //    collector decides.  If it collects it, Rexx is told (Q "peer") and the
++  //    pair is gone; if it goes to Rexx again, it is held again (crossing).
++  // The W carries how many crossings web-js.cpp had seen: one still on its
++  // way when W arrives would make it wrong, so it is then ignored.
 +  const peers = new WeakMap();
 +  const constructing = [];          // [ext, peer id] of the constructions under way
++  const peerFinals = typeof FinalizationRegistry === 'function' && typeof WeakRef === 'function'
++    ? new FinalizationRegistry((held) => {
++        const e = weak.get(held.h);
++        if (e && e.deref() === undefined) weak.delete(held.h);   // counts[h]: given back by the Rexx object
++        if (closed || typeof emit !== 'function') return;
++        const w = new Writer();
++        w.rec('Q', String(held.peer));
++        try { emit(w.bytes()); } catch (x) { /* the run is over */ }
++      })
++    : null;
 +  function bind(o, peer) {
 +    const id = handle(o);
-+    const p = { peer, ref: REALM + '\t' + id + '\t' + className(o) + ' #' + id, fresh: true };
++    const p = { peer, ref: REALM + '\t' + id + '\t' + className(o) + ' #' + id, fresh: true, h: id, sent: 0, weak: false };
 +    peers.set(o, p);
 +    return p;
++  }
++  // o (an instance with a Rexx object) goes to Rexx: held again
++  function crossing(o, p) {
++    p.sent++;
++    if (!p.weak) return;
++    objs[p.h] = o; ids.set(o, p.h); weak.delete(p.h);
++    peerFinals.unregister(p);
++    p.weak = false;
++  }
++  // W "h<tab>peer<tab>sent": Rexx no longer holds the instance's Rexx object
++  function weaken(spec) {
++    const [h, peer, sent] = spec.split('\t').map(Number);
++    const o = objs[h];
++    if (o === undefined || !peerFinals) return;
++    const p = peers.get(o);
++    if (!p || p.peer !== peer || p.weak || p.sent !== sent) return;
++    weak.set(h, new WeakRef(o)); objs[h] = undefined; ids.delete(o);
++    p.weak = true;
++    peerFinals.register(o, { h, peer }, p);
 +  }
 +  // the peer of this (bound here when a base constructor calls an override)
 +  function peerOf(o) {
@@ -1254,6 +1315,7 @@ index 0000000..4d9b2c0
 +    const call = (o, NAME, args) => {
 +      const p = peerOf(o);
 +      if (!p) return undefined;
++      crossing(o, p);
 +      const w = new Writer();
 +      w.rec('M', p.peer + '\t' + NAME);
 +      if (p.fresh) { w.rec('S', p.ref); p.fresh = false; } else w.rec('U', '');
@@ -1262,7 +1324,7 @@ index 0000000..4d9b2c0
 +      return callRexx(w);
 +    };
 +    const method = (k, NAME) => function (...args) {
-+      if (!peerOf(this)) {           // no Rexx object (detached, or made by JavaScript)
++      if (!peerOf(this)) {           // no Rexx object (made by JavaScript)
 +        const f = Reflect.get(baseProto, k, this);
 +        return typeof f === 'function' ? Reflect.apply(f, this, args) : undefined;
 +      }
@@ -1317,13 +1379,6 @@ index 0000000..4d9b2c0
 +    const f = Reflect.get(baseProto, k, t);
 +    if (typeof f !== 'function') throw new TypeError(k + ' is not a function of the base of ' + className(t));
 +    return Reflect.apply(f, t, args);
-+  }
-+  // .js~detach(o): the Rexx object's id, which web-js.cpp unpins
-+  function detach(o) {
-+    const p = peers.get(o);
-+    if (!p) return '';
-+    peers.delete(o);
-+    return String(p.peer);
 +  }
 +
 +  // ---- case-insensitive names --------------------------------------------
@@ -1452,7 +1507,8 @@ index 0000000..4d9b2c0
 +  const PENDING = {};
 +  let pending = null;
 +  function run(op, r) {
-+    while (r.more() && r.peek() === 'X') {
++    while (r.more() && (r.peek() === 'X' || r.peek() === 'W')) {
++      if (r.peek() === 'W') { weaken(r.str()); continue; }
 +      const [realm, id] = r.str().split('\t');
 +      if (realm === REALM) release(Number(id));
 +    }
@@ -1508,7 +1564,6 @@ index 0000000..4d9b2c0
 +        const t = val(r), ext = val(r), kind = r.str(), k = r.str(), args = val(r);
 +        return superMember(t, ext, kind, k, args);
 +      }
-+      case 16: return detach(val(r));
 +      case 17: {                                  // SESSION: for ooRexx.js's start()
 +        const v = val(r);
 +        if (typeof hooks.session !== 'function') throw new Error('nobody is waiting for a session here');
@@ -1558,12 +1613,106 @@ index 0000000..4d9b2c0
 +  return { realm: REALM, handle: handleRequest, release, close, errorText, Reader };
 +  };
 +})();
+diff --git a/wasm/tests/js-extend-gc.rex b/wasm/tests/js-extend-gc.rex
+new file mode 100644
+index 0000000..c491cc1
+--- /dev/null
++++ b/wasm/tests/js-extend-gc.rex
+@@ -0,0 +1,88 @@
++/* js-extend-gc.rex: the pairs of .js~extend (a Rexx object and its           */
++/* JavaScript object) are released by the two collectors, with no            */
++/* .js~detach: a pair lives while Rexx holds the Rexx object or JavaScript    */
++/* holds its object.  Node with --expose-gc (JavaScript's collector is run    */
++/* by globalThis.gc(); Rexx's by making garbage).  Prints one line per        */
++/* check; exits 1 if any fails.                                               */
++.local~ok = 0; .local~bad = 0; .local~uninits = 0
++js = .js
++mk = js~Function~new("src", "return new Function(src)()")
++js["Car"] = mk~call(.nil, "return class Car {" -
++  "  constructor(name) { this.name = name; }" -
++  "  describe() { return this.name + ' says ' + this.sound(); }" -
++  "  sound() { return 'beep'; }" -
++  "}")
++.js~extend(.Pet, "Car")
++
++-- 1. nobody holds them: the class's UNINIT runs, once each
++do i = 1 to 200; p = .Pet~new("a" i); end
++drop p
++call collect
++call check "dropped by both sides: all 200 released, UNINIT once each", .uninits == 200, .uninits
++
++-- 2. JavaScript holds them alone: they live, and their overrides run
++.local~uninits = 0
++keep = js~newArray
++do i = 1 to 100; keep~push(.Pet~new("k" i)); end
++call collect
++call check "held by JavaScript alone: none released", .uninits == 0, .uninits
++says = mk~call(.nil, "return (a) => a.map((o) => o.describe()).join(',')")~call(.nil, keep)
++call check "held by JavaScript alone: JavaScript calls their overrides", -
++  says~countStr("woof") == 100, says~left(60)
++call collect
++call check "after those calls, still none released", .uninits == 0, .uninits
++-- then JavaScript lets them go too
++keep~length = 0
++drop keep
++call collect
++call check "then dropped by JavaScript: all 100 released", .uninits == 100, .uninits
++
++-- 3. Rexx holds one alone: it lives, and so does its JavaScript object
++.local~uninits = 0
++r = .Pet~new("rexx")
++call collect
++call check "held by Rexx alone: not released, its JavaScript object works", -
++  .uninits == 0 & r~describe == "rexx says woof"
++
++-- 4. JavaScript holds it, then Rexx takes it back and JavaScript lets go
++js["box"] = .js~newArray(.Pet~new("back"))
++call collect
++b = js["box"][1]                    -- comes back to Rexx (held by JavaScript until now)
++js["box"] = .js~undefined
++call collect
++call check "taken back by Rexx: it lives, overrides and all", -
++  b~isA(.Pet) & b~describe == "back says woof" & .uninits == 0, .uninits
++drop b r
++call collect
++call check "then dropped by Rexx too: both released", .uninits == 2, .uninits
++
++say
++say .ok "passed," .bad "failed"
++exit .bad > 0
++
++check: procedure
++  use arg name, ok, detail
++  if ok then do; .local~ok += 1; say "ok   " name; end
++  else do; .local~bad += 1; say "FAIL " name "("detail")"; end
++  return
++
++-- both collectors, a few rounds: Rexx's (garbage), a request (it takes what
++-- Rexx found to JavaScript), JavaScript's, a request (what JavaScript found
++-- comes back)
++collect: procedure
++  gc = .js~Function~new("globalThis.gc(); return 1")
++  do 3
++    do k = 1 to 20; a = .array~new; do j = 1 to 50000; a[j] = .mutableBuffer~new("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"); end; drop a; end
++    x = .js~Math~max(1, 2)
++    do 3; x = gc~call(.nil); call SysSleep 0.05; end
++    x = .js~Math~max(1, 2)
++  end
++  return
++
++::requires "js.cls"
++
++::class Pet subclass JSObject
++::method sound                      -- Car's describe() calls it
++  return "woof"
++::method uninit                     -- the class's UNINIT: once, when the pair is over
++  .local~uninits += 1
 diff --git a/wasm/tests/js-extend.rex b/wasm/tests/js-extend.rex
 new file mode 100644
-index 0000000..d7522ed
+index 0000000..f3cfe7a
 --- /dev/null
 +++ b/wasm/tests/js-extend.rex
-@@ -0,0 +1,154 @@
+@@ -0,0 +1,157 @@
 +/* js-extend.rex: tests of Rexx classes extending JavaScript classes          */
 +/* (.js~extend, wasm/web/js.cls), in the realm where Rexx runs: the worker's   */
 +/* in the browser, Node's under Node.  Prints one line per check; exits 1 if  */
@@ -1638,12 +1787,15 @@ index 0000000..d7522ed
 +plain = ext~new("Plain", 2000)
 +call check "made by JavaScript: no Rexx object, the base's methods", plain~describe == "Plain is 26" & \plain~isA(.MyCar)
 +
-+-- detach
-+d = .MyCar~new("Gone", 2016)
-+call check "before detach", d~describe == "Gone is 11"
-+.js~detach(d)
-+call check "after detach JavaScript runs the base's", d~describe == "Gone is 10"
-+call check "after detach it comes back as a plain JSObject", \js~newArray(d)[1]~isA(.MyCar)
++-- held by JavaScript alone, then by Rexx again (no .js~detach: the
++-- collectors release a pair; js-extend-gc.rex, with --expose-gc)
++d = .MyCar~new("Kept", 2016)
++js["keptCar"] = d
++drop d
++d = js["keptCar"]
++call check "held by JavaScript alone, it comes back as itself", d~isA(.MyCar)
++call check "and its overrides still run", d~describe == "Kept is 11"
++call check "JavaScript calls them too", mk~call(.nil, "return () => keptCar.describe()")~call(.nil) == "Kept is 11"
 +
 +-- errors
 +signal on syntax name e1
@@ -1852,10 +2004,10 @@ index 0000000..c89f67e
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..eb26c5e 100755
+index e1c1cd8..5db9694 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -200,6 +200,170 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
+@@ -200,6 +200,173 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
  check "name resolution (host resolver)" '^localhost=1 127\.0\.0\.1$' '^invalid=0$' '^reverse=1 ' "^hostname=$(hostname)\$" '^hostid=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' -- \
    "$X dns.rex"
  
@@ -2017,6 +2169,9 @@ index e1c1cd8..eb26c5e 100755
 +# --- Rexx classes extending JavaScript classes (.js~extend, portable test)
 +check "JavaScript objects: Rexx classes extending JavaScript classes" '^31 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-extend.rex'"
++# and their pairs, released by the two collectors (no .js~detach)
++check "JavaScript objects: an extending class's pairs are released by the collectors" '^8 passed, 0 failed$' '!^FAIL ' -- \
++  "NODE_OPTIONS=--expose-gc timeout 300 $X '$(cd "$(dirname "$0")" && pwd)/js-extend-gc.rex'"
 +
 +# --- a logic error (here: no rexx.img) traps on a pthread; the process must
 +# end with a non-zero status, as native ooRexx's does
@@ -2344,10 +2499,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..e751c0c
+index 0000000..0b01a3a
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,1354 @@
+@@ -0,0 +1,1513 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -2444,8 +2599,25 @@ index 0000000..e751c0c
 + *
 + * Classes (.js~extend): the overrides of a JavaScript class extending another
 + * call the Rexx object's method as a synchronous handler calls its message
-+ * (records M "id<tab>NAME" + S/U + A).  The Rexx object of an instance (made
-+ * by .MyClass~new, JsConstruct) is pinned, as a handler, until .js~detach.
++ * (records M "id<tab>NAME" + S/U + A).  An instance made by .MyClass~new
++ * (JsConstruct) is a pair, its Rexx object and its JavaScript object, that
++ * lives while either side holds either half.  Neither collector sees both,
++ * so the link that keeps the other half alive points one way at a time:
++ *  - Rexx holds the Rexx object: it holds its JavaScript object (its handle),
++ *    and here the Rexx object is known but not held (peers);
++ *  - when Rexx no longer holds it, its sentinel tells (JsPeerUninit: a
++ *    .JSPeerSentinel, which only the Rexx object holds and which holds it,
++ *    so that its UNINIT runs when the Rexx object could go): it is pinned
++ *    here, and JavaScript is asked (W "h<tab>id<tab>n", with the next
++ *    request) to hold its object weakly: its collector decides.  If it
++ *    collects it (event Q "id"), the pair is over: the class's UNINIT runs
++ *    (jsFinal), the handle is released and the Rexx object unpinned.  If the
++ *    object goes to Rexx again (P, or an override's call: a crossing), Rexx
++ *    holds it again: unpinned, a new sentinel.
++ * The Rexx object itself has no UNINIT meanwhile (its class's runs once, at
++ * the end), and each round has a new sentinel (an object's UNINIT runs only
++ * once).  n counts the crossings seen here, so that JavaScript ignores a W
++ * that one still on its way would make wrong.
 + *
 + * Events: a queued handler's function, called by JavaScript in its realm, returns at
 + * once and hands js_event() (on the main runtime thread; from the page by
@@ -2553,7 +2725,6 @@ index 0000000..e751c0c
 +    OP_EXTEND = 13,     // base, class name, NAMES, names -> [new class, its overrides]
 +    OP_CONSTRUCT = 14,  // class, peer id, args        -> "realm<tab>id<tab>display"
 +    OP_SUPER = 15,      // target, class, kind, name, args -> the base's member
-+    OP_DETACH = 16,     // target                      -> the peer id it had ("" if none)
 +    OP_SESSION = 17,    // value                       -> (page) ooRexx.js's start() gets its session
 +};
 +
@@ -2705,18 +2876,89 @@ index 0000000..e751c0c
 +static std::map<size_t, size_t> proxyCounts;
 +static std::vector<RexxObjectPtr> unpinned;         // global references to release, with a context
 +
++// the pairs of .js~extend (see Classes above; guarded by eventLock)
++struct PeerState
++{
++    RexxObjectPtr obj = NULLOBJECT;                 // the Rexx object (kept alive by Rexx, or by pin)
++    RexxObjectPtr pin = NULLOBJECT;                 // a global reference while only JavaScript holds it
++    bool js = false;                                // only JavaScript holds it (weak there)
++    bool dead = false;                              // JavaScript collected its object
++    size_t received = 0;                            // crossings seen here
++    size_t armed = 0;                               // received when the current sentinel was made
++    size_t sentinel = 0;                            // the current sentinel's number
++    size_t h = 0;                                   // its JavaScript object's handle
++};
++static std::map<size_t, PeerState> peerStates;
++static std::map<RexxObjectPtr, size_t> peerIds;
++static std::vector<size_t> deadPeers;               // collected by JavaScript: jsFinal, then unpinned
++struct Weaken { size_t id, h, n; };
++static std::vector<Weaken> weakens;                 // sent with the next request (guarded by releaseLock)
++static std::mutex releaseLock;
++
 +static int32_t serverThread = 0;                    // the server thread, once started (serverSetup)
 +static void serverSetup(RexxThreadContext *c);
 +
 +static void releaseUnpinned(RexxThreadContext *c)
 +{
 +    std::vector<RexxObjectPtr> gone;
++    std::vector<std::pair<RexxObjectPtr, RexxObjectPtr>> over;    // pairs that are over: object, pin
 +    {
 +        std::lock_guard<std::mutex> lock(eventLock);
-+        if (unpinned.empty()) return;
++        if (unpinned.empty() && deadPeers.empty()) return;
 +        gone.swap(unpinned);
++        for (size_t id : deadPeers)
++        {
++            auto it = peerStates.find(id);
++            if (it == peerStates.end()) continue;
++            over.push_back({it->second.obj, it->second.pin});
++            peerIds.erase(it->second.obj);
++            peerStates.erase(it);
++        }
++        deadPeers.clear();
 +    }
 +    for (RexxObjectPtr o : gone) c->ReleaseGlobalReference(o);
++    for (auto &p : over)
++    {
++        c->SendMessage0(p.first, "JSFINAL");        // the class's UNINIT, and the handle
++        if (c->CheckCondition()) c->ClearCondition();
++        if (p.second != NULLOBJECT) c->ReleaseGlobalReference(p.second);
++    }
++}
++
++// a pair's JavaScript object goes to Rexx (P, or an override's call): its
++// Rexx object, held by Rexx again; NULLOBJECT when id is not a pair
++static RexxObjectPtr peerCrossing(RexxThreadContext *c, size_t id)
++{
++    RexxObjectPtr obj, pin = NULLOBJECT;
++    {
++        std::lock_guard<std::mutex> lock(eventLock);
++        auto it = peerStates.find(id);
++        if (it == peerStates.end() || it->second.dead) return NULLOBJECT;
++        PeerState &pe = it->second;
++        pe.received++;
++        obj = pe.obj;
++        if (pe.js)
++        {
++            pe.js = false;
++            pin = pe.pin;
++            pe.pin = NULLOBJECT;
++            std::lock_guard<std::mutex> l2(releaseLock);
++            for (auto w = weakens.begin(); w != weakens.end();)
++            {
++                if (w->id == id) w = weakens.erase(w); else ++w;
++            }
++        }
++    }
++    if (pin != NULLOBJECT)
++    {
++        // a new sentinel; JSARM answers the object (a local reference of
++        // this call) before the pin goes
++        RexxObjectPtr o = c->SendMessage0(obj, "JSARM");
++        if (c->CheckCondition()) c->ClearCondition();
++        if (o != NULLOBJECT) obj = o;
++        c->ReleaseGlobalReference(pin);
++    }
++    return obj;
 +}
 +
 +// Z "id<tab>n": JavaScript collected a proxy that came over n times
@@ -2782,6 +3024,22 @@ index 0000000..e751c0c
 +        if (nextRec(ev, pos, r)) proxyRelease(r.data);
 +        return;
 +    }
++    if (!ev.empty() && ev[0] == 'Q')                // a pair's JavaScript object collected
++    {
++        size_t pos = 0;
++        Rec r;
++        if (!nextRec(ev, pos, r)) return;
++        size_t id = strtoul(r.data.c_str(), NULL, 10);
++        std::lock_guard<std::mutex> lock(eventLock);
++        auto it = peerStates.find(id);
++        if (it != peerStates.end() && it->second.js && !it->second.dead)
++        {
++            it->second.dead = true;
++            deadPeers.push_back(id);
++        }
++        eventCond.notify_all();
++        return;
++    }
 +    if (!ev.empty() && ev[0] == 'Y')                // a handler's function collected
 +    {
 +        size_t pos = 0;
@@ -2845,7 +3103,6 @@ index 0000000..e751c0c
 +}
 +
 +// handles whose .JSObject went away (UNINIT), released with the next request
-+static std::mutex releaseLock;
 +static std::vector<std::string> released;
 +
 +static std::string newRequest()
@@ -2854,6 +3111,11 @@ index 0000000..e751c0c
 +    std::lock_guard<std::mutex> lock(releaseLock);
 +    for (const std::string &r : released) putRec(s, 'X', r);
 +    released.clear();
++    for (const Weaken &w : weakens)
++    {
++        putRec(s, 'W', std::to_string(w.h) + "\t" + std::to_string(w.id) + "\t" + std::to_string(w.n));
++    }
++    weakens.clear();
 +    return s;
 +}
 +
@@ -2878,8 +3140,12 @@ index 0000000..e751c0c
 +                                                   c->String(r.data.substr(t2 + 1).c_str()));
 +            return c->SendMessage(jsObjectClass, "NEW", args);
 +        }
-+        case 'R':                                   // a RexxProxy: its Rexx object
 +        case 'P':                                   // an extending class's instance: its Rexx object
++        {
++            RexxObjectPtr o = peerCrossing(c, strtoul(r.data.c_str(), NULL, 10));
++            return o != NULLOBJECT ? o : c->Nil();
++        }
++        case 'R':                                   // a RexxProxy: its Rexx object
 +        {
 +            std::lock_guard<std::mutex> lock(eventLock);
 +            auto it = pinned.find(strtoul(r.data.c_str(), NULL, 10));
@@ -2917,10 +3183,14 @@ index 0000000..e751c0c
 +        size_t id = 0;
 +        c->ObjectToStringSize(c->SendMessage0(v, "ID"), &id);
 +        std::string options = c->ObjectToStringValue(c->SendMessage0(v, "OPTIONS"));
++        // (no API call with eventLock held: one may run UNINIT methods,
++        // on this thread, that need it)
++        RexxObjectPtr g = c->RequestGlobalReference(v);
 +        {
 +            std::lock_guard<std::mutex> lock(eventLock);
-+            if (pinned.find(id) == pinned.end()) pinned[id] = c->RequestGlobalReference(v);
++            if (pinned.find(id) == pinned.end()) { pinned[id] = g; g = NULLOBJECT; }
 +        }
++        if (g != NULLOBJECT) c->ReleaseGlobalReference(g);
 +        putRec(out, 'H', std::to_string(id) + "\t" + options);
 +        return;
 +    }
@@ -2971,6 +3241,7 @@ index 0000000..e751c0c
 +    std::string str = c->ObjectToStringValue(v);
 +    if (c->CheckCondition()) c->ClearCondition();
 +    size_t id;
++    RexxObjectPtr g = c->RequestGlobalReference(v);  // (not with eventLock held: see above)
 +    {
 +        std::lock_guard<std::mutex> lock(eventLock);
 +        auto it = proxyIds.find(v);
@@ -2978,12 +3249,13 @@ index 0000000..e751c0c
 +        else
 +        {
 +            id = ++lastHandlerId;
-+            RexxObjectPtr g = c->RequestGlobalReference(v);
 +            pinned[id] = g;
 +            proxyIds[g] = id;
++            g = NULLOBJECT;
 +        }
 +        proxyCounts[id]++;
 +    }
++    if (g != NULLOBJECT) c->ReleaseGlobalReference(g);
 +    putRec(out, 'R', std::to_string(id) + "\t" + str);
 +}
 +
@@ -3029,9 +3301,14 @@ index 0000000..e751c0c
 +            size_t t = r.data.find('\t');
 +            message = t == std::string::npos ? "" : r.data.substr(t + 1);
 +        }
-+        std::lock_guard<std::mutex> lock(eventLock);
-+        auto it = pinned.find(strtoul(r.data.c_str(), NULL, 10));
-+        if (it != pinned.end()) handler = it->second;
++        size_t id = strtoul(r.data.c_str(), NULL, 10);
++        if (override) handler = peerCrossing(c, id);
++        if (handler == NULLOBJECT)
++        {
++            std::lock_guard<std::mutex> lock(eventLock);
++            auto it = pinned.find(id);
++            if (it != pinned.end()) handler = it->second;
++        }
 +    }
 +    if (override && nextRec(call, pos, r) && r.tag == 'S' && handler != NULLOBJECT)
 +    {
@@ -3296,13 +3573,14 @@ index 0000000..e751c0c
 +RexxMethod1(RexxObjectPtr, js_instanceof, RexxObjectPtr, cls) { return info(context, "instanceof", cls); }
 +RexxMethod1(RexxObjectPtr, js_has, RexxObjectPtr, name)       { return info(context, "has", name); }
 +
-+// UNINIT: the handle can go; released with the next request
++// UNINIT (and jsRelease): the handle can go; released with the next request
 +RexxMethod0(RexxObjectPtr, js_uninit)
 +{
 +    RexxObjectPtr ref = context->GetObjectVariable("JSREF");
 +    if (ref != NULLOBJECT)
 +    {
 +        std::string r = context->ObjectToStringValue(ref);
++        context->DropObjectVariable("JSREF");
 +        std::lock_guard<std::mutex> lock(releaseLock);
 +        released.push_back(r);
 +    }
@@ -3464,12 +3742,14 @@ index 0000000..e751c0c
 +    {
 +        std::string ev;
 +        RexxObjectPtr handler = NULLOBJECT;
++        releaseUnpinned(context->threadContext);    // also the pairs JavaScript collected
 +        {
 +            std::unique_lock<std::mutex> lock(eventLock);
-+            auto ready = [&] { return !events.empty() || (loop && stopGeneration != generation); };
++            auto ready = [&] { return !events.empty() || !deadPeers.empty() || (loop && stopGeneration != generation); };
 +            if (forever) eventCond.wait(lock, ready);
 +            else if (!eventCond.wait_until(lock, deadline, ready)) return context->Nil();
 +            if (loop && stopGeneration != generation) return context->Nil();
++            if (events.empty()) continue;                               // pairs to release
 +            ev = std::move(events.front());
 +            events.pop_front();
 +            size_t pos = 0;
@@ -3568,7 +3848,7 @@ index 0000000..e751c0c
 +}
 +
 +// JsConstruct(object, class, args): new class(...args) for this Rexx object,
-+// pinned (its peer) until .js~detach; "realm<tab>id<tab>display"
++// a pair (see Classes above); "realm<tab>id<tab>display"
 +RexxRoutine3(RexxObjectPtr, JsConstruct, RexxObjectPtr, self, RexxObjectPtr, ext, RexxArrayObject, list)
 +{
 +    RexxThreadContext *c = context->threadContext;
@@ -3577,24 +3857,76 @@ index 0000000..e751c0c
 +    {
 +        std::lock_guard<std::mutex> lock(eventLock);
 +        id = ++lastHandlerId;
-+        pinned[id] = c->RequestGlobalReference(self);
++        peerStates[id].obj = self;
++        peerIds[self] = id;
 +    }
 +    std::string s = newRequest();
 +    fromRexx(c, s, ext);
 +    putRec(s, 'S', std::to_string(id));
 +    args(c, s, list, 1);
 +    std::string reply = jsCall(c, OP_CONSTRUCT, s);
-+    if (reply.empty() || reply[0] != 'R')           // failed: no peer
++    RexxObjectPtr r = result(c, reply);
++    bool ok = r != NULLOBJECT && c->IsString(r);
++    size_t h = 0;
++    if (ok)
 +    {
-+        RexxObjectPtr h = NULLOBJECT;
-+        {
-+            std::lock_guard<std::mutex> lock(eventLock);
-+            auto it = pinned.find(id);
-+            if (it != pinned.end()) { h = it->second; pinned.erase(it); }
-+        }
-+        if (h != NULLOBJECT) c->ReleaseGlobalReference(h);
++        std::string ref = c->ObjectToStringValue(r);    // realm<tab>h<tab>display
++        size_t t = ref.find('\t');
++        if (t != std::string::npos) h = strtoul(ref.c_str() + t + 1, NULL, 10);
 +    }
-+    return result(c, reply);
++    std::lock_guard<std::mutex> lock(eventLock);
++    if (!ok)                                        // failed: no pair
++    {
++        peerStates.erase(id);
++        peerIds.erase(self);
++    }
++    else peerStates[id].h = h;
++    return r;
++}
++
++// JsPeerArm(object): a new sentinel's number (the object is held by Rexx)
++RexxRoutine1(size_t, JsPeerArm, RexxObjectPtr, self)
++{
++    std::lock_guard<std::mutex> lock(eventLock);
++    auto id = peerIds.find(self);
++    if (id == peerIds.end()) return 0;
++    PeerState &pe = peerStates[id->second];
++    pe.armed = pe.received;
++    return ++pe.sentinel;
++}
++
++// JsPeerUninit(object, sentinel): the sentinel's UNINIT, run when Rexx no
++// longer held the object; "KEEP": now only JavaScript holds it (pinned here,
++// weak there); "REARM": a crossing came meanwhile, so Rexx may hold it: a
++// new sentinel; "" for an old sentinel, or an object that is not a pair
++RexxRoutine2(RexxStringObject, JsPeerUninit, RexxObjectPtr, self, size_t, sentinel)
++{
++    RexxThreadContext *c = context->threadContext;
++    // (no API call with eventLock held: one may run UNINIT methods, on this
++    // thread, that need it; so the pin is made first, and dropped if unused)
++    RexxObjectPtr pin = c->RequestGlobalReference(self);
++    const char *answer = "";
++    {
++        std::lock_guard<std::mutex> lock(eventLock);
++        auto id = peerIds.find(self);
++        if (id != peerIds.end())
++        {
++            PeerState &pe = peerStates[id->second];
++            if (sentinel != pe.sentinel || pe.js || pe.dead) answer = "";
++            else if (pe.received != pe.armed) answer = "REARM";
++            else
++            {
++                pe.pin = pin;
++                pin = NULLOBJECT;
++                pe.js = true;
++                std::lock_guard<std::mutex> l2(releaseLock);
++                weakens.push_back({id->second, pe.h, pe.received});
++                answer = "KEEP";
++            }
++        }
++    }
++    if (pin != NULLOBJECT) c->ReleaseGlobalReference(pin);
++    return c->String(answer);
 +}
 +
 +// JsSuper(object, class (or its "realm<tab>id"), kind, name, args): the base's member (G get, S set,
@@ -3613,25 +3945,6 @@ index 0000000..e751c0c
 +    return request(c, OP_SUPER, s);
 +}
 +
-+// JsDetach(object): JavaScript forgets its Rexx object, which is unpinned
-+RexxRoutine1(int, JsDetach, RexxObjectPtr, self)
-+{
-+    RexxThreadContext *c = context->threadContext;
-+    std::string s = newRequest();
-+    fromRexx(c, s, self);
-+    RexxObjectPtr r = request(c, OP_DETACH, s);
-+    if (r == NULLOBJECT) return 0;
-+    size_t id = 0;
-+    if (!c->ObjectToStringSize(r, &id) || id == 0) return 0;
-+    RexxObjectPtr h = NULLOBJECT;
-+    {
-+        std::lock_guard<std::mutex> lock(eventLock);
-+        auto it = pinned.find(id);
-+        if (it != pinned.end()) { h = it->second; pinned.erase(it); }
-+    }
-+    if (h != NULLOBJECT) c->ReleaseGlobalReference(h);
-+    return 0;
-+}
 +
 +// JsSession(object): (the browser) ooRexx.js's start() gets its session object
 +RexxRoutine1(int, JsSession, RexxObjectPtr, session)
@@ -3680,7 +3993,8 @@ index 0000000..e751c0c
 +    REXX_TYPED_ROUTINE(JsExtend, JsExtend),
 +    REXX_TYPED_ROUTINE(JsConstruct, JsConstruct),
 +    REXX_TYPED_ROUTINE(JsSuper, JsSuper),
-+    REXX_TYPED_ROUTINE(JsDetach, JsDetach),
++    REXX_TYPED_ROUTINE(JsPeerArm, JsPeerArm),
++    REXX_TYPED_ROUTINE(JsPeerUninit, JsPeerUninit),
 +    REXX_TYPED_ROUTINE(JsSession, JsSession),
 +    REXX_LAST_ROUTINE()
 +};
@@ -3704,10 +4018,10 @@ index 0000000..e751c0c
 +}
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
 new file mode 100644
-index 0000000..6734e6a
+index 0000000..4fd2509
 --- /dev/null
 +++ b/wasm/web/js.cls
-@@ -0,0 +1,638 @@
+@@ -0,0 +1,670 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -3890,8 +4204,11 @@ index 0000000..6734e6a
 + * JavaScript object (a base constructor that calls an override reaches the
 + * Rexx method, with self usable); self~name:super is the base's member (a
 + * mixin's private methods); the instance comes back from JavaScript as the
-+ * Rexx object itself.  Both live until .js~detach(o); after it, and for
-+ * instances JavaScript makes itself, the base's members run.
++ * Rexx object itself.  The pair lives while Rexx holds the Rexx object or
++ * JavaScript holds its object, and is released by the two collectors
++ * (web-js.cpp, Classes: the instance has a .JSPeerSentinel instead of an
++ * UNINIT, and its class's UNINIT runs when the pair is over).  For instances
++ * JavaScript makes itself, the base's members run.
 + *
 + * Sessions (the browser): ooRexx.js's start() runs .js~session, which hands
 + * the page a .JSSession (a RexxProxy there) and takes events for good, so
@@ -3912,25 +4229,34 @@ index 0000000..6734e6a
 +
 +/** A JavaScript object (or function, array, Promise, symbol) of a realm. */
 +::class JSObject public
-+::method extensions class           -- class -> its JavaScript class (.js~extend)
-+  expose extensions
-+  if \var("EXTENSIONS") then extensions = .IdentityTable~new
-+  return extensions
++::method jsExtension class          -- the JavaScript class of this class (.js~extend), or .nil
++  expose jsextension                -- (kept in the class itself: nothing else holds the class)
++  if var("JSEXTENSION") then return jsextension
++  return .nil
++::method jsSetExtension class       -- for .js~extend
++  expose jsextension
++  use strict arg jsextension
 +::method extensionOf class          -- the JavaScript class of a class or of a superclass, or .nil
 +  use strict arg cls
 +  do while cls \== .JSObject, cls~isSubclassOf(.JSObject)
-+    ext = self~extensions[cls]
++    ext = cls~jsExtension
 +    if ext \== .nil then return ext
 +    cls = cls~superClass
 +  end
 +  return .nil
 +::method init
-+  expose jsref jsrealm jsdisplay
++  expose jsref jsrealm jsdisplay jsuninit
 +  if self~class \== .JSObject then do
 +    ext = .JSObject~extensionOf(self~class)
 +    if ext \== .nil then do        -- .MyClass~new(args...): new MyClass(...args) in JavaScript
++      -- a pair (see Classes above): its class's UNINIT runs when the pair is
++      -- over (jsFinal), not when Rexx no longer holds it
++      jsuninit = self~instanceMethod("UNINIT")
++      if jsuninit == .JSObject~method("UNINIT") then jsuninit = .nil
++      self~setMethod("UNINIT", "nop")         -- (an object's own UNINIT cannot be removed)
 +      signal on syntax
 +      self~jsBind(JsConstruct(self, ext, arg(1, "A")))
++      self~jsArm
 +      return
 +    end
 +  end
@@ -3946,6 +4272,22 @@ index 0000000..6734e6a
 +  jsdisplay = display
 +  jsrealm = realm
 +  jsref = realm || "09"x || id
++::method jsArm unguarded            -- for the bridge: a new sentinel for a pair's Rexx object (Rexx holds it)
++  expose jssentinel
++  jssentinel = .JSPeerSentinel~new(self, JsPeerArm(self))
++  return self
++::method jsFinal unguarded          -- for the bridge: a pair is over: its class's UNINIT, and the handle
++  expose jsuninit jssentinel
++  drop jssentinel
++  if var("JSUNINIT") then if jsuninit \== .nil then do
++    u = jsuninit
++    drop jsuninit
++    signal on syntax
++    self~run(u)
++  end
++syntax:
++  self~jsRelease
++::method jsRelease unguarded external "LIBRARY js js_uninit"
 +::method jsRef                      -- realm<tab>id, for the bridge
 +  expose jsref
 +  return jsref
@@ -4149,8 +4491,8 @@ index 0000000..6734e6a
 +  if \cls~isA(.Class) then raise syntax 98.900 array(".js~extend: the first argument must be a class, found" cls)
 +  if \cls~isSubclassOf(.JSObject) | cls == .JSGlobal then
 +    raise syntax 98.900 array(".js~extend:" cls~id "must be a subclass of JSObject")
-+  if .JSObject~extensions~hasIndex(cls) then
-+    raise syntax 98.900 array(".js~extend:" cls~id "already extends" .JSObject~extensions[cls])
++  if cls~jsExtension \== .nil then
++    raise syntax 98.900 array(".js~extend:" cls~id "already extends" cls~jsExtension)
 +  if \base~isA(.JSObject) & \base~isA(.String) then
 +    raise syntax 98.900 array(".js~extend: the base must be a JSObject (a class) or the name of one, found" base)
 +  -- the methods of the class and of its superclasses below JSObject, public
@@ -4191,15 +4533,8 @@ index 0000000..6734e6a
 +    mixin~define(rexxname, m)
 +  end
 +  cls~inherit(mixin)
-+  .JSObject~extensions[cls] = ext
++  cls~jsSetExtension(ext)
 +  return ext
-+syntax: raise propagate
-+::method detach unguarded           -- .js~detach(o): JavaScript forgets o (and o can be collected)
-+  signal on syntax
-+  use strict arg o
-+  if \o~isA(.JSObject) then raise syntax 98.900 array(".js~detach: not a JSObject:" o)
-+  call JsDetach o
-+  return
 +syntax: raise propagate
 +::method handler unguarded          -- .js~handler(object, message [, options]): see Events above
 +  signal on syntax
@@ -4234,6 +4569,17 @@ index 0000000..6734e6a
 +syntax: raise propagate
 +
 +/** A Rexx object and message for JavaScript to call (.js~handler). */
++/** The sentinel of a pair's Rexx object (.js~extend): only the Rexx object
++    holds it, and it holds the Rexx object, so that its UNINIT runs when Rexx
++    no longer holds the Rexx object (web-js.cpp, Classes). */
++::class JSPeerSentinel
++::method init
++  expose peer n
++  use strict arg peer, n
++::method uninit
++  expose peer n
++  if JsPeerUninit(peer, n) == "REARM" then peer~jsArm
++
 +::class JSHandler public
 +::attribute target get
 +::attribute message get
