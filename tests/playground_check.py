@@ -190,6 +190,11 @@ with sync_playwright() as p:
 
     # your files survive a reload (IndexedDB), with edits; the open file reopens
     pg.set_input_files("#picker", [{"name": "keep.rex", "mimeType": "text/plain", "buffer": b"say 'kept'\n"}])
+    # the upload is asynchronous: edit only once keep.rex is in the editor
+    # (an edit made before would go to the previous file, and keep.rex
+    # would then open over it)
+    pg.wait_for_function("document.getElementById('fname').textContent.includes('keep.rex') && "
+                         "document.getElementById('src').value.startsWith(\"say 'kept'\")", timeout=10000)
     pg.fill("#src", "say 'kept and edited'")
     # wait until the edit is in IndexedDB (debounced, then an asynchronous
     # transaction: a fixed sleep was too short on a loaded machine)
