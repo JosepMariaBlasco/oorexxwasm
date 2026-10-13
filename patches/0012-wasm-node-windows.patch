@@ -92,7 +92,7 @@ diff -ruN a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProces
      if (modulePath == NULL)
      {
          return NULL;
-@@ -633,9 +695,21 @@
+@@ -633,9 +695,22 @@
  #if defined(__EMSCRIPTEN__)
      // WASM: the directory of rexx.js, if this file system can see it
      char dir[PATH_MAX];
@@ -101,12 +101,13 @@ diff -ruN a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProces
 +    {
 +        int got = wasmScriptDirectory(dir, sizeof(dir));
 +        char cwd[PATH_MAX];
-+        fprintf(stderr, "[paths] windowsHost=%d scriptDirectory=%d '%s' access=%d errno=%d\n",
++        printf("[paths] windowsHost=%d scriptDirectory=%d '%s' access=%d errno=%d\n",
 +                (int)isWindowsHost(), got, got ? dir : "", got ? access(dir, F_OK) : -2, errno);
 +        char *rp = got ? realPath(dir) : NULL;
-+        fprintf(stderr, "[paths] realPath='%s' getcwd='%s' PATH='%s'\n", rp ? rp : "(null)",
++        printf("[paths] realPath='%s' getcwd='%s' PATH='%s'\n", rp ? rp : "(null)",
 +                getcwd(cwd, sizeof(cwd)) ? cwd : "(null)", getenv("PATH") ? getenv("PATH") : "(null)");
 +        free(rp);
++        fflush(stdout);
 +    }
      if (wasmScriptDirectory(dir, sizeof(dir)) && access(dir, F_OK) == 0)
      {
