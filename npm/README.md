@@ -2,7 +2,7 @@
 
 [ooRexx](https://www.oorexx.org/) 5.3.0 (SVN trunk r13268) compiled to
 WebAssembly, for Node.js 22 or later: `rexx`, `rexxc`, `rxqueue` and
-`rxsubcom`. It runs on Linux and macOS; Windows is not supported yet.
+`rxsubcom`. It runs on Linux, macOS and Windows.
 
 This is an experimental port, not an official distribution of the Rexx
 Language Association. The port, its patches and its documentation are at
@@ -32,6 +32,13 @@ macrospace are shared between processes through a daemon, as with native
 `rxapi`. The extension classes (`socket.cls`, `json.cls`, `yaml.cls`,
 `csvStream.cls`, `dateparser.cls`, `rxftp.cls`, `smtp.cls`, ...) are
 included.
+
+On Windows, file names are Windows names written with forward slashes
+(`C:/Users/me/data.txt`; backslashes are accepted too), `PATH`-like lists
+are separated by `;`, environment variable names are not case-sensitive,
+and commands go to `cmd.exe`: the initial `ADDRESS` environment is `CMD`,
+as with ooRexx for Windows. Windows-only parts of ooRexx (OLE, ooDialog,
+`winsystm.cls`) are not included.
 
 JavaScript, and Node's modules, are available from Rexx with
 `::requires "js.cls"`:
