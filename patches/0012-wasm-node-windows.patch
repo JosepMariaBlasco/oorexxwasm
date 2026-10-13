@@ -92,23 +92,8 @@ diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProce
      if (modulePath == NULL)
      {
          return NULL;
-@@ -633,9 +695,22 @@
- #if defined(__EMSCRIPTEN__)
-     // WASM: the directory of rexx.js, if this file system can see it
+@@ -635,7 +697,7 @@
      char dir[PATH_MAX];
-+    // TEMPORARY (Windows bring-up): ORX_WASM_DEBUG_PATHS traces this
-+    if (getenv("ORX_WASM_DEBUG_PATHS") != NULL || isWindowsHost())
-+    {
-+        int got = wasmScriptDirectory(dir, sizeof(dir));
-+        char cwd[PATH_MAX];
-+        printf("[paths] windowsHost=%d scriptDirectory=%d '%s' access=%d errno=%d\n",
-+                (int)isWindowsHost(), got, got ? dir : "", got ? access(dir, F_OK) : -2, errno);
-+        char *rp = got ? realPath(dir) : NULL;
-+        printf("[paths] realPath='%s' getcwd='%s' PATH='%s'\n", rp ? rp : "(null)",
-+                getcwd(cwd, sizeof(cwd)) ? cwd : "(null)", getenv("PATH") ? getenv("PATH") : "(null)");
-+        free(rp);
-+        fflush(stdout);
-+    }
      if (wasmScriptDirectory(dir, sizeof(dir)) && access(dir, F_OK) == 0)
      {
 -        char *resolved = realpath(dir, NULL);
@@ -144,6 +129,38 @@ diff --git a/common/platform/unix/SysProcess.hpp b/common/platform/unix/SysProce
       static void beep(int frequency, int duration);
  
   protected:
+diff --git a/interpreter/RexxClasses/StreamClasses.orx b/interpreter/RexxClasses/StreamClasses.orx
+--- a/interpreter/RexxClasses/StreamClasses.orx
++++ b/interpreter/RexxClasses/StreamClasses.orx
+@@ -546,7 +546,10 @@
+ ::method getSeparator private class external "LIBRARY REXX file_separator"
+ ::method getPathSeparator private class external "LIBRARY REXX file_path_separator"
+ ::constant separator (.File~getSeparator)
+-::constant pathSeparator (.File~getPathSeparator)
++-- not a constant: the WebAssembly build's image is the same for every host,
++-- and under Node on Windows the separator is ';' (see SysProcess.hpp)
++::method pathSeparator class external "LIBRARY REXX file_path_separator"
++::method pathSeparator external "LIBRARY REXX file_path_separator"
+ 
+ ::METHOD isCaseSensitive CLASS EXTERNAL 'LIBRARY REXX file_case_sensitive'
+ ::METHOD listRoots CLASS EXTERNAL 'LIBRARY REXX file_list_roots'
+diff --git a/interpreter/classes/RexxInfoClass.cpp b/interpreter/classes/RexxInfoClass.cpp
+--- a/interpreter/classes/RexxInfoClass.cpp
++++ b/interpreter/classes/RexxInfoClass.cpp
+@@ -394,6 +394,13 @@
+  */
+ RexxString *RexxInfo::getPathSeparator()
+ {
++#if defined(__EMSCRIPTEN__)
++    // the image is made on the build host; under Node on Windows it is ';'
++    if (SysProcess::isWindowsHost())
++    {
++        return new_string(SysFileSystem::getPathSeparator());
++    }
++#endif
+     return pathSeparator;
+ }
+ 
 diff --git a/interpreter/platform/unix/SysFileSystem.cpp b/interpreter/platform/unix/SysFileSystem.cpp
 --- a/interpreter/platform/unix/SysFileSystem.cpp
 +++ b/interpreter/platform/unix/SysFileSystem.cpp
@@ -386,7 +403,20 @@ diff --git a/interpreter/platform/unix/SysFileSystem.cpp b/interpreter/platform/
   * Normalize an absolute Unix path name.  Removes duplicate and trailing
   * slashes, resolves and removes ./ or ../  This works for any path name,
   * whether the resovled name exists or not.
-@@ -1198,6 +1347,11 @@
+@@ -719,6 +868,12 @@
+  */
+ int SysFileSystem::deleteDirectory(const char *name)
+ {
++    // Windows host: remove() tries unlink() first, which fails there with
++    // EPERM (not EISDIR) for a directory, and stops
++    if (SysProcess::isWindowsHost())
++    {
++        return rmdir(name) == 0 ? 0 : errno;
++    }
+     return remove(name) == 0 ? 0 : errno;
+ }
+ 
+@@ -1198,6 +1353,11 @@
   */
  bool SysFileSystem::isCaseSensitive(const char *name)
  {
@@ -398,7 +428,7 @@ diff --git a/interpreter/platform/unix/SysFileSystem.cpp b/interpreter/platform/
  #if defined HAVE_PC_CASE_SENSITIVE || defined HAVE_FS_CASEFOLD_FL
      AutoFree tmp = strdup(name);
  
-@@ -1261,6 +1415,25 @@
+@@ -1261,6 +1421,25 @@
   */
  int SysFileSystem::getRoots(FileNameBuffer &roots)
  {
@@ -424,7 +454,7 @@ diff --git a/interpreter/platform/unix/SysFileSystem.cpp b/interpreter/platform/
      // just one root to return
      roots = "/";
      return 1;
-@@ -1285,7 +1458,8 @@
+@@ -1285,7 +1464,8 @@
   */
  const char* SysFileSystem::getPathSeparator()
  {
@@ -434,7 +464,7 @@ diff --git a/interpreter/platform/unix/SysFileSystem.cpp b/interpreter/platform/
  }
  
  
-@@ -1313,6 +1487,17 @@
+@@ -1313,6 +1493,17 @@
      {
          if (getcwd(directory, directory.capacity()) != NULL)
          {
@@ -452,7 +482,7 @@ diff --git a/interpreter/platform/unix/SysFileSystem.cpp b/interpreter/platform/
              return true;
          }
          // erange indicates the buffer was too small. Anything else is a
-@@ -1746,6 +1931,13 @@
+@@ -1746,6 +1937,13 @@
   */
  const char* SysFileSystem::getPathEnd(const char *name)
  {
@@ -466,7 +496,7 @@ diff --git a/interpreter/platform/unix/SysFileSystem.cpp b/interpreter/platform/
      return strrchr(name, PathDelimiter);             // find the last backslash in name
  }
  
-@@ -1760,6 +1952,11 @@
+@@ -1760,6 +1958,11 @@
   */
  const char* SysFileSystem::getPathStart(const char *name)
  {
@@ -478,7 +508,7 @@ diff --git a/interpreter/platform/unix/SysFileSystem.cpp b/interpreter/platform/
      // this always starts with the name
      return name;
  }
-@@ -1772,6 +1969,16 @@
+@@ -1772,6 +1975,16 @@
   */
  bool SysFileSystem::getTemporaryPath(FileNameBuffer &temporary)
  {
@@ -726,21 +756,66 @@ diff --git a/interpreter/platform/unix/SystemInterpreter.cpp b/interpreter/platf
      // A NULL value is an unset operation
      if (value == NULL)
      {
+diff --git a/interpreter/runtime/RexxUtilCommon.cpp b/interpreter/runtime/RexxUtilCommon.cpp
+--- a/interpreter/runtime/RexxUtilCommon.cpp
++++ b/interpreter/runtime/RexxUtilCommon.cpp
+@@ -54,6 +54,7 @@
+ #include "ExternalFileBuffer.hpp"
+ #include "SysFile.hpp"
+ #include "SysFileSystem.hpp"
++#include "SysProcess.hpp"
+ #include "SystemInterpreter.hpp"
+ #include "Utilities.hpp"
+ #include "Numerics.hpp"
+@@ -314,6 +315,19 @@
+ {
+     // save the initial file spec
+     fileSpec = f;
++#if defined(__EMSCRIPTEN__)
++    // under Node on Windows (SysProcess.hpp): the names have forward slashes
++    if (SysProcess::isWindowsHost())
++    {
++        for (size_t i = 0; fileSpec.at(i) != '\0'; i++)
++        {
++            if (fileSpec.at(i) == '\\')
++            {
++                fileSpec.at(i) = '/';
++            }
++        }
++    }
++#endif
+     // validate the file specification
+     validateFileSpec();
+     // process the SysFileTreeOptions
 diff --git a/wasm/node-pre.js b/wasm/node-pre.js
 --- a/wasm/node-pre.js
 +++ b/wasm/node-pre.js
-@@ -36,8 +36,12 @@
+@@ -36,8 +36,27 @@
  /*----------------------------------------------------------------------------*/
  // Pre-js of the Node command-line build (wasm/build-node.sh).
  Module['preRun'] = (Module['preRun'] || []).concat([function() {
 -  // the host environment is the environment of the Rexx process
--  for (var k in process.env) ENV[k] = process.env[k];
 +  // the host environment is the environment of the Rexx process.  Windows:
 +  // the names in upper case (Path -> PATH), as the interpreter's Unix code
 +  // asks for them; Windows treats them case-insensitively anyway
-+  var win = process.platform === 'win32';
-+  for (var k in process.env) ENV[win ? k.toUpperCase() : k] = process.env[k];
-+  if (process.env.ORX_WASM_DEBUG_PATHS || win) console.log('[paths] preRun: ' + Object.keys(process.env).length + ' host variables, PATH ' + (ENV.PATH ? 'set' : 'unset'));  // TEMPORARY
+   for (var k in process.env) ENV[k] = process.env[k];
++  // Windows: the names in upper case (Path -> PATH), as the interpreter's Unix
++  // code asks for them (SystemInterpreter::getEnvironmentVariable() upper-cases
++  // too); Windows treats them case-insensitively anyway.  Emscripten builds
++  // environ from process.env itself, whose names keep their case, so give it
++  // the list; the hidden =C: entries are left out
++  if (process.platform === 'win32' && typeof getEnvStrings === 'function')
++  {
++    var seen = {}, strings = [];
++    for (var n in process.env)
++    {
++      var u = n.toUpperCase();
++      if (u.charAt(0) === '=' || seen[u]) continue;
++      seen[u] = true;
++      strings.push(u + '=' + process.env[n]);
++    }
++    getEnvStrings.strings = strings;
++  }
    // LINES()/CHARS() on STDIN: SysFile::hasData() asks ioctl(FIONREAD), which
    // Emscripten answers 0 (success) without writing the count, so the caller
    // saw whatever its variable held (LINES() was always 1).  Answer it for the
