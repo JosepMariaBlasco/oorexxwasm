@@ -10,8 +10,15 @@
 # version waits in npm's stage queue, and a maintainer approves it (with
 # 2FA) on npmjs.com or with the npm CLI; only then can it be installed.
 #
+# The same run builds the browser distribution (scripts/web-package.sh:
+# oorexxwasm-web-X.Y.Z.zip and oorexxwasm-playground-X.Y.Z.zip) and checks
+# the web zip in Chromium, Firefox and WebKit (tests/web_dist_check.py).
+# When it publishes, it also makes the GitHub release vX.Y.Z with the npm
+# tarball and the two zips.
+#
 # On demand (Actions > release > Run workflow) it builds and checks the
-# package; with "publish" it also stages it, and tags the commit vX.Y.Z.
+# package; with "publish" it also stages it, tags the commit vX.Y.Z and
+# makes the release.
 name: release
 
 on:
@@ -65,12 +72,18 @@ jobs:
           scripts/npm-package.sh "${{ steps.version.outputs.version }}" "$ORX_WASM_WORK/build-wasm/bin-node" "$RUNNER_TEMP/npm"
           mkdir -p "$RUNNER_TEMP/npm/tests"
           cp npm/test/smoke.rex "$ORX_WASM_WORK"/oorexx/wasm/tests/js-proxy.rex "$ORX_WASM_WORK"/oorexx/wasm/tests/js-extend.rex "$RUNNER_TEMP/npm/tests/"
+      - name: Browser distribution
+        run: scripts/web-package.sh "${{ steps.version.outputs.version }}" "$ORX_WASM_WORK/build-wasm/bin-web" "$RUNNER_TEMP/web"
       - uses: actions/upload-artifact@v7
         with:
           name: npm-package
           path: |
             ${{ runner.temp }}/npm/oorexxwasm-*.tgz
             ${{ runner.temp }}/npm/tests/
+      - uses: actions/upload-artifact@v7
+        with:
+          name: web-dist
+          path: ${{ runner.temp }}/web/oorexxwasm-*.zip
 
   check:
     needs: package
@@ -103,8 +116,33 @@ jobs:
       - name: Rexx classes extending JavaScript classes (js-extend.rex)
         run: cd scratch && rexx ../pkg/tests/js-extend.rex | tee ../extend.log && tr -d '\r' < ../extend.log | grep -q '^31 passed, 0 failed$'
 
+  check-web:
+    needs: package
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Playwright
+        run: pip install playwright && python -m playwright install --with-deps ${{ matrix.browser }}
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: web
+      - name: Example page, served by serve.mjs (tests/web_dist_check.py)
+        run: python tests/web_dist_check.py web/oorexxwasm-web-*.zip 8005 ${{ matrix.browser }}
+
   publish:
-    needs: [package, check]
+    needs: [package, check, check-web]
     if: startsWith(github.ref, 'refs/tags/v') || inputs.publish == true
     runs-on: ubuntu-24.04
     permissions:
@@ -129,3 +167,36 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: v${{ needs.package.outputs.version }}
         run: gh api repos/${{ github.repository }}/git/refs -f ref="refs/tags/$TAG" -f sha="${{ github.sha }}"
+
+  github-release:
+    needs: [package, publish]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write           # the release, and its tag when it does not exist yet
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: npm-package
+          path: pkg
+      - uses: actions/download-artifact@v8
+        with:
+          name: web-dist
+          path: web
+      - name: Make the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          V: ${{ needs.package.outputs.version }}
+          REPO: ${{ github.repository }}
+        run: |
+          cat > notes.md <<EOF
+          ooRexx 5.3.0 (SVN trunk with this repository's patches) compiled to WebAssembly.
+          An experimental port, not an official RexxLA distribution.
+
+          - **Node.js** (Linux, macOS, Windows; Node 22 or later): \`npm install -g oorexxwasm@$V\`, then \`rexx-wasm\` (or \`rexx\`). The tarball here is the same package.
+          - **Web pages:** \`oorexxwasm-web-$V.zip\`: the interpreter's files, an example page with \`<script type="text/rexx">\`, and \`serve.mjs\`, a small server with the headers the browser needs (\`node serve.mjs\`).
+          - **The ooRexx Playground**, ready to put on a web server: \`oorexxwasm-playground-$V.zip\`.
+
+          See [INSTALL.md](https://github.com/$REPO/blob/v$V/INSTALL.md).
+          EOF
+          gh release create "v$V" -R "$REPO" --target "${{ github.sha }}" --title "oorexxwasm $V" --notes-file notes.md \
+            pkg/oorexxwasm-*.tgz web/oorexxwasm-web-*.zip web/oorexxwasm-playground-*.zip

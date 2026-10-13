@@ -11,6 +11,11 @@ Rexx to JavaScript and to the page.
 ooRexx in your browser (needs a browser with cross-origin isolation:
 current Chrome, Edge, Firefox or Safari).
 
+**Install it:** `npm install -g oorexxwasm` for Node.js (Linux, macOS,
+Windows), or the zips of the
+[releases](https://github.com/JosepMariaBlasco/oorexxwasm/releases) for web
+pages and for the Playground: see [`INSTALL.md`](INSTALL.md).
+
 This repository is not a fork of ooRexx. It holds a **series of patches** on
 top of ooRexx SVN trunk, plus the scripts, tests and pages built around them.
 Patches 0001–0008 are proposed for inclusion in ooRexx in
@@ -132,11 +137,18 @@ run's summary puts all platforms side by side.
   - the saved build (prebuilt binaries on the branch `saved-build`):
     `save-build.sh`, `publish-build.sh`, `build-manifest.sh`;
   - working on the series as git commits: `series-repo.sh`, `series-export.sh`, `export-patch.sh`;
+  - the distributions: `npm-package.sh` (npm), `web-package.sh` (the web
+    and Playground zips), built and published by
+    [`.github/workflows/release.yml`](.github/workflows/release.yml);
   - `relink.sh`, `check-method-signatures.py`.
 - `tests/`: `qualify.sh`, probes (Node, browser, recursion, threads), the
   official suite runners, and the JDOR comparison with the Java handler.
 - `playground/`: the ooRexx Playground page and its samples. See
   [`playground/README.md`](playground/README.md).
+- `web/`: the browser distribution's own files (example page with
+  `<script type="text/rexx">`, `serve.mjs`, `.htaccess`, README), packed with
+  the web build by `scripts/web-package.sh`.
+- `npm/`: the npm package's launchers, README and tests (`scripts/npm-package.sh`).
 - `examples/`: a command environment written in Rexx (`ADDRESS SQLITE`).
 - `docs/`: [*ooRexx/WASM and JavaScript*](docs/ooRexx-WASM-and-JavaScript.md), the specification of `.JSObject`, kept up to date with the implementation; `docs/posted/` holds each version as it was posted to the ooRexx developers' list.
 - `notes/`: design notes (threads and recursion, Node commands, rxapi and

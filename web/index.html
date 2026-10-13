@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ooRexx in a web page</title>
+<style>
+  :root { color-scheme: light dark; --fg: #1d1d1f; --bg: #fbfbf8; --muted: #66665f; --line: #d9d8cf; --accent: #2b5d8a; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #e9e8e2; --bg: #1b1c1e; --muted: #a3a29a; --line: #3a3b3e; --accent: #8cb8e0; } }
+  body { margin: 0 auto; max-width: 46rem; padding: 2rem 1rem 4rem; font: 16px/1.55 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.1rem; margin: 2rem 0 .5rem; }
+  p.lead { color: var(--muted); margin-top: 0; }
+  section { border-top: 1px solid var(--line); }
+  code, pre, input, output { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .92em; }
+  pre { overflow-x: auto; padding: .75rem; border: 1px solid var(--line); border-radius: 6px; }
+  button, input { font-size: 1rem; padding: .35rem .7rem; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: inherit; }
+  button { cursor: pointer; border-color: var(--accent); color: var(--accent); }
+  input { width: min(22rem, 100%); box-sizing: border-box; }
+  .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
+  output { display: block; margin-top: .5rem; overflow-wrap: anywhere; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<h1>ooRexx in a web page</h1>
+<p class="lead">The real ooRexx interpreter, compiled to WebAssembly, runs the
+<code>&lt;script type="text/rexx"&gt;</code> elements of this page.</p>
+
+<section>
+<h2>1. A script sets the page's text</h2>
+<p id="greeting" class="muted">Loading ooRexx…</p>
+</section>
+
+<section>
+<h2>2. Rexx handles the page's events</h2>
+<div class="row"><button id="clicker" type="button">Click me</button> <span id="clicks" class="muted">No clicks yet.</span></div>
+<p class="muted">The handler is a method of a Rexx object, in <code>app.rex</code>.</p>
+</section>
+
+<section>
+<h2>3. JavaScript calls Rexx</h2>
+<form id="calc" class="row">
+  <input id="expr" value="2 ** 100" aria-label="A Rexx expression" spellcheck="false">
+  <button type="submit">Evaluate</button>
+</form>
+<output id="result" class="muted"></output>
+<p class="muted">The page's own JavaScript calls the routine <code>Evaluate</code>,
+which a Rexx script below defines.</p>
+</section>
+
+<section>
+<h2>How</h2>
+<pre>&lt;script src="ooRexx.js"&gt;&lt;/script&gt;
+&lt;script type="text/rexx"&gt;
+  .js~page~document~getElementById("greeting")~textContent = "Hello from Rexx"
+&lt;/script&gt;
+&lt;script type="text/rexx" src="app.rex"&gt;&lt;/script&gt;</pre>
+<p class="muted">The scripts run in order, once the page is loaded, and see
+what the scripts before them defined. <code>SAY</code> writes to the
+browser's console. View this page's source for the rest.</p>
+</section>
+
+<script src="ooRexx.js"></script>
+
+<script type="text/rexx">
+  parse version version
+  doc = .js~page~document
+  doc~getElementById("greeting")~textContent = "Hello from" version
+  say "The first script ran."
+</script>
+
+<script type="text/rexx" src="app.rex"></script>
+
+<script type="text/rexx">
+  ::routine Evaluate public
+    use strict arg expression
+    numeric digits 40
+    interpret "result =" expression
+    return result
+</script>
+
+<script>
+  // The page's Rexx scripts run in a session; ooRexx.scripts is a Promise of
+  // it (set when the page has been parsed). The session's eval runs Rexx
+  // code that sees the scripts' public routines and classes.
+  document.getElementById('calc').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const out = document.getElementById('result');
+    try {
+      const session = await ooRexx.scripts;
+      const value = await session.eval('use arg e; return Evaluate(e)',
+                                       document.getElementById('expr').value);
+      out.textContent = '= ' + value;
+    } catch (e) {
+      out.textContent = String(e && e.message || e);   // a RexxError: the Rexx error message
+    }
+  });
+</script>
+</body>
+</html>

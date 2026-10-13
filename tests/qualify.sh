@@ -14,7 +14,8 @@
 #   --quick         skip the slow parts (deep-recursion cases, thread stress)
 # Needs: node, python3 (+ websockets for the WebSocket echo server).
 # Takes ~3 min (--quick ~1 min).  Ports used: 50010 (WebSocket echo),
-# 8000 (COOP/COEP HTTP server), 50110-50119 (socket checks).
+# 8000 (COOP/COEP HTTP server), 8003 (playground), 8005 (browser
+# distribution), 50110-50119 (socket checks).
 ORX_WASM_WORK=${ORX_WASM_WORK:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)}   # where oorexx/, build-wasm/ ... live
 set -uo pipefail
 BUILD=$ORX_WASM_WORK/build-wasm; BROWSER=auto; QUICK=0
@@ -261,6 +262,10 @@ else
   SITE=$(mktemp -d)
   check "playground page: driven like a user (light/dark, desktop/mobile)" '^== 0 failed$' -- \
     "'$HERE/../playground/build-site.sh' '$BUILD/bin-web' '$SITE' >/dev/null && timeout 300 python3 '$HERE/playground_check.py' '$SITE'"
+  # the browser distribution (scripts/web-package.sh), served by its own serve.mjs
+  WEBOUT=$(mktemp -d)
+  check "browser distribution: zip, serve.mjs, example page with text/rexx" '^== 0 failed$' -- \
+    "'$HERE/../scripts/web-package.sh' 0.0.0-qualify '$BUILD/bin-web' '$WEBOUT' >/dev/null && timeout 300 python3 '$HERE/web_dist_check.py' '$WEBOUT/oorexxwasm-web-0.0.0-qualify.zip'"
 fi
 
 # ---------------------------------------------------------------------------
