@@ -116,7 +116,7 @@ copied as arrays and plain objects.
  wasm/extra-packages.cpp                |   66 +
  wasm/js-bridge.js                      |  241 ++++
  wasm/js-realm.js                       |  817 +++++++++++++
- wasm/tests/js-extend-gc.rex            |   88 ++
+ wasm/tests/js-extend-gc.rex            |  111 ++
  wasm/tests/js-extend.rex               |  157 +++
  wasm/tests/js-proxy.rex                |  127 ++
  wasm/tests/qualify-node-cli.sh         |  198 +++
@@ -125,10 +125,10 @@ copied as arrays and plain objects.
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
  wasm/web-js.cpp                        | 1527 ++++++++++++++++++++++++
- wasm/web/js.cls                        |  670 +++++++++++
+ wasm/web/js.cls                        |  675 +++++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  181 +++
- 19 files changed, 4572 insertions(+), 12 deletions(-)
+ 19 files changed, 4600 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -175,7 +175,7 @@ index 9324d0b..786af1f 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index d6f2caf..4878c9a 100644
+index d6f2caf..ca8d696 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -239,6 +239,186 @@ from the test suite's directory:
@@ -330,7 +330,7 @@ index d6f2caf..4878c9a 100644
 +  `UNINIT` runs then, once) or hands it to Rexx again (`web-js.cpp`,
 +  *Classes*).  For instances JavaScript makes itself, the base's members run.
 +  Only where JavaScript can wait for Rexx: the worker's realm and Node, not
-+  the page.  Tests: `tests/js-extend.rex` (31), `tests/js-extend-gc.rex` (8,
++  the page.  Tests: `tests/js-extend.rex` (31), `tests/js-extend-gc.rex` (9,
 +  Node with `--expose-gc`).
 +* Rexx from the page (browser): `rexx.start(opts)` (`ooRexx.js`, the options
 +  of `run()`) is a Promise of a session, a run of `.js~session` (`js.cls`),
@@ -1616,10 +1616,10 @@ index 0000000..e802bed
 +})();
 diff --git a/wasm/tests/js-extend-gc.rex b/wasm/tests/js-extend-gc.rex
 new file mode 100644
-index 0000000..c491cc1
+index 0000000..d84307a
 --- /dev/null
 +++ b/wasm/tests/js-extend-gc.rex
-@@ -0,0 +1,88 @@
+@@ -0,0 +1,111 @@
 +/* js-extend-gc.rex: the pairs of .js~extend (a Rexx object and its           */
 +/* JavaScript object) are released by the two collectors, with no            */
 +/* .js~detach: a pair lives while Rexx holds the Rexx object or JavaScript    */
@@ -1678,6 +1678,16 @@ index 0000000..c491cc1
 +call collect
 +call check "then dropped by Rexx too: both released", .uninits == 2, .uninits
 +
++-- 5. a subclass of an extending class: the UNINIT it inherits runs in its
++-- own class's scope (it sees the variables INIT set there), and a method of
++-- the subclass named RUN is not called in its place
++.local~uninits = 0; .local~ranRun = 0
++do i = 1 to 50; p = .Puppy~new("p" i); end
++drop p
++call collect
++call check "a subclass: the inherited UNINIT sees its variables, all 50 released", -
++  .uninits == 50 & .ranRun == 0, .uninits .ranRun
++
 +say
 +say .ok "passed," .bad "failed"
 +exit .bad > 0
@@ -1704,10 +1714,23 @@ index 0000000..c491cc1
 +::requires "js.cls"
 +
 +::class Pet subclass JSObject
++::method init                       -- a variable for UNINIT (counted only if it sees it)
++  expose tag
++  tag = "mine"
++  forward class (super)
 +::method sound                      -- Car's describe() calls it
 +  return "woof"
 +::method uninit                     -- the class's UNINIT: once, when the pair is over
-+  .local~uninits += 1
++  expose tag
++  if tag == "mine" then .local~uninits += 1
++
++::class Puppy subclass Pet
++::method init
++  expose age
++  age = 1
++  forward class (super)
++::method run                        -- not to be confused with Object's RUN
++  .local~ranRun += 1
 diff --git a/wasm/tests/js-extend.rex b/wasm/tests/js-extend.rex
 new file mode 100644
 index 0000000..f3cfe7a
@@ -2005,7 +2028,7 @@ index 0000000..c89f67e
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..37b2136 100755
+index e1c1cd8..276b01e 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -200,6 +200,204 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
@@ -2171,7 +2194,7 @@ index e1c1cd8..37b2136 100755
 +check "JavaScript objects: Rexx classes extending JavaScript classes" '^31 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-extend.rex'"
 +# and their pairs, released by the two collectors (no .js~detach)
-+check "JavaScript objects: an extending class's pairs are released by the collectors" '^8 passed, 0 failed$' '!^FAIL ' -- \
++check "JavaScript objects: an extending class's pairs are released by the collectors" '^9 passed, 0 failed$' '!^FAIL ' -- \
 +  "NODE_OPTIONS=--expose-gc timeout 300 $X '$(cd "$(dirname "$0")" && pwd)/js-extend-gc.rex'"
 +
 +# --- the RexxAPI while JavaScript waits for a synchronous handler: in the
@@ -4064,10 +4087,10 @@ index 0000000..f32ce72
 +}
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
 new file mode 100644
-index 0000000..4fd2509
+index 0000000..9d1591b
 --- /dev/null
 +++ b/wasm/web/js.cls
-@@ -0,0 +1,670 @@
+@@ -0,0 +1,675 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -4329,7 +4352,12 @@ index 0000000..4fd2509
 +    u = jsuninit
 +    drop jsuninit
 +    signal on syntax
-+    self~run(u)
++    -- sent with its class as the scope: it then runs in that scope (it sees
++    -- the variables of that class), the object's "nop" is passed over, and a
++    -- method of the class named RUN is not in the way (self~run(u) had both
++    -- problems; setMethod(name, u, "OBJECT") would run it in the scope of the
++    -- object's class, not of a superclass that defines it)
++    .Message~new(self, .array~of("UNINIT", u~scope))~send
 +  end
 +syntax:
 +  self~jsRelease

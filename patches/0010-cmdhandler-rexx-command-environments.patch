@@ -1093,7 +1093,7 @@ index 0000000..92f276a
 +  address t "RETURN thread ok"
 +  return rc
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 37b2136..cbff322 100755
+index 276b01e..ac71775 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -398,6 +398,10 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
