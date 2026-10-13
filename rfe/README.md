@@ -1,6 +1,6 @@
 # RFE #879: the WebAssembly port
 
-Patches 0001–0007 of this repository are proposed for inclusion in ooRexx in
+Patches 0001–0008 of this repository are proposed for inclusion in ooRexx in
 [RFE #879](https://sourceforge.net/p/oorexx/feature-requests/879/) on
 SourceForge ([the request as posted](2026-10-04/request.md)). The updates
 are kept here, one folder each. Those up to 8 October 2026 were posted on

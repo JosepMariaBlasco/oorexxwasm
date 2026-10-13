@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
 Date: Sun, 4 Oct 2026 11:46:28 +0200
-Subject: [PATCH 2/7] WebAssembly port, Node: external commands, rexxc, host
+Subject: [PATCH 2/8] WebAssembly port, Node: external commands, rexxc, host
  errno values
 
 wasm/build-node.sh relinks the runtime (no recompilation) as a Node-only

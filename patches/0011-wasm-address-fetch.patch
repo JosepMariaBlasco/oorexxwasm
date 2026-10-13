@@ -35,10 +35,10 @@ qualify-node-cli.sh and web-api.py.  Not part of the posted RFE.
  create mode 100644 wasm/web/fetch.cls
 
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index 81037c7..80c5ae2 100755
+index ec1bf1a..9150635 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
-@@ -81,7 +81,7 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+@@ -82,7 +82,7 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
             csvStream/csvStream.cls dateparser/dateparser.cls cmdhandler/cmdhandler.cls; do
    cp "$SRC/extensions/$cls" "$OUT/"
  done

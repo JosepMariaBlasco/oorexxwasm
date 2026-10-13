@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
 Date: Sun, 4 Oct 2026 11:46:41 +0200
-Subject: [PATCH 5/7] WebAssembly port: browser runtime for web pages
+Subject: [PATCH 5/8] WebAssembly port: browser runtime for web pages
 
 wasm/build-web.sh relinks the build into a modular browser runtime
 (createOoRexx) with a small page API, wasm/web/ooRexx.js:

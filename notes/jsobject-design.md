@@ -371,7 +371,7 @@ sample says so).
 
 Iteration and coalescing are built; batching and copying values across
 realms are not. ADDRESS DOM and ADDRESS FETCH were designed separately
-(`dom-fetch-design.md`; patches 0010 and 0011). The whole JS integration is
+(`dom-fetch-design.md`; patches 0011 and 0012). The whole JS integration is
 a prototype; it is a sister of Rony G. Flatscher's BSF4ooRexx, and good
 documentation for developers is the next step.
 
@@ -396,7 +396,7 @@ documentation for developers is the next step.
   (`.JSTyped~undefined`, handed to web-js.cpp by `JsSetup`; record U both
   ways), whose string is "undefined". A property that does not exist reads
   as `.js~undefined`; `~hasProperty` tells the two apart. dom.cls (patch
-  0011) checks JavaScript values with a `missing()` routine (null or
+  0012) checks JavaScript values with a `missing()` routine (null or
   undefined).
 - Tests: qualify-node-cli.sh 17 (+1: Map/array/object with DO WITH, the
   error, latest keeps detail 5 of 5), later also `max 2` keeps events 4 and
@@ -447,7 +447,7 @@ For the bridges to agree with each other (BSF4ooRexx for Java, oorexxnet for
   `Array.isArray` accepts and that has no own `constructor`.
 - Tests: qualify-node-cli.sh 22 (+1: arrays from 1, DO WITH, index 0,
   typed array, Array methods, box and unbox, errors); web-api.py's js core
-  case now reads `a[1]` as the first element. `fetch.cls` (patch 0010)
+  case now reads `a[1]` as the first element. `fetch.cls` (patch 0011)
   reads the headers' `[name, value]` pairs as `pair[1]`, `pair[2]`.
 - The living specification (`docs/ooRexx-WASM-and-JavaScript.md`) says
   all this; the version posted on 8 October stays as sent in

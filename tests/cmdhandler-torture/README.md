@@ -1,7 +1,7 @@
 # cmdhandler torture tests
 
 `wasm/tests/cmdhandler.rex` (in the patched ooRexx tree) checks that each
-part of cmdhandler — command environments written in Rexx, patch 0009 —
+part of cmdhandler — command environments written in Rexx, patch 0010 —
 does what it says, once.  These cases check that it *holds*: volume,
 concurrency, reentrancy, chained errors, misuse, interruptions.  Each case is
 a program of its own, run in a process of its own, with assertions; it exits
@@ -61,7 +61,7 @@ What they found, with the fix for each:
 - cmdhandler let a `.CommandContext` be used from another thread: a method
   that REPLYs and goes on, or a thread the handler hands it to, used the
   command's exit context from the wrong activity, racing with the end of
-  the command (`t06`: hangs).  Fixed in patch 0009: such calls raise SYNTAX
+  the command (`t06`: hangs).  Fixed in patch 0010: such calls raise SYNTAX
   98.900, as calls on a context whose command ended do.
 
 Facts found on the way (expected, no change): an untrapped HALT in a

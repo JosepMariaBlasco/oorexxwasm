@@ -13,7 +13,7 @@ current Chrome, Edge, Firefox or Safari).
 
 This repository is not a fork of ooRexx. It holds a **series of patches** on
 top of ooRexx SVN trunk, plus the scripts, tests and pages built around them.
-Patches 0001–0005 are proposed for inclusion in ooRexx in
+Patches 0001–0008 are proposed for inclusion in ooRexx in
 [RFE #879](https://sourceforge.net/p/oorexx/feature-requests/879/); the
 updates to that request are now published in [`rfe/`](rfe/).
 
@@ -31,16 +31,17 @@ Applied in order on top of ooRexx SVN trunk **r13268**
 | 0005 | The browser runtime: `wasm/web/ooRexx.js`, one Web Worker per run, interactive stdin, output streams marked as plain / trace / error |
 | 0006 | Build variants with the test suite's native libraries linked in (`wasm/build-test.sh`), so the API test groups run under Node and in the browsers |
 | 0007 | `.JSObject`: JavaScript objects from Rexx (the worker's and the page's), events, Rexx objects in JavaScript, Rexx from the page |
-| 0008 | `ADDRESS JDOR`: Rony G. Flatscher's JDOR drawing commands on the browser's canvas (an example environment) |
-| 0009 | Command environments written in Rexx (`cmdhandler`), a portable extension package that 0010 and 0011 use |
-| 0010 | `ADDRESS FETCH`: HTTP from Rexx commands (an example environment) |
-| 0011 | `ADDRESS DOM`: building and driving the page from Rexx commands (an example environment) |
+| 0008 | Node on Windows: Windows file names (written `C:/dir/file`), `;` in `PATH` lists, commands through `cmd.exe` (`ADDRESS CMD`), the RexxAPI daemon on a named pipe, `.cmd` launchers |
+| 0009 | `ADDRESS JDOR`: Rony G. Flatscher's JDOR drawing commands on the browser's canvas (an example environment) |
+| 0010 | Command environments written in Rexx (`cmdhandler`), a portable extension package that 0011 and 0012 use |
+| 0011 | `ADDRESS FETCH`: HTTP from Rexx commands (an example environment) |
+| 0012 | `ADDRESS DOM`: building and driving the page from Rexx commands (an example environment) |
 
-0001–0007 are the RFE: the port, and `.JSObject`, which
+0001–0008 are the RFE: the port, and `.JSObject`, which
 [`docs/ooRexx-WASM-and-JavaScript.md`](docs/ooRexx-WASM-and-JavaScript.md)
-specifies. 0008, 0010 and 0011 are example command environments built on
-them. 0009 is a separate, portable package, not WebAssembly-specific, on
-which 0010 and 0011 depend. The
+specifies. 0009, 0011 and 0012 are example command environments built on
+them. 0010 is a separate, portable package, not WebAssembly-specific, on
+which 0011 and 0012 depend. The
 patches are in git format and apply with `svn patch` or `git am`;
 `patches/SHA256SUMS` lists their hashes.
 

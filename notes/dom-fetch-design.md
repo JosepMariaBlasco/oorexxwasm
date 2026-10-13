@@ -1,10 +1,10 @@
 # ADDRESS DOM and ADDRESS FETCH
 
-*Written 07/10/2026; describes patches 0009 (cmdhandler: command environments
-written in Rexx), 0010 (ADDRESS FETCH) and 0011 (ADDRESS DOM) of the current
+*Written 07/10/2026; describes patches 0010 (cmdhandler: command environments
+written in Rexx), 0011 (ADDRESS FETCH) and 0012 (ADDRESS DOM) of the current
 series, none of which is part of the RFE. Context: `jsobject-design.md`.
 Model: Rony G. Flatscher's JDOR (an ADDRESS environment over Java2D, part of
-BSF4ooRexx; its web version is patch 0008).*
+BSF4ooRexx; its web version is patch 0009).*
 
 ## Why ADDRESS when there is `.JSObject`
 
@@ -18,9 +18,9 @@ interactive page.
 ## Three layers
 
 1. `.JSObject` (patch 0007), the base.
-2. Command handlers written in Rexx (patch 0009), a general mechanism,
+2. Command handlers written in Rexx (patch 0010), a general mechanism,
    useful far beyond JavaScript.
-3. ADDRESS FETCH and ADDRESS DOM (patches 0010 and 0011), written in Rexx
+3. ADDRESS FETCH and ADDRESS DOM (patches 0011 and 0012), written in Rexx
    on top of the two.
 
 FETCH and DOM are **samples**: they show what the two general layers make
@@ -29,7 +29,7 @@ possible, and are not proposed as standard environments. Their conventions
 next to `js.cls` (`/usr/lib/ooRexx`); where samples like these should live
 is an open question.
 
-## Layer 1: command handlers written in Rexx (patch 0009)
+## Layer 1: command handlers written in Rexx (patch 0010)
 
 ooRexx command handlers are native only (`RexxContextCommandHandler`,
 `RexxRedirectingCommandHandler` in oorexxapi.h), but they can be registered
@@ -107,7 +107,7 @@ pass.
 
 ### `.CommandWords`, the shared tokenizer
 
-`wasm/web/commandwords.cls` (patch 0010) is the tokenizer both environments
+`wasm/web/commandwords.cls` (patch 0011) is the tokenizer both environments
 use. It is deliberately not part of cmdhandler: anybody can PARSE, and FROM /
 INTO are these samples' conventions, not every handler's, so cmdhandler
 stays only the mechanism.
@@ -152,7 +152,7 @@ written `address fetch "GET" url with output stem b.` (or set default
 redirections with `address fetch with output stem b.`, which then apply to
 every command). With INTO this is rarely needed.
 
-## ADDRESS FETCH (patch 0010; browser and Node)
+## ADDRESS FETCH (patch 0011; browser and Node)
 
 `wasm/web/fetch.cls`, Rexx over `cmdhandler.cls`, `commandwords.cls` and
 `js.cls`; the whole command set is documented in its header.
@@ -208,7 +208,7 @@ proved unreliable behind an intercepting HTTPS proxy that randomly answered
 cross-origin requests with an error lacking CORS headers; the same tests
 under Node work.
 
-## ADDRESS DOM (patch 0011; browser, page realm)
+## ADDRESS DOM (patch 0012; browser, page realm)
 
 `wasm/web/dom.cls`, Rexx over `cmdhandler.cls`, `commandwords.cls` and
 `js.cls`.

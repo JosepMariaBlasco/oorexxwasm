@@ -796,10 +796,10 @@ index e949832..c16231d 100644
  };
  
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index 3f6ba84..81037c7 100755
+index e764f7c..ec1bf1a 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
-@@ -78,7 +78,7 @@ cp "$SRC/samples/rexxtry.rex" "$OUT/"
+@@ -79,7 +79,7 @@ cp "$SRC/samples/rexxtry.rex" "$OUT/"
  # not ncurses (no native library here)
  for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp.cls \
             rxftp/rxftp.cls rxregexp/rxregexp.cls json/json.cls yaml/yaml.cls \
