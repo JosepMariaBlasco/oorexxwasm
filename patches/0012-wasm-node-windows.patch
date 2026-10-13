@@ -97,7 +97,7 @@ diff -ruN a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProces
      // WASM: the directory of rexx.js, if this file system can see it
      char dir[PATH_MAX];
 +    // TEMPORARY (Windows bring-up): ORX_WASM_DEBUG_PATHS traces this
-+    if (getenv("ORX_WASM_DEBUG_PATHS") != NULL)
++    if (getenv("ORX_WASM_DEBUG_PATHS") != NULL || isWindowsHost())
 +    {
 +        int got = wasmScriptDirectory(dir, sizeof(dir));
 +        char cwd[PATH_MAX];
@@ -729,7 +729,7 @@ diff -ruN a/interpreter/platform/unix/SystemInterpreter.cpp b/interpreter/platfo
 diff -ruN a/wasm/node-pre.js b/wasm/node-pre.js
 --- a/wasm/node-pre.js
 +++ b/wasm/node-pre.js
-@@ -36,8 +36,11 @@
+@@ -36,8 +36,12 @@
  /*----------------------------------------------------------------------------*/
  // Pre-js of the Node command-line build (wasm/build-node.sh).
  Module['preRun'] = (Module['preRun'] || []).concat([function() {
@@ -740,6 +740,7 @@ diff -ruN a/wasm/node-pre.js b/wasm/node-pre.js
 +  // asks for them; Windows treats them case-insensitively anyway
 +  var win = process.platform === 'win32';
 +  for (var k in process.env) ENV[win ? k.toUpperCase() : k] = process.env[k];
++  if (process.env.ORX_WASM_DEBUG_PATHS || win) console.log('[paths] preRun: ' + Object.keys(process.env).length + ' host variables, PATH ' + (ENV.PATH ? 'set' : 'unset'));  // TEMPORARY
    // LINES()/CHARS() on STDIN: SysFile::hasData() asks ioctl(FIONREAD), which
    // Emscripten answers 0 (success) without writing the count, so the caller
    // saw whatever its variable held (LINES() was always 1).  Answer it for the
