@@ -31,7 +31,9 @@ one() {
   g=$1; id=${g//\//_}; log="$OUT/logs/$id.log"; t0=$(date +%s)
   # each group runs in its own scratch copy dir? no: tests write temp files next
   # to themselves, so groups in the same directory must not run concurrently.
-  timeout "$TMO" "$REXX" testOORexx.rex -R "$(dirname "$g")" -f "$(basename "$g" .testGroup)" -U > "$log" 2>&1
+  # stdin from /dev/null: a command a test runs must not eat the list of
+  # groups the loops below read (it did under Windows: cmd.exe reads stdin)
+  timeout "$TMO" "$REXX" testOORexx.rex -R "$(dirname "$g")" -f "$(basename "$g" .testGroup)" -U > "$log" 2>&1 < /dev/null
   rc=$?; t1=$(date +%s)
   ran=$(grep -m1 '^Tests ran:' "$log" | awk '{print $3}')
   asr=$(grep -m1 '^Assertions:' "$log" | awk '{print $2}')

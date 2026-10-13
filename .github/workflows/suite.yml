@@ -225,9 +225,13 @@ jobs:
           # rexx.js for the command "rexx" (.JS is in PATHEXT); the classes
           # are found through REXX_PATH, rexx.img next to rexx.js
           L=$W/launchers; mkdir -p "$L"
-          printf '#!/usr/bin/env bash\nREXX_PATH="%s;$REXX_PATH" exec node "%s\\rexx.js" "$@"\n' "$B" "$B" > "$L/rexx"
-          printf '@echo off\r\nset "REXX_PATH=%s;%%REXX_PATH%%"\r\nnode "%s\\rexx.js" %%*\r\n' "$B" "$B" > "$L/rexx.cmd"
-          chmod +x "$L/rexx"; cat "$L/rexx" "$L/rexx.cmd"
+          for t in rexx rexxc rxqueue rxsubcom; do
+            [[ $t == rexx ]] && f= || f=--orx-wasm-$t
+            printf '#!/usr/bin/env bash\nREXX_PATH="%s;$REXX_PATH" exec node "%s\\rexx.js" %s "$@"\n' "$B" "$B" "$f" > "$L/$t"
+            printf '@echo off\r\nset "REXX_PATH=%s;%%REXX_PATH%%"\r\nnode "%s\\rexx.js" %s %%*\r\n' "$B" "$B" "$f" > "$L/$t.cmd"
+            chmod +x "$L/$t"
+          done
+          cat "$L/rexxc" "$L/rexxc.cmd"
           echo "$L" >> "$GITHUB_PATH"
           "$L/rexx" -e 'parse version v; say v; say .RexxInfo~platform directory()'
       - name: Run the suite
