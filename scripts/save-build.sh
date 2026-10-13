@@ -17,7 +17,7 @@ mkdir -p "$S/bin" "$S/bin-node"
 cp "$BUILD"/bin/rexx.{js,wasm,data,img} "$S/bin/"
 mkdir -p "$S/bin/node_modules/ws" && cp "$BUILD/bin/node_modules/ws/index.js" "$S/bin/node_modules/ws/"
 if [[ -d "$BUILD/bin-node" ]]; then
-  (cd "$BUILD/bin-node" && cp -a rexx rexxc rxqueue rxsubcom rexx.js rexx.wasm rexx.img *.cls "$S/bin-node/")
+  (cd "$BUILD/bin-node" && cp -a rexx rexxc rxqueue rxsubcom *.cmd rexx.js rexx.wasm rexx.img *.cls "$S/bin-node/")
 fi
 if [[ -d "$BUILD/bin-web" ]]; then      # oorexx/wasm/build-web.sh (playground)
   mkdir -p "$S/bin-web" && cp -a "$BUILD/bin-web/." "$S/bin-web/"
@@ -27,7 +27,7 @@ fi
 # build tree, so they travel too
 if [[ -d "$BUILD/bin-node-test" ]]; then
   mkdir -p "$S/bin-node-test"
-  (cd "$BUILD/bin-node-test" && cp -a rexx rexxc rxqueue rxsubcom rexxinstance rexx.js rexx.wasm rexx.img *.cls "$S/bin-node-test/")
+  (cd "$BUILD/bin-node-test" && cp -a rexx rexxc rxqueue rxsubcom rexxinstance *.cmd rexx.js rexx.wasm rexx.img *.cls "$S/bin-node-test/")
 fi
 if [[ -d "$BUILD/bin-web-test" ]]; then
   mkdir -p "$S/bin-web-test" && cp -a "$BUILD/bin-web-test/." "$S/bin-web-test/"
