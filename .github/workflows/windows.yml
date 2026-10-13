@@ -43,7 +43,7 @@ jobs:
         run: |
           scripts/npm-package.sh 0.0.0-windows "$ORX_WASM_WORK/build-wasm/bin-node" "$RUNNER_TEMP/npm"
           mkdir -p "$RUNNER_TEMP/npm/tests"
-          cp npm/test/smoke.rex tests/windows/probe.rex "$RUNNER_TEMP/npm/tests/"
+          cp npm/test/smoke.rex tests/windows/probe.rex "$ORX_WASM_WORK"/oorexx/wasm/tests/js-proxy.rex "$ORX_WASM_WORK"/oorexx/wasm/tests/js-extend.rex "$RUNNER_TEMP/npm/tests/"
       - uses: actions/upload-artifact@v7
         with:
           name: npm-package-windows
@@ -131,3 +131,9 @@ jobs:
       - name: Smoke test
         continue-on-error: true
         run: set +e; cd scratch && rexx ../pkg/tests/smoke.rex; echo "exit status $?"
+      - name: Rexx objects in JavaScript (js-proxy.rex)
+        continue-on-error: true
+        run: set +e; cd scratch && rexx ../pkg/tests/js-proxy.rex | tail -3; echo "exit status ${PIPESTATUS[0]}"
+      - name: Rexx classes extending JavaScript classes (js-extend.rex)
+        continue-on-error: true
+        run: set +e; cd scratch && rexx ../pkg/tests/js-extend.rex | tail -3; echo "exit status ${PIPESTATUS[0]}"

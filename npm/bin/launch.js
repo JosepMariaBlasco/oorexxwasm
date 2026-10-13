@@ -1,7 +1,7 @@
 // oorexxwasm: run a tool of ooRexx/WASM (lib/rexx.js, one multi-call
 // WebAssembly module) with Node, as the shell launchers of
-// wasm/build-node.sh do: lib/ first in PATH, so that the interpreter finds
-// rexx.img and the extension classes, and the arguments passed on.
+// wasm/build-node.sh do: lib/ first in PATH (REXX_PATH on Windows), so that
+// the interpreter finds the extension classes, and the arguments passed on.
 'use strict';
 const path = require('node:path');
 const { spawn } = require('node:child_process');
@@ -9,7 +9,12 @@ const { spawn } = require('node:child_process');
 module.exports = function launch(toolFlag) {
   const lib = path.join(__dirname, '..', 'lib');
   const env = Object.assign({}, process.env);
-  const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') || 'PATH';
+  // Windows: lib/ goes into REXX_PATH, not PATH: cmd.exe would take
+  // lib/rexx.js for the command "rexx" (.JS is in PATHEXT, Windows Script
+  // Host).  The interpreter finds rexx.img next to rexx.js by itself, and
+  // the classes through REXX_PATH
+  const name = process.platform === 'win32' ? 'REXX_PATH' : 'PATH';
+  const key = Object.keys(env).find((k) => k.toUpperCase() === name) || name;
   env[key] = lib + path.delimiter + (env[key] || '');
   const args = [path.join(lib, 'rexx.js')];
   if (toolFlag) args.push(toolFlag);
