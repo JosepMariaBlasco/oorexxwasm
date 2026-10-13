@@ -225,6 +225,18 @@ jobs:
           # takes rexx.cmd before rexx.js: .CMD comes first in PATHEXT)
           echo "$(cygpath -w "$W/build-wasm/bin-node-test")" >> "$GITHUB_PATH"
           "$W/build-wasm/bin-node-test/rexx" -e 'parse version v; say v; say .RexxInfo~platform .RexxInfo~executable directory()'
+      - name: Commands from Rexx (a quick look before the suite)
+        continue-on-error: true
+        run: |
+          W=$(cd .. && pwd); cd "$W/oorexx-test"
+          cat > nested.rex <<'EOF'
+          'rexx -e "return arg()" "one"'; say 'nested rexx, expected 1:' rc
+          'rexx -e "exit 234"'; say 'nested rexx, expected 234:' rc
+          address path 'rexx -e "exit 5"'; say 'ADDRESS PATH, expected 5:' rc
+          say 'executable' .RexxInfo~executable
+          EOF
+          sed -i 's/^          //' nested.rex
+          rexx nested.rex; ORX_WASM_RXAPI=inprocess rexx nested.rex; rm nested.rex
       - name: Run the suite
         run: |
           W=$(cd .. && pwd)
