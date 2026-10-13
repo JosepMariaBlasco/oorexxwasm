@@ -10,6 +10,7 @@ the test results and a link to the patches at the commit they describe.
 
 | Date | Update |
 |---|---|
+| 2026-10-13 (3) | [The RexxAPI no longer needs the JavaScript main thread](2026-10-13-3/update.md) |
 | 2026-10-13 (2) | [No `.js~detach`: the collectors release everything](2026-10-13-2/update.md) |
 | 2026-10-13 | [Node on Windows, patch 8 of the RFE](2026-10-13/update.md) |
 | 2026-10-12 | [The JavaScript bridge is now patch 7 of the RFE](2026-10-12/update.md) |
