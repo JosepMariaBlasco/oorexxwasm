@@ -20,9 +20,15 @@ rexx myprogram.rex
 
 Or without installing: `npx -p oorexxwasm rexx myprogram.rex`.
 
-If a native ooRexx is installed, its `rexx` and this one would have the
-same name: npm refuses to replace a command it did not install, and
-whichever comes first in `PATH` runs.
+If a native ooRexx is installed, its `rexx` and this one have the same name,
+and whichever comes first in `PATH` runs (npm only refuses to replace a
+command it did not install in its own directory). The same commands are
+also installed as `rexx-wasm`, `rexxc-wasm`, `rxqueue-wasm` and
+`rxsubcom-wasm`, which never clash with a native ooRexx:
+
+```bash
+rexx-wasm myprogram.rex
+```
 
 ## What works
 

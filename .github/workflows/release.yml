@@ -94,8 +94,8 @@ jobs:
           path: pkg
       - name: Install (npm install -g)
         run: npm install -g ./pkg/oorexxwasm-*.tgz
-      - name: rexx -v
-        run: rexx -v
+      - name: rexx -v, and the -wasm names
+        run: rexx -v && rexx-wasm -e 'say .RexxInfo~platform' | tr -d '\r' | grep -qx EMSCRIPTEN
       - name: Smoke test
         run: mkdir scratch && cd scratch && rexx ../pkg/tests/smoke.rex | tee ../smoke.log && tr -d '\r' < ../smoke.log | grep -q ' 0 failed$'
       - name: Rexx objects in JavaScript (js-proxy.rex)

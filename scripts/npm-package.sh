@@ -40,7 +40,11 @@ cat > "$PKG/package.json" <<JSON
     "rexx": "bin/rexx.js",
     "rexxc": "bin/rexxc.js",
     "rxqueue": "bin/rxqueue.js",
-    "rxsubcom": "bin/rxsubcom.js"
+    "rxsubcom": "bin/rxsubcom.js",
+    "rexx-wasm": "bin/rexx.js",
+    "rexxc-wasm": "bin/rexxc.js",
+    "rxqueue-wasm": "bin/rxqueue.js",
+    "rxsubcom-wasm": "bin/rxsubcom.js"
   },
   "files": ["bin", "lib", "README.md", "CPLv1.0.txt"],
   "engines": { "node": ">=22" }
