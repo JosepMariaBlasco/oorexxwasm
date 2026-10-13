@@ -101,6 +101,23 @@ jobs:
           scratch=$(cygpath -w "$PWD/scratch")
           lib="$(npm root -g)/oorexxwasm/lib"
           cp pkg/tests/probe.rex "$lib/" && cd "$lib" && node rexx.js probe.rex "$scratch"; echo "exit status $?"
+      - name: output of rexx through pipes (cmd, Node spawnSync)
+        continue-on-error: true
+        run: |
+          set +e
+          mkdir -p scratch && cd scratch && echo 'say 6 * 7' > six.rex
+          lib="$(npm root -g)/oorexxwasm/lib"
+          echo "--- rexx six.rex | cat"; rexx six.rex | cat; echo "status ${PIPESTATUS[0]}"
+          echo "--- rexx six.rex > file"; rexx six.rex > out.txt; echo "status $? size $(wc -c < out.txt)"; cat out.txt
+          echo "--- node rexx.js six.rex | cat"; node "$lib/rexx.js" six.rex | cat
+          echo "--- spawnSync node rexx.js"
+          node -e "const r=require('child_process').spawnSync(process.execPath,[process.argv[1],'six.rex']);console.log(JSON.stringify([r.status,String(r.stdout),String(r.stderr)]))" "$lib/rexx.js"
+          echo "--- spawnSync cmd /c rexx"
+          node -e "const r=require('child_process').spawnSync(process.env.ComSpec,['/d','/s','/c','\"rexx six.rex\"'],{windowsVerbatimArguments:true});console.log(JSON.stringify([r.status,String(r.stdout),String(r.stderr)]))"
+          echo "--- spawnSync cmd /c rexx -v"
+          node -e "const r=require('child_process').spawnSync(process.env.ComSpec,['/d','/s','/c','\"rexx -v\"'],{windowsVerbatimArguments:true});console.log(JSON.stringify([r.status,String(r.stdout).length,String(r.stderr)]))"
+          echo "--- from Rexx"
+          rexx -e "address cmd 'rexx six.rex' with output stem o.; say rc o.0 o.1; address cmd 'node -e ""console.log(41+1)""' with output stem o.; say rc o.0 o.1"
       - name: Smoke test
         continue-on-error: true
         run: set +e; cd scratch && rexx ../pkg/tests/smoke.rex; echo "exit status $?"
