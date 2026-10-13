@@ -79,7 +79,7 @@ index 786af1f..e949832 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index 64208f6..ae17a1a 100644
+index 4b16426..49e9ddc 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -224,7 +224,58 @@ off, or changes the strings.
@@ -142,7 +142,7 @@ index 64208f6..ae17a1a 100644
  
  ## The test suite's API groups (`wasm/build-test.sh`)
  
-@@ -424,7 +475,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -428,7 +479,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
@@ -245,7 +245,7 @@ index ebd946e..57c5181 100644
          packages[n] = { NULL, NULL };
          ready = true;
 diff --git a/wasm/tests/web-api.html b/wasm/tests/web-api.html
-index 1903e9b..e5c8af1 100644
+index b13d517..cb5c6fa 100644
 --- a/wasm/tests/web-api.html
 +++ b/wasm/tests/web-api.html
 @@ -46,6 +46,7 @@
@@ -254,7 +254,7 @@ index 1903e9b..e5c8af1 100644
  // collected instead (out: console.log, err: console.error, one per line)
 +// jdor: JDOR windows {win: {title, visible, frames, probe: [r,g,b,a] at o.probe}}
  let rexx = null;
- window.rexxReady = OoRexx.load().then((r) => { rexx = r; window.rexxLib = r; return true; }, (e) => String(e));
+ window.rexxReady = ooRexx.load().then((r) => { rexx = r; window.rexxLib = r; return true; }, (e) => String(e));
  window.rexxRun = async (source, o = {}) => {
 @@ -54,6 +55,20 @@ window.rexxRun = async (source, o = {}) => {
    const mark = (t, kind) => { if (kind === 'trace') trace += t; else if (kind === 'error') errmsg += t; };
@@ -297,7 +297,7 @@ index 1903e9b..e5c8af1 100644
  };
  </script>
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 548b1ab..4531a84 100755
+index 808926a..30a7a94 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -42,7 +42,7 @@ Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP
@@ -3150,7 +3150,7 @@ index 71cd58a..2edbbe8 100644
        if (msg.stdin) { M.orxStdinWrite(msg.stdin); M.orxStdinClose(); }
        for (const m of q) feed(m);
 diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
-index e44ad21..e70e275 100644
+index ed61b4c..f40497f 100644
 --- a/wasm/web/ooRexx.js
 +++ b/wasm/web/ooRexx.js
 @@ -95,6 +95,20 @@

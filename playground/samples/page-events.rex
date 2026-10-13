@@ -1,7 +1,7 @@
 /* Events from the page, handled in Rexx: a small to-do panel.  Type an     */
 /* item and press Enter (the form's submit, with "preventDefault" so the    */
 /* page does not reload), click an item to cross it out, "Done" ends.       */
-/* JavaScript only queues each event; .js~eventLoop takes them one by one   */
+/* JavaScript only queues each event; .js~runEventLoop takes them one by one   */
 /* and sends the handler's message, here to the object of class ToDo.       */
 doc = .js~page~document
 todo = .ToDo~new(doc)
@@ -29,7 +29,7 @@ doc~body~appendChild(panel)
 input~focus
 
 say "Waiting for events from the panel (bottom right)..."
-.js~eventLoop                   -- until ToDo~done calls .js~stopEventLoop
+.js~runEventLoop                   -- until ToDo~done calls .js~stopEventLoop
 panel~remove
 say "Done:" todo~count "item(s)."
 exit

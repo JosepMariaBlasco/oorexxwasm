@@ -173,7 +173,7 @@ in headless Chromium.
   `page-dom.rex` (a note element, `prompt`/`confirm`, a fade),
   `page-clock.rex` (an SVG clock driven by Rexx for 20 s) and
   `page-events.rex` (a to-do panel whose form, list and button are
-  handled in Rexx: `.js~handler` + `.js~eventLoop`). A program that is
+  handled in Rexx: `.js~handler` + `.js~runEventLoop`). A program that is
   stopped leaves what it added to the page until a reload (its event
   handlers do nothing any more).
 - JDOR: `ADDRESS JDOR` (wasm/web-jdor.*, patch 0008) draws on

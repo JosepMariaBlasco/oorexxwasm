@@ -36,23 +36,26 @@ In the browser, the page that runs ooRexx must grant each realm (`js: {worker: t
 
 ## Messages
 
-`o~name` reads a property, or calls it when it is a function (a constructor, such as `Map`, is returned instead, so that `.js~Map~new` works); `o~name(a, b)` calls a method; `o~name = v` sets a property that exists. ooRexx uppercases message names, so they are resolved case-insensitively along the prototype chain. `o["name"]`, `o["name"] = v` (which also creates the property) and `o~invoke("name", ...)` are exact.
+`o~name` reads a property, or calls it when it is a function (a constructor, such as `Map`, is returned instead, so that `.js~Map~new` works); `o~name(a, b)` calls a method; `o~name = v` sets a property that exists. ooRexx uppercases message names, so they are resolved case-insensitively along the prototype chain. Where that is not enough, as with two members whose names differ only in case, the exact name is always available, as with BSF4ooRexx's `bsf.invokeStrict`: `o~js.getStrict("name")`, `o~js.setStrict("name", v)` (which also creates the property) and `o~js.invokeStrict("name", args...)`; on an object that is not an array, `o["name"]` and `o["name"] = v` are exact too. A function is called with JavaScript's own `call`: `f~call(this, args...)`.
 
-On an array or a typed array, `o[i]` and `o[i] = v` count from 1, as in a Rexx Array: `o[1]` is JavaScript's `o[0]`, 0 is an error, a position past the end reads `.js~undefined`, and `o[n + 1] = v` appends. `o~at(i)` and `o~put(v, i)` are the same as `o[i]` and `o[i] = v`, as AT and PUT are in Rexx's collections. `DO WITH INDEX i ITEM v OVER o` gives the same positions, 1 to n. Lists that are not arrays, such as the DOM's `NodeList`, keep JavaScript's indexing from 0, and so does `DO WITH` over them. JavaScript's own methods keep their meaning: `o~slice(1)`, `o~indexOf(x)`; JavaScript's `at` (which takes negative positions) is `o~invoke("at", i)`.
+The bridge's own methods start with `js.`, as BSF4ooRexx's start with `bsf.`, so that they never hide a JavaScript member of the same name: `el~className` is the element's `className`, and `el~js.className` the name of its JavaScript class. The exceptions are the messages Rexx itself sends for its syntax and protocols (`[]`, `[]=`, `at`, `put`, `new`, `makeArray`, `supplier`), and `await`.
+
+On an array or a typed array, `o[i]` and `o[i] = v` (the messages `[]` and `[]=`) count from 1, as in a Rexx Array: `o[1]` is JavaScript's `o[0]`, 0 is an error, a position past the end reads `.js~undefined`, and `o[n + 1] = v` appends. `o~at(i)` and `o~put(v, i)` are the same as `o[i]` and `o[i] = v`, as AT and PUT are in Rexx's collections. `DO WITH INDEX i ITEM v OVER o` gives the same positions, 1 to n. Lists that are not arrays, such as the DOM's `NodeList`, keep JavaScript's indexing from 0, and so does `DO WITH` over them. JavaScript's own methods keep their meaning: `o~slice(1)`, `o~indexOf(x)`; JavaScript's `at` (which takes negative positions) is `o~js.invokeStrict("at", i)`.
 
 | Method | Does |
 | --- | --- |
-| `~at(i)`, `~put(v, i)` | the same as `o[i]` and `o[i] = v` |
+| `~at(i)`, `~put(v, i)` | the same as `o[i]` and `o[i] = v` (the messages `[]` and `[]=`) |
+| `~js.getStrict(name)`, `~js.setStrict(name, v)`, `~js.invokeStrict(name, args...)` | the property or method with exactly that name |
 | `~new(args...)` | `new o(args...)` |
 | `~await` | waits for a Promise and gives its value; a rejection is an error |
-| `~typeOf`, `~className`, `~instanceOf(c)` | JavaScript's `typeof`, the class name, `instanceof` |
-| `~hasProperty(name)`, `~propertyNames` | JavaScript's `in`, with the exact name; `Object.keys` |
+| `~js.typeOf`, `~js.className`, `~js.instanceOf(c)` | JavaScript's `typeof`, the class name, `instanceof` |
+| `~js.hasProperty(name)`, `~js.propertyNames` | JavaScript's `in`, with the exact name; `Object.keys` |
 | `~makeArray`, `~supplier` | for `DO x OVER o` and `DO WITH INDEX i ITEM v OVER o`: arrays, Maps, Sets, lists and plain objects |
-| `~byteString` | an ArrayBuffer's or typed array's bytes as a Rexx string |
+| `~js.byteString` | an ArrayBuffer's or typed array's bytes as a Rexx string |
 
 ## Values
 
-JavaScript strings, numbers, booleans (1/0) and bigints come back as Rexx strings; null as `.nil`, and undefined as `.js~undefined`, a single object, so `x == .js~undefined` tests for it. A property that does not exist reads as `.js~undefined`; `~hasProperty` tells the two apart. Rexx strings always go as strings, so "007" stays "007": `.js~num(x)`, `.js~bool(x)`, `.js~bigint(x)` and `.js~bytes(x)` (a Uint8Array) force a type, and `.js~true`, `.js~false` and `.js~undefined` are those values. `.nil` goes as null. An Array goes as an array and a Directory or StringTable as a plain object, both as copies; `.js~newArray(items...)` and `.js~newObject(directory)` make them in JavaScript instead, held by reference. Any other Rexx object goes by reference, as a `RexxProxy`: see [Rexx objects in JavaScript](#rexx-objects-in-javascript).
+JavaScript strings, numbers, booleans (1/0) and bigints come back as Rexx strings; null as `.nil`, and undefined as `.js~undefined`, a single object, so `x == .js~undefined` tests for it. A property that does not exist reads as `.js~undefined`; `~js.hasProperty` tells the two apart. Rexx strings always go as strings, so "007" stays "007": `.js~num(x)`, `.js~bool(x)`, `.js~bigint(x)` and `.js~bytes(x)` (a Uint8Array) force a type, and `.js~true`, `.js~false` and `.js~undefined` are those values. `.nil` goes as null. An Array goes as an array and a Directory or StringTable as a plain object, both as copies; `.js~newArray(items...)` and `.js~newObject(directory)` make them in JavaScript instead, held by reference. `.js~newObject(name, value, ...)` makes a plain object from names and values, the names exactly as written: `.js~newObject("method", "POST", "cache", "no-store")`. Any other Rexx object goes by reference, as a `RexxProxy`: see [Rexx objects in JavaScript](#rexx-objects-in-javascript).
 
 `.js~box(type, x)` forces a type with the type indicators of BSF4ooRexx's `box()`: `BOolean`, `BYte`, `Char`, `Double`, `Float`, `Int`, `Long`, `Object`, `SHort` and `STring`, and JavaScript's own `Number` and `BIgint`. Case does not matter, and an indicator may be shortened down to its capitals, so `.js~box("bo", 1)` is `.js~box("Boolean", 1)`. The whole-number types check Java's ranges (`.js~box("BYte", 300)` is an error), `Long` within the integers JavaScript holds exactly; `BIgint` takes any whole number. `.js~unbox(o)` gives back the Rexx value of a box, or of a JavaScript `Number`, `String`, `Boolean` or `BigInt` object.
 
@@ -78,18 +81,18 @@ say a~join(",")                                 -- 1,2,3
 
 A condition in the method is thrown to JavaScript as a `RexxError`. When JavaScript calls the handler on its own, as a timer, a Node server or a settling Promise do, the method runs at once on a thread of its own, one call at a time, and JavaScript does not wait for it: see [Waiting](#waiting).
 
-In the page every handler is queued, and so is a handler with option `queued` anywhere. JavaScript gets a function that only queues the call and returns at once; a Rexx thread takes the calls when it is ready:
+In the page every handler is queued, and so is a handler with option `queued` anywhere. The page cannot wait for Rexx (see [Waiting](#waiting)), so when JavaScript calls such a handler, the call is put in the **event queue** and JavaScript goes on at once. The event queue is where events wait until Rexx is ready for them: a Rexx thread takes them from it, one at a time, in the order they came. `.js~runEventLoop` takes them until `.js~stopEventLoop`; `.js~nextEvent` takes one. It is the mirror image of BSF4ooRexx's AWT and JavaFX queues, where Rexx leaves messages for the GUI thread; here the page leaves events for Rexx:
 
 ```rexx
 btn~addEventListener("click", .js~handler(self, "CLICKED", "preventDefault"))
-.js~eventLoop                     -- sends CLICKED for each call
+.js~runEventLoop                     -- sends CLICKED for each call
 ```
 
-`.js~eventLoop` sends the message to the object, with the call's arguments, for each call until `.js~stopEventLoop`, from a handler or another thread. `.js~nextEvent([seconds])` takes one event instead (a `.JSEvent`, which `~dispatch` sends; `.nil` when the time is over), so a program can run its own loop. Several threads may wait; each event goes to one. The page's calls of Rexx come through the same queue: the thread that takes them runs them in turn, and `~nextEvent` goes on waiting (see [Rexx from the page](#rexx-from-the-page)).
+`.js~runEventLoop` takes the events from the event queue, and sends each one's message to its object, with the call's arguments, until `.js~stopEventLoop`, from a handler or another thread; it runs on the thread that calls it, and returns when the loop is stopped. `.js~nextEvent([seconds])` takes one event instead (a `.JSEvent`, which `~dispatch` sends; `.nil` when the time is over), so a program can run its own loop. Several threads may wait; each event goes to one. The page's calls of Rexx come through the same event queue: the thread that takes them runs them in turn, and `~nextEvent` goes on waiting (see [Rexx from the page](#rexx-from-the-page)).
 
-Because a queued handler's function returns before Rexx sees the call, it cannot answer anything, and by then the browser has finished dispatching the event (`event~currentTarget` is `.nil`). What must happen during the dispatch goes in the options, for any handler: `preventDefault`, `stopPropagation`, `stopImmediatePropagation`. Option `latest` keeps only the newest event of the handler waiting, for mousemove or scroll; option `max n` keeps at most n, dropping the oldest. Both imply `queued`.
+Because a queued handler's function returns before Rexx sees the call, it cannot answer anything, and by then the browser has finished dispatching the event (`event~currentTarget` is `.nil`). What must happen during the dispatch goes in the options, for any handler: `preventDefault`, `stopPropagation`, `stopImmediatePropagation`. Option `latest` keeps only the newest event of the handler waiting in the event queue, for mousemove or scroll; option `max n` keeps at most n, dropping the oldest. Both imply `queued`.
 
-A handler stays alive from its first trip to JavaScript until `handler~release` or the end of the run.
+A handler needs no care: it stays alive while JavaScript holds its function, and is released when JavaScript collects it (its events still in the event queue are taken first). `handler~release` releases it earlier, dropping its waiting events.
 
 ## Waiting
 
@@ -135,7 +138,7 @@ A Rexx object that is not converted (not a string or number, an Array, a Directo
 ```rexx
 acct = .Account~new(100)
 f = .js~Function~new("a", "a.deposit(50); return a.sendMessage0('balance')")
-say f~invoke(.nil, acct)                         -- 150
+say f~call(.nil, acct)                         -- 150
 ```
 
 | JavaScript | Rexx |
@@ -161,13 +164,13 @@ The page cannot wait (see [Waiting](#waiting)), so a call it makes to Rexx is qu
 const v = await o.deposit(50);        // o a RexxProxy in the page: a Promise
 ```
 
-- **Who runs it.** The Rexx thread that takes events (`.js~eventLoop`, `.js~nextEvent`) runs the calls in turn, as it runs the handlers' events. So does a Rexx thread waiting for JavaScript (`~await`, a request to the page), for the calls that come while it waits: what it waits for may be the page's code that called Rexx. As with `await` in JavaScript, other code may run while one waits.
+- **Who runs it.** The Rexx thread that takes events (`.js~runEventLoop`, `.js~nextEvent`) runs the calls in turn, as it runs the handlers' events. So does a Rexx thread waiting for JavaScript (`~await`, a request to the page), for the calls that come while it waits: what it waits for may be the page's code that called Rexx. As with `await` in JavaScript, other code may run while one waits.
 - **The result.** The Promise is resolved with the method's result (`undefined` when there is none), or rejected with a `RexxError` for a condition. While nobody takes events it stays pending; when the run ends, it is rejected.
 
 **Sessions.** `ooRexx.js` gives the page an interpreter that stays, to call when it needs Rexx:
 
 ```js
-const rexx = await OoRexx.load();
+const rexx = await ooRexx.load();
 const s = await rexx.start({ js: { page: true } });     // the options of run()
 await s.eval('use arg a, b; return a + b', 2, 3);       // '5'
 const r = await s.routine('double', 'use arg x; return x * 2');
@@ -196,7 +199,7 @@ A session is a run whose program, `.js~session`, hands the page a `.JSSession` a
 <script type="text/rexx" src="app.rex"></script>
 ```
 
-When the page has any, `ooRexx.js` starts a session once the document is parsed, with both realms granted (they are the page's own scripts), and runs them in order, each as a routine named after its `src`. A script sees what the scripts before it defined, its handlers run once the scripts are done, its output goes to the console, and an error is logged and does not stop the next script. `OoRexx.scripts` is a Promise of that session.
+When the page has any, `ooRexx.js` starts a session once the document is parsed, with both realms granted (they are the page's own scripts), and runs them in order, each as a routine named after its `src`. A script sees what the scripts before it defined, its handlers run once the scripts are done, its output goes to the console, and an error is logged and does not stop the next script. `ooRexx.scripts` is a Promise of that session.
 
 ## Classes
 
@@ -224,15 +227,17 @@ say c~describe                    -- Car's describe() calls this.age(): "Seat is
 - **Making one.** `.MyCar~new(args...)` makes the JavaScript object with `new`, passing `args` to the base's constructor; the Rexx class's `INIT` calls `self~init:super(args...)`. A base constructor that calls an override reaches the Rexx method, and `self` can already be used there.
 - **The base's members.** `self~name:super(args)` is the base's own member, not the override: its method, its getter, `self~"NAME=":super(v)` its setter. A member that is not overridden is reached as with any `.JSObject`: `c~honk`.
 - **Identity.** The JavaScript object comes back to Rexx as the Rexx object itself: `.js~newArray(c)[1] == c`, and it is a `MyCar`.
-- **Lifetime.** The Rexx object and the JavaScript object keep each other alive until `.js~detach(c)`. After it, and for an object JavaScript makes itself (`new MyCar(...)` in JavaScript), the overrides run the base's members.
+- **Lifetime.** This is the one place that needs a hand. The Rexx object holds its JavaScript object, and the JavaScript object holds its Rexx object, for the overrides. Each collector sees only its own half of that cycle, so neither can tell that nothing else uses the pair: they live until `.js~detach(c)` ends the link, or until the end of the run. ooRexx/.NET's `.net~detach` is there for the same reason. After `detach`, and for an object JavaScript makes itself (`new MyCar(...)` in JavaScript), the overrides run the base's members. Everything else, `.JSObject`s, `RexxProxy`s and handlers, is released by the collectors alone.
 
 This needs a realm where JavaScript can wait for Rexx: the worker's and Node's. In the page, `extend` is an error.
 
 ## Pitfalls
 
-- **Case-insensitive names can pick the wrong property.** `.js~page~Event` finds `window.event`, the current event, before `window.Event`, the constructor. Use the exact form: `w["Event"]~new("input")`.
-- **Rexx methods win.** The methods in the table above, and those of Rexx's Object (`send`, `start`, `copy`, `run`, …), are not passed on to JavaScript. `el~className` names the JavaScript class (`HTMLDivElement`), not the element's `class` attribute: use `el["className"]`, and `o~invoke("send", x)`. Likewise `a~at(1)` is the first element, as `a[1]`: JavaScript's own `at` is `a~invoke("at", 0)`.
-- **Directory keys are upper case.** `d~method = "POST"` stores `METHOD`, which a JavaScript options object does not know: use `d["method"] = "POST"`.
+Each of these has a way out, as in BSF4ooRexx:
+
+- **Case-insensitive names can pick the wrong property.** `.js~page~Event` finds `window.event`, the current event, before `window.Event`, the constructor. Use the exact name: `w~js.getStrict("Event")~new("input")`.
+- **Rexx's own methods win.** Those of Rexx's Object (`send`, `start`, `copy`, `run`, …) and the few the bridge leaves without `js.` (`at`, `put`, `new`, `makeArray`, `supplier`, `await`) are not passed on to JavaScript. Use the exact form for JavaScript's: `o~js.invokeStrict("send", x)`, and JavaScript's own `at` is `a~js.invokeStrict("at", 0)`.
+- **Directory keys are upper case.** `d~method = "POST"` stores `METHOD`, which a JavaScript options object does not know: use `.js~newObject("method", "POST")`, or `d["method"] = "POST"`.
 
 ## Guarantees
 
@@ -247,13 +252,15 @@ This needs a realm where JavaScript can wait for Rexx: the worker's and Node's. 
 
 The design follows Rony Flatscher's BSF4ooRexx, moved from Java to JavaScript: `.JSObject` is to JavaScript objects what `BSF.CLS` is to Java objects. Messages work as with OLEObject on Windows: names are case-insensitive, and `o~name` reads a property or calls a method. As in BSF4ooRexx, arrays count from 1 and `box` takes the same type indicators, so what holds in one bridge holds in the other.
 
-## Questions to decide
+## Questions decided
 
-1. **Names.** Case-insensitive resolution makes `doc~getElementById` work as written, at the price of the rare wrong pick shown above. Would you rather have exact names only?
-2. **Values.** Rexx strings always go as strings, and a number is forced with `.js~num`. Would you rather have numbers converted automatically, at the price of "007" becoming 7?
-3. **Events.** Handlers are synchronous where JavaScript can wait (the worker, Node), as in ooRexx/.NET, and queued in the page, taken by `.js~eventLoop` or `.js~nextEvent`. Does this model suit you, or would you expect another?
+The posted version asked three questions. The answers adopted:
 
-Replies on this list are very welcome.
+1. **Names.** Case-insensitive resolution stays, with an exact form for every operation where it is not enough: `js.getStrict`, `js.setStrict`, `js.invokeStrict`.
+2. **Values.** Rexx strings always go as strings, since a Rexx string that looks like a number need not be one; `.js~box` and `.js~unbox` (and `.js~num` and the like) say what is meant.
+3. **Events.** The model stays, with the event queue explained and `.js~runEventLoop` named after what it does.
+
+Further replies on the list are very welcome.
 
 ## Changes since the posted version
 
@@ -264,10 +271,17 @@ Replies on this list are very welcome.
 | Arrays and typed arrays count from 1 with `o[i]` and `DO WITH`; lists keep 0 | Messages |
 | `.js~box(type, x)` with BSF4ooRexx's type indicators, and `.js~unbox(o)` | Values |
 | What the implementation guarantees, stated | Guarantees |
-| `~at(i)` and `~put(v, i)` are `o[i]` and `o[i] = v`, as in Rexx's collections (JavaScript's `at` is `o~invoke("at", i)`) | Messages, Pitfalls |
+| `~at(i)` and `~put(v, i)` are `o[i]` and `o[i] = v`, as in Rexx's collections (JavaScript's `at` is `o~js.invokeStrict("at", i)`) | Messages, Pitfalls |
 | Why JavaScript cannot wait for Rexx in the page, and what to do instead | Waiting |
 | Handlers are synchronous in the worker's realm and under Node, as `.net~handler` (a comparator for `sort` works); option `queued` (implied by `latest` and `max`), and the page, keep them queued; a condition is a `RexxError` | Events, Waiting |
 | Any other Rexx object goes to JavaScript as a `RexxProxy` (it went as its string): messages, BSF4ooRexx's `sendMessage` names, identity both ways | Values, Rexx objects in JavaScript |
 | Rexx classes extending JavaScript classes: `.js~extend(class, base [, names...])`, `.js~detach(o)`, as `.net~extend` | Classes |
 | Calls from the page to a Rexx object give a Promise of the result, queued as events (they were rejected) | Rexx objects in JavaScript, Rexx from the page |
 | Sessions, `rexx.start()`: `eval`, `routine`, `loadPackage`; and `<script type="text/rexx">` | What this is, Events, Rexx from the page, Guarantees |
+| `.js~eventLoop` is `.js~runEventLoop`; the event queue explained | Events, Rexx from the page |
+| The bridge's own methods start with `js.` (`js.typeOf`, `js.className`, `js.instanceOf`, `js.hasProperty`, `js.propertyNames`, `js.byteString`), as BSF4ooRexx's with `bsf.`; exact names with `js.getStrict`, `js.setStrict`, `js.invokeStrict` (was `invoke`); a function is called with JavaScript's `f~call(this, args...)` | Messages, Pitfalls |
+| `.js~newObject(name, value, ...)`, with exact names | Values, Pitfalls |
+| A handler is released when JavaScript collects its function (`handler~release` is optional) | Events |
+| Why `.js~detach` is needed for `.js~extend`, and only there | Classes |
+| `ooRexx.js`'s global is `ooRexx` (was `OoRexx`) | Rexx from the page |
+| Questions to decide: answered | Questions decided |

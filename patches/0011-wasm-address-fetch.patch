@@ -247,10 +247,10 @@ index 0000000..01451f3
 +
 +::requires "fetch.cls"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 22de054..9f61b44 100755
+index f208d9c..9dcce20 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -336,6 +336,13 @@ check "a logic error ends the process with a non-zero status" '^Logic error: can
+@@ -368,6 +368,13 @@ check "a logic error ends the process with a non-zero status" '^Logic error: can
  check "command handlers in Rexx (cmdhandler.cls)" '^[0-9]+ passed, 0 failed$' '!^FAIL ' -- \
    "$X '$(cd "$(dirname "$0")" && pwd)/cmdhandler.rex'"
  
@@ -265,7 +265,7 @@ index 22de054..9f61b44 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 425bb92..39b4e81 100755
+index d3891ce..d4725ef 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -65,6 +65,9 @@ class H(SimpleHTTPRequestHandler):
@@ -427,7 +427,7 @@ index 0000000..6ee0c5f
 +  return words~copy
 diff --git a/wasm/web/fetch.cls b/wasm/web/fetch.cls
 new file mode 100644
-index 0000000..8f7614e
+index 0000000..15ff8c1
 --- /dev/null
 +++ b/wasm/web/fetch.cls
 @@ -0,0 +1,353 @@
@@ -641,7 +641,7 @@ index 0000000..8f7614e
 +    return self~bad(context, "SAVE: a URL and a file name are needed")
 +  if \self~send("GET", url, .nil, .nil, context) then return context~raiseFailure(-1)
 +  text = .nil; json = .nil
-+  bytes = response~arrayBuffer~await~byteString
++  bytes = response~arrayBuffer~await~js.byteString
 +  s = .stream~new(file)
 +  if s~open("write replace") \== "READY:" then do
 +    context~error("FETCH SAVE: cannot write" file)

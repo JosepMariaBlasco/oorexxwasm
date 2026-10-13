@@ -1,13 +1,13 @@
 /* JavaScript objects as Rexx objects (js.cls): .js is JavaScript's        */
 /* globalThis here (the Web Worker that runs ooRexx).  Names are           */
-/* case-insensitive; o["exactName"] and o~invoke("name", ...) are exact.   */
+/* case-insensitive; o["exactName"] and o~js.invokeStrict("name", ...) are exact.   */
 say "Math:" .js~Math~max(3, 7) .js~Math~PI
 say "Today:" .js~Date~new~toLocaleDateString("es-ES")
 
 -- JavaScript collections stay JavaScript objects (by reference)
 m = .js~Map~new
 m~set("uno", 1); m~set("dos", .js~num(2))      -- strings stay strings: .js~num
-say "Map size" m~size "- dos is a" .js~eval("(m) => typeof m.get('dos')")~invoke(.nil, m)
+say "Map size" m~size "- dos is a" .js~eval("(m) => typeof m.get('dos')")~call(.nil, m)
 
 -- a Directory becomes a plain object; JSON both ways
 o = .js~newObject(.directory~of(("lang", "ooRexx"), ("year", .js~num(1996))))

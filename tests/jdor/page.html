@@ -19,7 +19,7 @@ function onJdor(m){
 }
 window.frames_=0;
 window.runRexx=async function(files, args, screen){
-  const rexx=await OoRexx.load('bin/');
+  const rexx=await ooRexx.load('bin/');
   let out='', err='';
   const r=rexx.run({args, files, onJdor, screen, onOut:t=>{out+=t}, onErr:t=>{err+=t}, stdin:''});
   const res=await r.done;

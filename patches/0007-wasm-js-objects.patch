@@ -110,24 +110,24 @@ copied as arrays and plain objects.
   iteration, options latest and max, release).  Documented in wasm/README.md.
 ---
  interpreter/package/PackageManager.cpp |   16 +
- wasm/README.md                         |  170 +++
+ wasm/README.md                         |  174 +++
  wasm/build-node.sh                     |   17 +-
  wasm/build-web.sh                      |   17 +-
  wasm/extra-packages.cpp                |   66 ++
  wasm/js-bridge.js                      |  241 +++++
- wasm/js-realm.js                       |  753 ++++++++++++++
+ wasm/js-realm.js                       |  771 ++++++++++++++
  wasm/tests/js-extend.rex               |  154 +++
  wasm/tests/js-proxy.rex                |  127 +++
- wasm/tests/qualify-node-cli.sh         |  132 +++
+ wasm/tests/qualify-node-cli.sh         |  164 +++
  wasm/tests/web-api.html                |    4 +-
  wasm/tests/web-api.py                  |  191 +++-
  wasm/tests/web-scripts.html            |   62 ++
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 1312 ++++++++++++++++++++++++
- wasm/web/js.cls                        |  616 +++++++++++
+ wasm/web-js.cpp                        | 1354 ++++++++++++++++++++++++
+ wasm/web/js.cls                        |  638 +++++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  181 ++++
- 18 files changed, 4070 insertions(+), 12 deletions(-)
+ 18 files changed, 4188 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -173,10 +173,10 @@ index 9324d0b..786af1f 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index 8c21c8e..21634d0 100644
+index e674dcb..ccdb8b5 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -236,6 +236,174 @@ from the test suite's directory:
+@@ -236,6 +236,178 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -203,7 +203,7 @@ index 8c21c8e..21634d0 100644
 +  `.JSObject`, by reference; strings, numbers, booleans (1/0) and bigints
 +  come back as Rexx strings, null as .nil, undefined as `.js~undefined`
 +  (a single object; a property that does not exist reads as it, and
-+  `~hasProperty` tells the two apart).
++  `~js.hasProperty` tells the two apart).
 +* ooRexx uppercases message names, so they are resolved case-insensitively
 +  along the prototype chain (cached per object; of two matches the one
 +  starting in lowercase wins, `window.document` over `window.Document`,
@@ -211,20 +211,23 @@ index 8c21c8e..21634d0 100644
 +  function, except constructors (Capitalized, with a prototype:
 +  `.js~Map~new`); `o~name(args)` calls a method; `o~name = v` sets an
 +  existing property.  Exact: `o["name"]`, `o["name"] = v`,
-+  `o~invoke("name", args...)` (`o~invoke(.nil, ...)` calls o itself).
++  `o~js.getStrict("name")`, `o~js.setStrict("name", v)` (also on arrays),
++  `o~js.invokeStrict("name", args...)`; a function is called with
++  JavaScript's own `f~call(this, args...)`.
 +  `o[i]` and `o[i] = v` on an array or typed array count **from 1**, as a
 +  Rexx Array and BSF4ooRexx's Java arrays (`o[1]` is JavaScript's `o[0]`;
 +  0 is an error); a list (NodeList, HTMLCollection) keeps JavaScript's
 +  `o[0]`, and JavaScript's methods keep their own (`o~slice(1)`).  Also
-+  `o~new(...)`, `o~await`, `o~typeOf`, `o~className`, `o~instanceOf(c)`,
-+  `o~hasProperty(n)`, `o~propertyNames`, `o~makeArray` (`DO x OVER o`: an
++  `o~new(...)`, `o~await`, and the bridge's own methods, which start with
++  `js.` (as BSF4ooRexx's start with `bsf.`), so as not to hide JavaScript's:
++  `o~js.typeOf`, `o~js.className`, `o~js.instanceOf(c)`,
++  `o~js.hasProperty(n)`, `o~js.propertyNames`, `o~makeArray` (`DO x OVER o`: an
 +  iterable's values, as `for...of`, so a Map's `[key, value]` pairs; an error
 +  for anything else), `o~supplier` (`DO WITH INDEX i ITEM v OVER o`: a Map's
 +  keys and values, an array's 1..n and items (as `o[i]`), a list's 0..n-1
 +  (as its `o[i]`), another iterable's 1..n and values, other objects' own
-+  properties), `o~byteString`; names chosen not to hide common JavaScript ones (a Map's
-+  get/set/has/keys).  Rexx's own Object methods (send, start, copy, ...)
-+  are not passed on: `o~invoke("send", x)`.
++  properties), `o~js.byteString`.  Rexx's own Object methods (send, start, copy, ...)
++  are not passed on: `o~js.invokeStrict("send", x)`.
 +* Rexx strings always go as strings; `.js~num(x)`, `.js~bool(x)`,
 +  `.js~true`, `.js~false`, `.js~bigint(x)`, `.js~bytes(x)` (a Uint8Array),
 +  `.js~undefined` force a type; so does `.js~box(type, x)` with the type
@@ -265,7 +268,7 @@ index 8c21c8e..21634d0 100644
 +  pass on (there, or in an event listener) is written on the standard error.
 +* Queued handlers: with option `queued`, and always in the page (whose
 +  thread may not block), the function queues the call and returns undefined
-+  at once, and a Rexx thread takes the calls: `.js~eventLoop` (sends each
++  at once, and a Rexx thread takes the calls: `.js~runEventLoop` (sends each
 +  until `.js~stopEventLoop`) or `ev = .js~nextEvent([seconds])` +
 +  `ev~dispatch`.  The browser has finished the dispatch by the time Rexx
 +  sees it (`event~currentTarget` is .nil, `event~target` is fine), so what
@@ -275,9 +278,10 @@ index 8c21c8e..21634d0 100644
 +  handler waiting, the newest (mousemove, scroll, resize), and `max n` at
 +  most n, dropping the oldest (`max 0` is an error; given both, `latest`
 +  wins); both imply `queued`.  Each event goes to one waiting thread; an
-+  error in a handler ends `eventLoop` as any error.  A handler stays alive
-+  from its first trip to JavaScript until `handler~release` (its events
-+  still waiting are dropped) or the end of the run; in the browser its
++  error in a handler ends `runEventLoop` as any error.  A handler stays alive
++  from its first trip to JavaScript until JavaScript collects its function
++  (its events still waiting are taken first), `handler~release` (they are
++  dropped) or the end of the run; in the browser its
 +  functions do nothing once the run is over.  Under Node the program's end
 +  is the process's end, even with a server listening or a timer pending.
 +* Rexx objects in JavaScript: any Rexx object that is not converted (a
@@ -328,7 +332,7 @@ index 8c21c8e..21634d0 100644
 +  package they are added to).  `<script type="text/rexx">` (inline or
 +  `src`): `ooRexx.js` starts a session for the page's scripts (both realms
 +  granted, output to the console) and runs them in order, each as a
-+  routine; `OoRexx.scripts` is a Promise of it.  Tests: `tests/web-api.py`
++  routine; `ooRexx.scripts` is a Promise of it.  Tests: `tests/web-api.py`
 +  (session eval, session page, rexx scripts with `tests/web-scripts.html`).
 +* Implementation: `web-js.cpp` is the package `js` (`.JSObject`'s methods
 +  are native, so errors point at the caller's line); each operation is
@@ -351,7 +355,7 @@ index 8c21c8e..21634d0 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -244,6 +412,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -244,6 +416,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).
@@ -779,10 +783,10 @@ index 0000000..ea8b80b
 +})();
 diff --git a/wasm/js-realm.js b/wasm/js-realm.js
 new file mode 100644
-index 0000000..142adbc
+index 0000000..4d9b2c0
 --- /dev/null
 +++ b/wasm/js-realm.js
-@@ -0,0 +1,753 @@
+@@ -0,0 +1,771 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -1051,11 +1055,27 @@ index 0000000..142adbc
 +  class RefForRexx { constructor(ref) { this.ref = ref; } }        // "realm<tab>id<tab>display", counted once
 +
 +  // ---- handlers -----------------------------------------------------------
-+  const handlerFns = new Map();
++  // One function per handler while JavaScript holds it (identity, so that
++  // removeEventListener works); when JavaScript collects it, Rexx is told
++  // (Y "id") and unpins the handler, as with a RexxProxy.  A function made
++  // again meanwhile keeps it pinned (the old one's notice is not sent).
++  const handlerFns = new Map();         // id -> {ref: WeakRef of the function, held: {id}}
++  const handlerFinals = typeof FinalizationRegistry === 'function' && typeof WeakRef === 'function'
++    ? new FinalizationRegistry((held) => {
++        const e = handlerFns.get(held.id);
++        if (e && e.held !== held) return;
++        handlerFns.delete(held.id);
++        if (closed || typeof emit !== 'function') return;
++        const w = new Writer();
++        w.rec('Y', held.id);
++        try { emit(w.bytes()); } catch (x) { /* the run is over */ }
++      })
++    : null;
 +  let closed = false;
 +  function handlerFunction(spec) {
 +    const [id, options = ''] = spec.split('\t');
-+    let f = handlerFns.get(id);
++    const known = handlerFns.get(id);
++    let f = known && known.ref.deref();
 +    if (f) return f;
 +    const words = options.split(/\s+/).filter(Boolean);
 +    const opt = new Set(words);
@@ -1077,7 +1097,9 @@ index 0000000..142adbc
 +      if (!sync) { emit(w.bytes()); return undefined; }
 +      return callRexx(w);
 +    };
-+    handlerFns.set(id, f);
++    const held = { id };
++    handlerFns.set(id, { ref: typeof WeakRef === 'function' ? new WeakRef(f) : new StrongRef(f), held });
++    if (handlerFinals) handlerFinals.register(f, held);
 +    return f;
 +  }
 +  function putArgs(w, args) {
@@ -1335,7 +1357,7 @@ index 0000000..142adbc
 +    const n = Number(name);
 +    if (!Number.isSafeInteger(n) || n < 1) {
 +      throw new RangeError(name.trim() + ' is not an index of ' + an(className(t)) +
-+        ': arrays count from 1 here, as Rexx Arrays (o~invoke("at", i) is JavaScript\'s own)');
++        ': arrays count from 1 here, as Rexx Arrays (o~js.invokeStrict("at", i) is JavaScript\'s own)');
 +    }
 +    return String(n - 1);
 +  }
@@ -1352,7 +1374,7 @@ index 0000000..142adbc
 +          const lower = l.filter((n) => /^[a-z]/.test(n));
 +          if (lower.length === 1) return lower[0];
 +          throw new TypeError(upper + ' is ambiguous for a ' + className(t) + ': ' + l.join(', ') +
-+            ' (use o["name"] or o~invoke("name", ...) with the exact name)');
++            ' (use o["name"] or o~js.invokeStrict("name", ...) with the exact name)');
 +        }
 +      }
 +    }
@@ -1386,7 +1408,7 @@ index 0000000..142adbc
 +      case 'array': {
 +        if (t === null || t === undefined || typeof t[Symbol.iterator] !== 'function') {
 +          throw new TypeError(an(className(t)) + ' is not iterable (DO WITH INDEX k ITEM v OVER o' +
-+            ' goes over its properties; o~propertyNames gives their names)');
++            ' goes over its properties; o~js.propertyNames gives their names)');
 +        }
 +        return new RexxArray(Array.from(t));
 +      }
@@ -1538,7 +1560,7 @@ index 0000000..142adbc
 +})();
 diff --git a/wasm/tests/js-extend.rex b/wasm/tests/js-extend.rex
 new file mode 100644
-index 0000000..46bf571
+index 0000000..d7522ed
 --- /dev/null
 +++ b/wasm/tests/js-extend.rex
 @@ -0,0 +1,154 @@
@@ -1552,7 +1574,7 @@ index 0000000..46bf571
 +
 +-- a JavaScript class, with a method that calls another (age), a getter and
 +-- setter (label), a constructor that calls an overridable method (kind)
-+car = mk~invoke(.nil, "return class Car {" -
++car = mk~call(.nil, "return class Car {" -
 +  "  constructor(name, year) { this.name = name; this.year = year; this.made = this.kind(); }" -
 +  "  age() { return 2026 - this.year; }" -
 +  "  describe() { return this.name + ' is ' + this.age(); }" -
@@ -1565,13 +1587,13 @@ index 0000000..46bf571
 +js["Car"] = car
 +
 +ext = .js~extend(.MyCar, "Car")
-+call check "extend answers a JavaScript class", ext~typeOf == "function"
++call check "extend answers a JavaScript class", ext~js.typeOf == "function"
 +call check "its name is the Rexx class's", ext["name"] == "MYCAR"
-+call check "it extends the base", ext["prototype"]~instanceOf(car)
++call check "it extends the base", ext["prototype"]~js.instanceOf(car)
 +
 +c = .MyCar~new("Seat", 2020)
 +call check "an instance is a JSObject and a MyCar", c~isA(.JSObject) & c~isA(.MyCar)
-+call check "the JavaScript object is a Car", c~instanceOf(car) & c~instanceOf(ext)
++call check "the JavaScript object is a Car", c~js.instanceOf(car) & c~js.instanceOf(ext)
 +call check "Rexx calls its own method", c~age == 7
 +call check "JavaScript calls the override (describe -> this.age())", c~describe == "Seat is 7"
 +call check "~name:super reaches JavaScript's age()", c~baseAge == 6
@@ -1590,22 +1612,22 @@ index 0000000..46bf571
 +call check "identity: the same object, Rexx's ==", back~identityHash == c~identityHash
 +
 +-- a condition in an override is a RexxError in JavaScript
-+probe = mk~invoke(.nil, "return (o) => { try { o.age(); return 'no error' } catch (e) { return e.name + ': ' + e.message } }")
++probe = mk~call(.nil, "return (o) => { try { o.age(); return 'no error' } catch (e) { return e.name + ': ' + e.message } }")
 +c~failNext = 1
-+r = probe~invoke(.nil, c)
++r = probe~call(.nil, c)
 +call check "a condition is a RexxError in JavaScript", r~left(10) == "RexxError:" & r~pos("Error 41") > 0
 +call check "and it does not stay", c~describe == "IBIZA is 7"
 +
 +-- a JavaScript caller with its own array of them: sort with a method of the instances
 +cars = js~newArray(.MyCar~new("B", 2001), .MyCar~new("A", 2010), .MyCar~new("C", 1990))
-+sorter = mk~invoke(.nil, "return (l) => l.sort((x, y) => x.age() - y.age()).map((x) => x.name).join(',')")
-+call check "JavaScript sorts by the Rexx override", sorter~invoke(.nil, cars) == "A,B,C"
++sorter = mk~call(.nil, "return (l) => l.sort((x, y) => x.age() - y.age()).map((x) => x.name).join(',')")
++call check "JavaScript sorts by the Rexx override", sorter~call(.nil, cars) == "A,B,C"
 +
 +-- exact names the base does not have
 +.js~extend(.Greeter, js~Object, "greetMe")
 +g = .Greeter~new
-+call check "an exact name added: JavaScript calls it", mk~invoke(.nil, "return (o) => o.greetMe('Ana')")~invoke(.nil, g) == "hola Ana"
-+call check "without the exact name it is not there", mk~invoke(.nil, "return (o) => typeof o.other")~invoke(.nil, g) == "undefined"
++call check "an exact name added: JavaScript calls it", mk~call(.nil, "return (o) => o.greetMe('Ana')")~call(.nil, g) == "hola Ana"
++call check "without the exact name it is not there", mk~call(.nil, "return (o) => typeof o.other")~call(.nil, g) == "undefined"
 +
 +-- a Rexx subclass of the extending class
 +s = .SportsCar~new("Cupra", 2024)
@@ -1698,7 +1720,7 @@ index 0000000..46bf571
 +::class Lone subclass JSObject
 diff --git a/wasm/tests/js-proxy.rex b/wasm/tests/js-proxy.rex
 new file mode 100644
-index 0000000..097ccd1
+index 0000000..c89f67e
 --- /dev/null
 +++ b/wasm/tests/js-proxy.rex
 @@ -0,0 +1,127 @@
@@ -1713,66 +1735,66 @@ index 0000000..097ccd1
 +acct = .Account~new(100)
 +
 +typeOf = F("o", "return typeof o + ' ' + (o instanceof RexxProxy)")
-+call check "a Rexx object is a RexxProxy in JavaScript", typeOf~invoke(.nil, acct) == "object true"
-+call check "strings still go as strings", F("o", "return typeof o")~invoke(.nil, "abc") == "string"
-+call check "numbers too (5 is an integer object inside Rexx)", F("o", "return typeof o")~invoke(.nil, 5) == "string"
-+call check "Arrays still go as copies", F("o", "return Array.isArray(o) + ' ' + o.length")~invoke(.nil, .array~of(1, 2)) == "true 2"
++call check "a Rexx object is a RexxProxy in JavaScript", typeOf~call(.nil, acct) == "object true"
++call check "strings still go as strings", F("o", "return typeof o")~call(.nil, "abc") == "string"
++call check "numbers too (5 is an integer object inside Rexx)", F("o", "return typeof o")~call(.nil, 5) == "string"
++call check "Arrays still go as copies", F("o", "return Array.isArray(o) + ' ' + o.length")~call(.nil, .array~of(1, 2)) == "true 2"
 +
-+call check "direct call: o.deposit(50) sends DEPOSIT", F("o", "return o.deposit(50)")~invoke(.nil, acct) == 150
-+call check "sendMessage(name, args)", F("o", "return o.sendMessage('deposit', [10])")~invoke(.nil, acct) == 160
-+call check "sendMessage0..5", F("o", "return o.sendMessage0('balance') + '/' + o.sendMessage2('sum', 3, 4)")~invoke(.nil, acct) == "160/7"
-+call check "a method with no result gives undefined", F("o", "return o.nothing() === undefined")~invoke(.nil, acct) == 1
++call check "direct call: o.deposit(50) sends DEPOSIT", F("o", "return o.deposit(50)")~call(.nil, acct) == 150
++call check "sendMessage(name, args)", F("o", "return o.sendMessage('deposit', [10])")~call(.nil, acct) == 160
++call check "sendMessage0..5", F("o", "return o.sendMessage0('balance') + '/' + o.sendMessage2('sum', 3, 4)")~call(.nil, acct) == "160/7"
++call check "a method with no result gives undefined", F("o", "return o.nothing() === undefined")~call(.nil, acct) == 1
 +call check "arguments: JavaScript objects arrive as JSObjects", -
-+  F("o", "return o.kindOf({a: 1}, [1], null, undefined, 5)")~invoke(.nil, acct) == "JSObject JSObject nil undefined 5"
++  F("o", "return o.kindOf({a: 1}, [1], null, undefined, 5)")~call(.nil, acct) == "JSObject JSObject nil undefined 5"
 +
 +-- identity, both ways
 +same = F("a, b", "return a === b")
-+call check "identity: the same Rexx object is the same proxy", same~invoke(.nil, acct, acct) == 1
++call check "identity: the same Rexx object is the same proxy", same~call(.nil, acct, acct) == 1
 +keep = F("o", "globalThis.kept = o; return o")
-+call check "round trip: the proxy comes back as the Rexx object", keep~invoke(.nil, acct) == acct
++call check "round trip: the proxy comes back as the Rexx object", keep~call(.nil, acct) == acct
 +call check "round trip later, from a JavaScript variable", js~kept == acct
-+call check "kept and given again: still the same proxy", F("o", "return o === globalThis.kept")~invoke(.nil, acct) == 1
++call check "kept and given again: still the same proxy", F("o", "return o === globalThis.kept")~call(.nil, acct) == 1
 +
 +-- the string
-+call check "String(o) is the Rexx object's string", F("o", "return String(o) + '|' + `${o}`")~invoke(.nil, acct) == "an Account of 160|an Account of 160"
-+call check "o.string() asks Rexx now", F("o", "return o.string()")~invoke(.nil, acct) == "an Account of 160"
++call check "String(o) is the Rexx object's string", F("o", "return String(o) + '|' + `${o}`")~call(.nil, acct) == "an Account of 160|an Account of 160"
++call check "o.string() asks Rexx now", F("o", "return o.string()")~call(.nil, acct) == "an Account of 160"
 +el = js~Object~new
 +el["text"] = acct
 +call check "a JavaScript property set to it holds the proxy", el["text"] == acct
 +
 +-- classes: JavaScript makes Rexx objects
 +mk = F("C", "const a = C.new(7); return a.deposit(1)")
-+call check "a class: C.new(7) in JavaScript", mk~invoke(.nil, .Account) == 8
-+call check "a new object comes back as itself", F("C", "return C.new(3)")~invoke(.nil, .Account)~class == .Account
++call check "a class: C.new(7) in JavaScript", mk~call(.nil, .Account) == 8
++call check "a new object comes back as itself", F("C", "return C.new(3)")~call(.nil, .Account)~class == .Account
 +
 +-- conditions
 +err = F("o", "try { o.deposit('lots'); return 'no error' } catch (e) { return e.name + ' ' + (e instanceof RexxError) + ' ' + e.message }")
-+r = err~invoke(.nil, acct)
++r = err~call(.nil, acct)
 +call check "a condition is a RexxError", r~word(1) == "RexxError" & r~word(2) == "true" & r~pos("Error 41") > 0
-+r = F("o", "try { o.noSuchMethod(); return 'no error' } catch (e) { return e.message }")~invoke(.nil, acct)
++r = F("o", "try { o.noSuchMethod(); return 'no error' } catch (e) { return e.message }")~call(.nil, acct)
 +call check "an unknown message is Error 97", r~pos("Error 97") > 0
 +
 +-- sendMessageScope
 +s = .Savings~new(10)
-+call check "the subclass's method", F("o", "return o.describe()")~invoke(.nil, s) == "savings 10"
-+call check "sendMessageScope: from the superclass", F("o, C", "return o.sendMessageScope('describe', C)")~invoke(.nil, s, .Account) == "account 10"
-+r = F("o", "try { o.sendMessageScope('describe', 'x'); return 'no error' } catch (e) { return e.name }")~invoke(.nil, s)
++call check "the subclass's method", F("o", "return o.describe()")~call(.nil, s) == "savings 10"
++call check "sendMessageScope: from the superclass", F("o, C", "return o.sendMessageScope('describe', C)")~call(.nil, s, .Account) == "account 10"
++r = F("o", "try { o.sendMessageScope('describe', 'x'); return 'no error' } catch (e) { return e.name }")~call(.nil, s)
 +call check "sendMessageScope: the scope must be a class", r == "TypeError"
 +
 +-- not a property bag; not a thenable
-+r = F("o", "try { o.x = 1; return 'no error' } catch (e) { return e.name }")~invoke(.nil, acct)
++r = F("o", "try { o.x = 1; return 'no error' } catch (e) { return e.name }")~call(.nil, acct)
 +call check "setting a property is a TypeError", r == "TypeError"
 +call check "not a thenable: a Promise of it resolves to it", js~Promise~resolve(acct)~await == acct
-+call check "a function obtained twice is the same", F("o", "return o.deposit === o.deposit")~invoke(.nil, acct) == 1
++call check "a function obtained twice is the same", F("o", "return o.deposit === o.deposit")~call(.nil, acct) == 1
 +
 +-- JavaScript keeps a list of Rexx objects and works with them
 +list = js~newArray(.Account~new(5), .Account~new(1), .Account~new(3))
 +sorted = F("l", "return l.sort((a, b) => a.balance() - b.balance()).map((a) => a.balance()).join(',')")
-+call check "JavaScript sorts Rexx objects by a Rexx method", sorted~invoke(.nil, list) == "1,3,5"
++call check "JavaScript sorts Rexx objects by a Rexx method", sorted~call(.nil, list) == "1,3,5"
 +
 +-- JavaScript calls on its own (a timer): on a thread of its own
 +later = .Account~new(0)
-+F("o", "setTimeout(() => o.deposit(42), 5)")~invoke(.nil, later)
++F("o", "setTimeout(() => o.deposit(42), 5)")~call(.nil, later)
 +do 100 while later~balance == 0; call SysSleep 0.02; end
 +call check "a timer calls a Rexx object's method", later~balance == 42
 +
@@ -1781,7 +1803,7 @@ index 0000000..097ccd1
 +exit .bad > 0
 +
 +F: procedure                        -- F(params, body): a JavaScript function
-+  return .fn~invoke(.nil, arg(1), arg(2))
++  return .fn~call(.nil, arg(1), arg(2))
 +
 +check: procedure
 +  use arg name, ok
@@ -1830,10 +1852,10 @@ index 0000000..097ccd1
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..2b4865e 100755
+index e1c1cd8..eb26c5e 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -200,6 +200,138 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
+@@ -200,6 +200,170 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
  check "name resolution (host resolver)" '^localhost=1 127\.0\.0\.1$' '^invalid=0$' '^reverse=1 ' "^hostname=$(hostname)\$" '^hostid=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' -- \
    "$X dns.rex"
  
@@ -1921,10 +1943,10 @@ index e1c1cd8..2b4865e 100755
 +call charout , "with:"; do with index i item v over a; call charout , "" i"="v"="a[i]; end; say
 +signal on syntax; say a[0]
 +syntax: say "index 0:" (condition("O")~message~pos("count from 1") > 0)
-+say "typed:" .js~Uint8Array~of(7, 8, 9)[3] "methods:" a~includes("d") a~reverse~join("") a~invoke("at", -1)
++say "typed:" .js~Uint8Array~of(7, 8, 9)[3] "methods:" a~includes("d") a~reverse~join("") a~js.invokeStrict("at", -1)
 +a~put("e", 5); say "at/put:" a~at(1) a~at(5) a[5] a~length (a~at(6) == .js~undefined)
 +tf = .js~eval("(...v) => v.map((x) => typeof x).join(' ')")
-+say "box:" tf~invoke(.nil, .js~box("bo", 1), .js~box("Int", 7), .js~box("BIG", "123456789012345678901"), -
++say "box:" tf~call(.nil, .js~box("bo", 1), .js~box("Int", 7), .js~box("BIG", "123456789012345678901"), -
 +  .js~box("st", 5), .js~box("n", "1.5"), .js~box("Ch", "z"), .js~box("o", .nil), 5)
 +say "unbox:" .js~unbox(.js~box("BOOLEAN", "true")) .js~unbox(.js~box("sh", -5)) .js~unbox(.js~Number~new(3)) .js~unbox("plain")
 +signal on syntax name b1; x = .js~box("BYTE", 300)
@@ -1946,9 +1968,9 @@ index e1c1cd8..2b4865e 100755
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-proxy.rex'"
 +cat > "$T/jsgc.rex" <<'EOF'
 +f = .js~Function~new("o", "return 1")
-+do i = 1 to 300; x = f~invoke(.nil, .Gone~new); end
++do i = 1 to 300; x = f~call(.nil, .Gone~new); end
 +gc = .js~Function~new("globalThis.gc(); return 1")
-+do 5; x = gc~invoke(.nil); call SysSleep 0.1; end
++do 5; x = gc~call(.nil); call SysSleep 0.1; end
 +call SysSleep 0.3; x = .js~Math~max(1, 2)      -- a request: the releases are done
 +do k = 1 to 30; a = .array~new; do j = 1 to 50000; a[j] = .mutableBuffer~new(copies("x", 50)); end; drop a; end
 +call SysSleep 0.1
@@ -1959,6 +1981,38 @@ index e1c1cd8..2b4865e 100755
 +EOF
 +check "JavaScript objects: a collected RexxProxy lets its Rexx object go" '^300$' -- \
 +  "NODE_OPTIONS=--expose-gc $X jsgc.rex | grep -c '^uninit$'"
++cat > "$T/jshgc.rex" <<'EOF'
++f = .js~Function~new("h", "return 1")
++do i = 1 to 300; x = f~call(.nil, .js~handler(.Gone~new, "X")); end
++gc = .js~Function~new("globalThis.gc(); return 1")
++do 5; x = gc~call(.nil); call SysSleep 0.1; end
++call SysSleep 0.3; x = .js~Math~max(1, 2)      -- a request: the releases are done
++do k = 1 to 30; a = .array~new; do j = 1 to 50000; a[j] = .mutableBuffer~new(copies("x", 50)); end; drop a; end
++call SysSleep 0.1
++::requires "js.cls"
++::class Gone
++::method uninit
++  say "uninit"
++EOF
++check "JavaScript objects: a handler whose function JavaScript collects is released" '^300$' -- \
++  "NODE_OPTIONS=--expose-gc $X jshgc.rex | grep -c '^uninit$'"
++
++# --- the bridge's own methods (js.), exact names, objects from names and values
++cat > "$T/jsnames.rex" <<'EOF'
++o = .js~newObject("method", "POST", "Mixed", 1)
++say "pairs:" .js~JSON~stringify(o)
++a = .js~newArray("x", "y")
++say "strict:" a~js.getStrict("0") a~js.getStrict("length") a[1]
++o~js.setStrict("newOne", 5)
++say "set:" o["newOne"] o~js.hasProperty("newOne") o~js.hasProperty("NEWONE")
++say "prefixed:" a~js.typeOf a~js.className a~js.instanceOf(.js~Array) o~js.propertyNames~makeString("L", ",")
++say "invokeStrict:" a~js.invokeStrict("at", -1) .js~Math["max"]~call(.nil, 3, 9)
++say "className reaches JavaScript:" .js~newObject("className", "mine")~className
++::requires "js.cls"
++EOF
++check "JavaScript objects: js. methods, exact names, newObject(name, value, ...)" '^pairs: \{"method":"POST","Mixed":"1"\}$' \
++  '^strict: x 2 x$' '^set: 5 1 0$' '^prefixed: object Array 1 method,Mixed,newOne$' '^invokeStrict: y 9$' \
++  '^className reaches JavaScript: mine$' -- "$X jsnames.rex"
 +
 +# --- Rexx classes extending JavaScript classes (.js~extend, portable test)
 +check "JavaScript objects: Rexx classes extending JavaScript classes" '^31 passed, 0 failed$' '!^FAIL ' -- \
@@ -1973,15 +2027,15 @@ index e1c1cd8..2b4865e 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.html b/wasm/tests/web-api.html
-index 1e3edd8..1903e9b 100644
+index d544388..b13d517 100644
 --- a/wasm/tests/web-api.html
 +++ b/wasm/tests/web-api.html
 @@ -47,7 +47,7 @@
  // prefixes: passed on; console: no onOut / onErr, the console lines are
  // collected instead (out: console.log, err: console.error, one per line)
  let rexx = null;
--window.rexxReady = OoRexx.load().then((r) => { rexx = r; return true; }, (e) => String(e));
-+window.rexxReady = OoRexx.load().then((r) => { rexx = r; window.rexxLib = r; return true; }, (e) => String(e));
+-window.rexxReady = ooRexx.load().then((r) => { rexx = r; return true; }, (e) => String(e));
++window.rexxReady = ooRexx.load().then((r) => { rexx = r; window.rexxLib = r; return true; }, (e) => String(e));
  window.rexxRun = async (source, o = {}) => {
    let out = '', err = '', asks = 0, trace = '', errmsg = '';
    const debug = [];
@@ -1995,7 +2049,7 @@ index 1e3edd8..1903e9b 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..548b1ab 100755
+index 3940711..808926a 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -49,7 +49,8 @@ if len(sys.argv) != 2:
@@ -2017,9 +2071,9 @@ index 3940711..548b1ab 100755
 +     lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
 +  ("js core", 'say .js .js~Math~max(3, 7) .js~math~MAX(1, 2)\nm = .js~Map~new; m~set("a", 1); say m~size m~get("a") m~has("b")\n'
 +              'o = .js~newObject(.directory~of(("x", 1))); o["y"] = .js~num(2); say .js~JSON~stringify(o)\n'
-+              'a = .js~JSON~parse("[10,20]"); say a~length a[1] a~className; do x over a; say x; end\n'
++              'a = .js~JSON~parse("[10,20]"); say a~length a[1] a~js.className; do x over a; say x; end\n'
 +              'say (.js~Math == .js~Math) (.js~Math == .js~JSON) (o~nothing == .js~undefined) .js~eval("0.1+0.2") .js~eval("true")\n'
-+              'say (o~nothing == .nil) (.js~JSON~parse("null") == .nil) o~hasProperty("x") o~hasProperty("nothing") .js~undefined (.js~eval("undefined") == .js~undefined)\n'
++              'say (o~nothing == .nil) (.js~JSON~parse("null") == .nil) o~js.hasProperty("x") o~js.hasProperty("nothing") .js~undefined (.js~eval("undefined") == .js~undefined)\n'
 +              '::requires "js.cls"', {"js": {"worker": True}},
 +     lambda r: r["out"] == "a JSObject (global, worker) 7 2\n1 1 0\n{\"x\":\"1\",\"y\":2}\n2 10 Array\n10\n20\n"
 +                           "1 0 1 0.30000000000000004 1\n0 1 1 0 undefined 1\n" and r["rc"] == 0),
@@ -2044,7 +2098,7 @@ index 3940711..548b1ab 100755
 +  # the page realm: the DOM of the page that runs ooRexx (.js~page)
 +  ("js page", 'w = .js~page; say w; doc = w~document\n'
 +              'p = doc~createElement("p"); p~id = "fromRexx"; p["textContent"] = "Hola desde Rexx"; doc~body~appendChild(p)\n'
-+              'q = doc~getElementById("fromRexx"); say q~className (q == p) q~textContent q~tagName\n'
++              'q = doc~getElementById("fromRexx"); say q~js.className (q == p) q~textContent q~tagName\n'
 +              'say w~eval("new Promise(r => setTimeout(() => r(document.getElementById(\'fromRexx\').textContent.length), 30))")~await\n'
 +              'do i = 1 to 2000; e = doc~createElement("span"); end; say e~string~word(4) < 2000\n'
 +              'p~remove; say doc~getElementById("fromRexx") == .nil\n'
@@ -2056,9 +2110,9 @@ index 3940711..548b1ab 100755
 +                      'doc~body~appendChild(.js~newObject)\n'
 +                      'syntax: say condition("O")~message\n::requires "js.cls"', {"js": {"worker": True, "page": True}},
 +     lambda r: 'cannot be used in realm "page"' in r["out"]),
-+  # events: .js~handler, .js~nextEvent, .js~eventLoop
++  # events: .js~handler, .js~nextEvent, .js~runEventLoop
 +  ("js events worker", 'c = .counter~new; h = .js~handler(c, "tick", "preventDefault queued")\n'
-+                       'say h; t = .js~setInterval(h, 10, "x"); .js~eventLoop; .js~clearInterval(t); h~release\n'
++                       'say h; t = .js~setInterval(h, 10, "x"); .js~runEventLoop; .js~clearInterval(t); h~release\n'
 +                       'say c~n .js~nextEvent(0) .js~nextEvent(0.2)\n'
 +                       '::class counter; ::attribute n; ::method init; expose n; n = 0\n'
 +                       '::method tick; expose n; use arg a; n += 1; if n = 3 then .js~stopEventLoop; say "tick" n a\n'
@@ -2095,15 +2149,15 @@ index 3940711..548b1ab 100755
 +  ("js proxy page", 'el = .js~page~document~createElement("p"); el~textContent = .thing~new\n'
 +                    'say el~textContent\n'
 +                    'f = .js~page~Function~new("o", "return o.ping(41).then((v) => \'resolved \' + v, (e) => e.message)")\n'
-+                    'say f~invoke(.nil, .thing~new)~await\n'
++                    'say f~call(.nil, .thing~new)~await\n'
 +                    'g = .js~page~Function~new("o", "return o.bad().then(() => \'no\', (e) => e.name + \' \' + e.message)")\n'
-+                    'say g~invoke(.nil, .thing~new)~await\n'
++                    'say g~call(.nil, .thing~new)~await\n'
 +                    '::requires "js.cls"\n::class thing\n::method string; return "a thing"\n'
 +                    '::method ping; use arg n; return n + 1\n::method bad; return 1 + "a"',
 +     {"js": {"worker": True, "page": True}},
 +     lambda r: r["out"].startswith("a thing\nresolved 42\nRexxError Error 41.1") and r["rc"] == 0),
 +  ("js page calls queued", 'h = .host~new; f = .js~page~Function~new("o", "setTimeout(() => o.hit(5).then((v) => o.done(v)), 20)")\n'
-+                           'f~invoke(.nil, h); .js~eventLoop; say "after" h~got\n'
++                           'f~call(.nil, h); .js~runEventLoop; say "after" h~got\n'
 +                           '::requires "js.cls"\n::class host\n::attribute got\n'
 +                           '::method hit; use arg n; say "hit" n; return n * 2\n'
 +                           '::method done; expose got; use arg got; say "done" got; .js~stopEventLoop',
@@ -2195,7 +2249,7 @@ index 3940711..548b1ab 100755
 +        sp.on("console", lambda m: logs.append(m.text))
 +        sp.goto("http://127.0.0.1:8001/web-scripts.html")
 +        try:
-+            v = sp.evaluate("async () => { const s = await OoRexx.scripts; "
++            v = sp.evaluate("async () => { const s = await ooRexx.scripts; "
 +                            "for (let i = 0; i < 100 && document.getElementById('out').textContent.split('|').length < 4; i++) "
 +                            "await new Promise((r) => setTimeout(r, 20)); "
 +                            "return {text: document.getElementById('out').textContent, more: await s.eval('return .Greeter~new~hello(\"JS\")')}; }")
@@ -2290,10 +2344,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..8a97e35
+index 0000000..e751c0c
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,1312 @@
+@@ -0,0 +1,1354 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -2396,7 +2450,7 @@ index 0000000..8a97e35
 + * Events: a queued handler's function, called by JavaScript in its realm, returns at
 + * once and hands js_event() (on the main runtime thread; from the page by
 + * postMessage) the records H "id" + A (its arguments).  They wait in a queue
-+ * until a Rexx thread takes them (.js~nextEvent, .js~eventLoop) and sends the
++ * until a Rexx thread takes them (.js~nextEvent, .js~runEventLoop) and sends the
 + * handler's message; with option latest ("id<tab>L") a new event replaces the
 + * handler's event still waiting, if any (mousemove, scroll, resize), and
 + * with option max n ("id<tab>Mn") the handler's oldest waiting event is
@@ -2428,6 +2482,7 @@ index 0000000..8a97e35
 +#include <stdlib.h>
 +#include <string.h>
 +#include <string>
++#include <set>
 +#include <vector>
 +
 +extern "C"
@@ -2683,6 +2738,23 @@ index 0000000..8a97e35
 +    pinned.erase(p);
 +}
 +
++// JavaScript collected a handler's function: nothing can call it any more,
++// so the handler is unpinned, once the events it left are taken (JsNextEvent)
++static std::set<size_t> collectedHandlers;
++static size_t eventHandler(const std::string &ev, bool *latest, size_t *max);
++static void handlerCollected(size_t id)
++{
++    std::lock_guard<std::mutex> lock(eventLock);
++    for (const std::string &ev : events)
++    {
++        if (eventHandler(ev, NULL, NULL) == id) { collectedHandlers.insert(id); return; }
++    }
++    auto p = pinned.find(id);
++    if (p == pinned.end()) return;
++    unpinned.push_back(p->second);
++    pinned.erase(p);
++}
++
 +// the handler id of an event, whether it has option latest ("id<tab>L"),
 +// and its option max n ("id<tab>Mn", 0 when none)
 +static size_t eventHandler(const std::string &ev, bool *latest = NULL, size_t *max = NULL)
@@ -2708,6 +2780,13 @@ index 0000000..8a97e35
 +        size_t pos = 0;
 +        Rec r;
 +        if (nextRec(ev, pos, r)) proxyRelease(r.data);
++        return;
++    }
++    if (!ev.empty() && ev[0] == 'Y')                // a handler's function collected
++    {
++        size_t pos = 0;
++        Rec r;
++        if (nextRec(ev, pos, r)) handlerCollected(strtoul(r.data.c_str(), NULL, 10));
 +        return;
 +    }
 +    if (!ev.empty() && ev[0] == 'C')                // a call from the page: queued as is
@@ -3411,7 +3490,24 @@ index 0000000..8a97e35
 +        Rec r;
 +        nextRec(ev, pos, r);                                       // H
 +        RexxObjectPtr args = toRexx(context->threadContext, ev, pos);
-+        return context->SendMessage2(jsEventClass, "NEW", handler, args);
++        RexxObjectPtr event = context->SendMessage2(jsEventClass, "NEW", handler, args);
++        // its function collected (handlerCollected): unpinned with its last event
++        size_t id = strtoul(r.data.c_str(), NULL, 10);
++        {
++            std::lock_guard<std::mutex> lock(eventLock);
++            if (collectedHandlers.count(id) > 0)
++            {
++                bool more = false;
++                for (const std::string &e : events) if (eventHandler(e, NULL, NULL) == id) { more = true; break; }
++                if (!more)
++                {
++                    collectedHandlers.erase(id);
++                    auto p = pinned.find(id);
++                    if (p != pinned.end()) { unpinned.push_back(p->second); pinned.erase(p); }
++                }
++            }
++        }
++        return event;
 +    }
 +}
 +
@@ -3608,10 +3704,10 @@ index 0000000..8a97e35
 +}
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
 new file mode 100644
-index 0000000..22e071e
+index 0000000..6734e6a
 --- /dev/null
 +++ b/wasm/web/js.cls
-@@ -0,0 +1,616 @@
+@@ -0,0 +1,638 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -3683,26 +3779,26 @@ index 0000000..22e071e
 + *                   o[0]); a list (NodeList...) keeps JavaScript's o[0]
 + *   o["name"] = v   property name set (created if need be)
 + *   o~at(i), o~put(v, i)   the same as o[i] and o[i] = v, as in Rexx's
-+ *                   collections (JavaScript's own Array at(): o~invoke("at", i))
-+ *   o~invoke("name", args...)   method name called; o~invoke(.nil, args...)
++ *                   collections (JavaScript's own Array at(): o~js.invokeStrict("at", i))
++ *   o~js.invokeStrict("name", args...)   method name called; o~call(.nil, args...)
 + *                   calls o itself (a function)
 + * and o~new(args...) (new o(...)), o~await (a Promise's value; a rejection is
-+ * an error), o~typeOf, o~className, o~instanceOf(c), o~hasProperty("name"),
-+ * o~propertyNames (Object.keys), o~makeArray (DO x OVER o: the values of an
++ * an error), o~js.typeOf, o~js.className, o~js.instanceOf(c), o~js.hasProperty("name"),
++ * o~js.propertyNames (Object.keys), o~makeArray (DO x OVER o: the values of an
 + * iterable, as JavaScript's for...of, so a Map's [key, value] pairs; an error
 + * for anything else), o~supplier (DO WITH INDEX i ITEM v OVER o: a Map's keys
 + * and values, an array's 1..n and items (as o[i]), a list's 0..n-1 (as its
 + * o[i]), any other iterable's 1..n and values, any other object's own
-+ * properties), o~byteString (an ArrayBuffer's or typed array's bytes as a
++ * properties), o~js.byteString (an ArrayBuffer's or typed array's bytes as a
 + * Rexx string).  These names were
 + * chosen not to hide common JavaScript ones (Map's get/set/has/keys, ...).
 + * Methods of Rexx's Object (send, start, copy, run, request, ...) and at/put
-+ * are not passed on: use o~invoke("send", x).
++ * are not passed on: use o~js.invokeStrict("send", x).
 + *
 + * Values: JavaScript strings, numbers, booleans (1/0) and bigints come back as
 + * Rexx strings, null as .nil and undefined as .js~undefined (one object, so
 + * x == .js~undefined; a property that does not exist gives it, and
-+ * o~hasProperty("name") tells the two apart).  Rexx strings go as strings,
++ * o~js.hasProperty("name") tells the two apart).  Rexx strings go as strings,
 + * always (also "42"); .js~num(x), .js~bool(x), .js~true, .js~false,
 + * .js~bigint(x), .js~bytes(x) (a Uint8Array), .js~undefined force a type, and
 + * so does .js~box(type, x) with BSF4ooRexx's type indicators (BOolean, BYte,
@@ -3723,7 +3819,7 @@ index 0000000..22e071e
 + * came over (o.string() asks now).  A call runs as a synchronous handler
 + * (a condition is a RexxError; called by JavaScript on its own, it gives
 + * undefined).  In the page, which cannot wait, a call is queued as an event
-+ * and gives a Promise: the Rexx thread taking events (.js~eventLoop,
++ * and gives a Promise: the Rexx thread taking events (.js~runEventLoop,
 + * .js~nextEvent) runs it, and the Promise gets its result (rejected with a
 + * RexxError for a condition; while nobody takes events, it waits; when the
 + * run ends, it is rejected).  The same Rexx object
@@ -3750,7 +3846,7 @@ index 0000000..22e071e
 + * undefined at once, and a Rexx thread takes the calls:
 + *
 + *    btn~addEventListener("click", .js~handler(self, "CLICKED"))   -- the page
-+ *    .js~eventLoop                     -- until .js~stopEventLoop
++ *    .js~runEventLoop                     -- until .js~stopEventLoop
 + *    ::method clicked
 + *      use arg event                   -- the arguments of the JavaScript call
 + *
@@ -3763,7 +3859,7 @@ index 0000000..22e071e
 + * "max n" at most n, the newest n (older ones are dropped).  .js~nextEvent([seconds]) waits for the next
 + * event (none given: as long as it takes) and returns a .JSEvent (or .nil
 + * when the time is over); event~dispatch sends the handler's message to its
-+ * object with the call's arguments.  .js~eventLoop does that over and over,
++ * object with the call's arguments.  .js~runEventLoop does that over and over,
 + * on the thread that called it, until .js~stopEventLoop (from a handler or
 + * another thread); an error in a handler ends it, as any error.  Several
 + * threads may wait: each event goes to one.  A handler is kept alive from
@@ -3883,12 +3979,12 @@ index 0000000..22e071e
 +::method "[]=" unguarded            external "LIBRARY js js_put"
 +::method at unguarded               external "LIBRARY js js_get"   -- AT is [] in Rexx
 +::method put unguarded              external "LIBRARY js js_put"   -- PUT is []=
-+::method invoke unguarded           external "LIBRARY js js_call"
++::method js.invokeStrict unguarded external "LIBRARY js js_call"
 +::method new unguarded              external "LIBRARY js js_new"
 +::method await unguarded            external "LIBRARY js js_await"
-+::method typeOf unguarded           external "LIBRARY js js_typeof"
-+::method className unguarded        external "LIBRARY js js_classname"
-+::method propertyNames unguarded    external "LIBRARY js js_keys"
++::method js.typeOf unguarded           external "LIBRARY js js_typeof"
++::method js.className unguarded        external "LIBRARY js js_classname"
++::method js.propertyNames unguarded    external "LIBRARY js js_keys"
 +::method makeArray unguarded        external "LIBRARY js js_makearray"
 +::method supplierData private unguarded external "LIBRARY js js_supplier"
 +::method supplier unguarded         -- DO WITH INDEX i ITEM v OVER o
@@ -3896,9 +3992,21 @@ index 0000000..22e071e
 +  data = self~supplierData
 +  return .supplier~new(data[2], data[1])
 +syntax: raise propagate
-+::method byteString unguarded       external "LIBRARY js js_bytes"
-+::method instanceOf unguarded       external "LIBRARY js js_instanceof"
-+::method hasProperty unguarded      external "LIBRARY js js_has"
++::method js.byteString unguarded       external "LIBRARY js js_bytes"
++::method js.instanceOf unguarded       external "LIBRARY js js_instanceof"
++::method js.hasProperty unguarded      external "LIBRARY js js_has"
++::method js.getStrict unguarded    -- the property name, exact (also of an array)
++  signal on syntax
++  use strict arg name
++  return JsGlobal(self~realm)["Reflect"]~js.invokeStrict("get", self, name)
++syntax: raise propagate
++::method js.setStrict unguarded    -- set or make the property name, exact
++  signal on syntax
++  use strict arg name, value
++  reflect = JsGlobal(self~realm)["Reflect"]
++  reflect~js.invokeStrict("set", self, name, value)
++  return
++syntax: raise propagate
 +::method uninit unguarded           external "LIBRARY js js_uninit"
 +
 +/** .js: the default realm's globalThis, and the bridge's helpers.  Their
@@ -4012,17 +4120,27 @@ index 0000000..22e071e
 +    return o~string
 +  end
 +  if o~isA(.JSObject) then do
-+    c = o~className
-+    if wordpos(c, "Number String Boolean BigInt") > 0 then return o~invoke("valueOf")
++    c = o~js.className
++    if wordpos(c, "Number String Boolean BigInt") > 0 then return o~js.invokeStrict("valueOf")
 +  end
 +  return o
 +::method newArray unguarded         -- a new JavaScript array of the arguments
 +  signal on syntax
 +  return JsValue(arg(1, "A"))
 +syntax: raise propagate
-+::method newObject unguarded        -- a new plain JavaScript object from a Directory/StringTable
++::method newObject unguarded        -- a new plain JavaScript object: from a Directory/StringTable, or names and values
 +  signal on syntax
-+  use strict arg d = (.directory~new)
++  if arg() <= 1 then do
++    use strict arg d = (.directory~new)
++    return JsValue(d)
++  end
++  -- .js~newObject(name, value, ...): the names exact (a StringTable keeps them)
++  if arg() // 2 \= 0 then raise syntax 98.900 array(".js~newObject: names and values go in pairs, found" arg() "arguments")
++  d = .StringTable~new
++  do i = 1 to arg() by 2
++    if \arg(i, "E") then raise syntax 98.900 array(".js~newObject: argument" i "(a name) is missing")
++    d[arg(i)] = arg(i + 1)
++  end
 +  return JsValue(d)
 +syntax: raise propagate
 +::method extend unguarded           -- .js~extend(class, base [, names...]): see Classes above
@@ -4095,19 +4213,19 @@ index 0000000..22e071e
 +  if seconds < 0 then return JsNextEvent()
 +  return JsNextEvent(seconds)
 +syntax: raise propagate
-+::method eventLoop unguarded        -- dispatch events until .js~stopEventLoop
++::method runEventLoop unguarded     -- take and dispatch events until .js~stopEventLoop
 +  generation = JsLoopGeneration()
 +  do forever
 +    event = JsNextEvent(, generation)
 +    if event == .nil then return
 +    event~dispatch
 +  end
-+::method stopEventLoop unguarded    -- end every .js~eventLoop running now
++::method stopEventLoop unguarded    -- end every .js~runEventLoop running now
 +  call JsStopLoops
 +::method session unguarded          -- (ooRexx.js's start()) give the page a .JSSession and take events, for good
 +  call JsSession .JSSession~new
 +  do forever
-+    self~eventLoop
++    self~runEventLoop
 +  end
 +::method value unguarded            -- x as JavaScript sees it (a .JSObject unless a string)
 +  signal on syntax
@@ -4147,7 +4265,7 @@ index 0000000..22e071e
 +  options = opts~strip
 +  id = JsHandlerId()
 +  if wordPos("queued", options) = 0 then call JsSyncSetup
-+::method release                    -- no more events from it
++::method release                    -- no more events from it (also when JavaScript collects its function)
 +  expose id
 +  call JsHandlerRelease id
 +::method string
@@ -4284,7 +4402,7 @@ index c87af29..71cd58a 100644
      printErr: (s) => post({ type: 'err', bytes: textBytes(s) }),
      orxReady: () => {
 diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
-index 73eb864..e44ad21 100644
+index 70031fb..ed61b4c 100644
 --- a/wasm/web/ooRexx.js
 +++ b/wasm/web/ooRexx.js
 @@ -47,6 +47,17 @@
@@ -4326,7 +4444,7 @@ index 73eb864..e44ad21 100644
 + * Calling Rexx: a Rexx object that comes to the page (an argument of a
 + * handler, a result) is a RexxProxy (js-realm.js; o.name(args), sendMessage,
 + * ...).  The page cannot wait, so each call is queued as an event and gives a
-+ * Promise of its result: the Rexx thread taking events (.js~eventLoop,
++ * Promise of its result: the Rexx thread taking events (.js~runEventLoop,
 + * .js~nextEvent) runs it (a condition rejects it with a RexxError); while
 + * nobody takes events it waits, and when the run ends it is rejected.
 + *
@@ -4348,7 +4466,7 @@ index 73eb864..e44ad21 100644
 + * page} granted (they are the page's own scripts) and output to the console,
 + * and runs them in order, each as a routine named after its src (or "script
 + * n"); what one defines, the later ones see, and handlers run after them
-+ * (the session takes events).  OoRexx.scripts is a Promise of that session
++ * (the session takes events).  ooRexx.scripts is a Promise of that session
 + * (null when the page has no Rexx scripts); a script's error is logged and
 + * the next one runs.
   */
@@ -4385,7 +4503,7 @@ index 73eb864..e44ad21 100644
 +  const SESSION_SOURCE = '.js~session\n::requires "js.cls"\n';
 +  const OP_SESSION = 17;          // the request that hands start() its session (web-js.cpp)
 +
-   class OoRexx {
+   class ooRexx {
      static async load(base) {
        base = new URL(base || here.slice(0, here.lastIndexOf('/') + 1) || './', global.location.href).href;
 @@ -152,6 +232,25 @@
@@ -4490,23 +4608,23 @@ index 73eb864..e44ad21 100644
 @@ -204,4 +349,40 @@
    }
  
-   global.OoRexx = OoRexx;
+   global.ooRexx = ooRexx;
 +
 +  // <script type="text/rexx">: a session for the page's Rexx scripts
-+  OoRexx.scripts = null;
++  ooRexx.scripts = null;
 +  if (global.document && document.querySelector) {
 +    const base = here.slice(0, here.lastIndexOf('/') + 1) || './';
 +    const go = () => {
 +      const scripts = Array.from(document.querySelectorAll('script[type="text/rexx"]'));
 +      if (!scripts.length) return;
-+      OoRexx.scripts = runScripts(base, scripts);
-+      OoRexx.scripts.catch((e) => console.error('ooRexx: ' + (e && e.message || e)));
++      ooRexx.scripts = runScripts(base, scripts);
++      ooRexx.scripts.catch((e) => console.error('ooRexx: ' + (e && e.message || e)));
 +    };
 +    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go);
 +    else go();
 +  }
 +  async function runScripts(base, scripts) {
-+    const rexx = await OoRexx.load(base);
++    const rexx = await ooRexx.load(base);
 +    const session = await rexx.start({ js: { worker: true, page: true } });
 +    let n = 0;
 +    for (const el of scripts) {

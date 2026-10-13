@@ -171,7 +171,7 @@ index 8848967..3b1f460 100644
      if (callDebugInputExit(activation, value))
      {
 diff --git a/wasm/README.md b/wasm/README.md
-index c2c2a0f..a19bd19 100644
+index c2c2a0f..8be6f25 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -143,6 +143,76 @@ threads, SysSleep, RxSock and `.StreamSocket` over WebSocket, external data
@@ -223,7 +223,7 @@ index c2c2a0f..a19bd19 100644
 +The page API is `web/ooRexx.js`:
 +
 +```js
-+const rexx = await OoRexx.load();       // compiles rexx.wasm, fetches rexx.data once
++const rexx = await ooRexx.load();       // compiles rexx.wasm, fetches rexx.data once
 +const run = rexx.run({ args: ['prog.rex'], files: {'/home/rexx/prog.rex': src},
 +                       onOut, onErr, onInput });
 +run.write('line\n'); run.close();       // interactive stdin; or stdin: '...' up front
@@ -355,7 +355,7 @@ index 0000000..36dea45
 +ls -l "$OUT" | awk 'NR>1{print $5, $9}'
 diff --git a/wasm/tests/web-api.html b/wasm/tests/web-api.html
 new file mode 100644
-index 0000000..1e3edd8
+index 0000000..d544388
 --- /dev/null
 +++ b/wasm/tests/web-api.html
 @@ -0,0 +1,76 @@
@@ -408,7 +408,7 @@ index 0000000..1e3edd8
 +// prefixes: passed on; console: no onOut / onErr, the console lines are
 +// collected instead (out: console.log, err: console.error, one per line)
 +let rexx = null;
-+window.rexxReady = OoRexx.load().then((r) => { rexx = r; return true; }, (e) => String(e));
++window.rexxReady = ooRexx.load().then((r) => { rexx = r; return true; }, (e) => String(e));
 +window.rexxRun = async (source, o = {}) => {
 +  let out = '', err = '', asks = 0, trace = '', errmsg = '';
 +  const debug = [];
@@ -1113,7 +1113,7 @@ index 0000000..c87af29
 +}
 diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
 new file mode 100644
-index 0000000..73eb864
+index 0000000..70031fb
 --- /dev/null
 +++ b/wasm/web/ooRexx.js
 @@ -0,0 +1,207 @@
@@ -1157,7 +1157,7 @@ index 0000000..73eb864
 + * ooRexx/WASM in the browser: the page-side API.
 + *
 + *   <script src="ooRexx.js"></script>
-+ *   const rexx = await OoRexx.load();            // fetch + compile once
++ *   const rexx = await ooRexx.load();            // fetch + compile once
 + *   const run = rexx.run({
 + *     args: ['prog.rex'], files: {'/home/rexx/prog.rex': source},
 + *     onOut: (text) => ..., onErr: (text) => ..., onInput: () => ...,
@@ -1248,7 +1248,7 @@ index 0000000..73eb864
 +    };
 +  }
 +
-+  class OoRexx {
++  class ooRexx {
 +    static async load(base) {
 +      base = new URL(base || here.slice(0, here.lastIndexOf('/') + 1) || './', global.location.href).href;
 +      if (!global.crossOriginIsolated) {
@@ -1261,7 +1261,7 @@ index 0000000..73eb864
 +        return r.arrayBuffer();
 +      });
 +      const [wasmModule, data] = await Promise.all([wasmP, dataP]);
-+      return new OoRexx(base, wasmModule, data);
++      return new ooRexx(base, wasmModule, data);
 +    }
 +
 +    constructor(base, wasmModule, data) {
@@ -1322,5 +1322,5 @@ index 0000000..73eb864
 +    }
 +  }
 +
-+  global.OoRexx = OoRexx;
++  global.ooRexx = ooRexx;
 +})(typeof self !== 'undefined' ? self : this);

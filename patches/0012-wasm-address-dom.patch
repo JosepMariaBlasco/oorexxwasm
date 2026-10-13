@@ -315,7 +315,7 @@ index 0000000..4e2e5e2
 +
 +::requires "dom.cls"
 diff --git a/wasm/tests/web-api.html b/wasm/tests/web-api.html
-index e5c8af1..abf687f 100644
+index cb5c6fa..f56ea5d 100644
 --- a/wasm/tests/web-api.html
 +++ b/wasm/tests/web-api.html
 @@ -75,7 +75,7 @@ window.rexxRun = async (source, o = {}) => {
@@ -328,7 +328,7 @@ index e5c8af1..abf687f 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); }, onJdor,
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 39b4e81..c65808e 100755
+index d4725ef..8cfebca 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -185,6 +185,17 @@ CASES = [
@@ -351,7 +351,7 @@ index 39b4e81..c65808e 100755
       lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
 diff --git a/wasm/web/dom.cls b/wasm/web/dom.cls
 new file mode 100644
-index 0000000..84ffe1c
+index 0000000..e7341a3
 --- /dev/null
 +++ b/wasm/web/dom.cls
 @@ -0,0 +1,1046 @@
@@ -479,7 +479,7 @@ index 0000000..84ffe1c
 + *
 + * Events are not callbacks: as with XEDIT's READ or ISPF's DISPLAY, the
 + * program builds, WAITs, looks at the event and acts.  WAIT takes the
-+ * events of .js~handler too, and sends them their message (as .js~eventLoop
++ * events of .js~handler too, and sends them their message (as .js~runEventLoop
 + * would) while it waits for its own, so both kinds of handlers coexist.
 + *
 + * RC: 0 when all went well.  Positive, and the ERROR condition, when the
@@ -714,7 +714,7 @@ index 0000000..84ffe1c
 +  use strict arg el
 +  node = el~getRootNode
 +  if node == doc then return .nil
-+  if node~hasProperty("host") then return node~host
++  if node~js.hasProperty("host") then return node~host
 +  return .nil
 +
 +-- a value from a word or FROM var: .nil (and a message) when the variable has none
@@ -752,7 +752,7 @@ index 0000000..84ffe1c
 +  handler = .js~handler(binding, "FIRE")
 +  binding~handler = handler
 +  panels += 1
-+  made = makePanel~invoke(.nil, doc, title, handler, ,
++  made = makePanel~call(.nil, doc, title, handler, ,
 +    .resources["PANEL.CSS"]~makeString("L", "0a"x), .js~num(panels - 1))
 +  body = made["body"]
 +  binding~element = made["host"]
@@ -1402,7 +1402,7 @@ index 0000000..84ffe1c
 +  use arg v
 +  return v == .nil | v == .js~undefined
 diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
-index e70e275..fa4a3f9 100644
+index f40497f..aadc16b 100644
 --- a/wasm/web/ooRexx.js
 +++ b/wasm/web/ooRexx.js
 @@ -122,6 +122,11 @@

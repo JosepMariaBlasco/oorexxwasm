@@ -8,7 +8,7 @@
 // own worker, so a crash or a hang loses only that group.
 let rexx = null, files = null;
 window.ready = (async () => {
-  rexx = await OoRexx.load('bin/');
+  rexx = await ooRexx.load('bin/');
   const [idx, bin] = await Promise.all([fetch('suite.idx').then((r) => r.json()),
                                         fetch('suite.bin').then((r) => r.arrayBuffer())]);
   files = {};
