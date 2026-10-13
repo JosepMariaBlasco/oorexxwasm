@@ -147,3 +147,34 @@ jobs:
       - name: Rexx classes extending JavaScript classes (js-extend.rex)
         continue-on-error: true
         run: set +e; cd scratch && rexx ../pkg/tests/js-extend.rex | tail -3; echo "exit status ${PIPESTATUS[0]}"
+      - name: The RexxAPI while JavaScript waits for a synchronous handler
+        continue-on-error: true
+        run: |
+          set +e; cd scratch
+          cat > jsrxapi.rex <<'EOF'
+          arr = .js~newArray(3, 1, 2)
+          .local~pulled = 0
+          arr~sort(.js~handler(.Cmp~new, "cmp"))
+          say "sorted:" arr~join(",") "pulled:" .pulled
+          .local~others = 0
+          .Other~new~start("go")
+          do i = 1 to 200; a = .js~newArray(3, 1, 2); a~sort(.js~handler(.Cmp~new, "plain")); end
+          .local~stop = 1
+          call SysSleep 0.2
+          say "loops: done" (.others > 0)
+          ::requires "js.cls"
+          ::class Cmp
+          ::method cmp
+            use arg a, b
+            queue a; parse pull x; call SysSleep 0
+            if x = a then .local~pulled += 1
+            return a - b
+          ::method plain
+            use arg a, b
+            return a - b
+          ::class Other
+          ::method go
+            do while .local~stop \== 1; call SysSleep 0; queue "x"; parse pull .; .local~others += 1; end
+          EOF
+          sed -i 's/^          //' jsrxapi.rex
+          timeout 120 rexx jsrxapi.rex; echo "exit status $?"
