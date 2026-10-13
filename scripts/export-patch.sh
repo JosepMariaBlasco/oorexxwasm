@@ -20,7 +20,7 @@ for p in "$PROJECT"/patches/*.patch; do
   (cd "$BASE" && patch -p1 -s < "$p")
 done
 OUT="$PROJECT/patches/$NAME"
-(cd "$(dirname "$BASE")" && diff -ruN -x .svn base "$SRC" | sed -E "s|^--- base/([^\t]*).*|--- a/\1|; s|^\+\+\+ $SRC/([^\t]*).*|+++ b/\1|; s|^diff -ruN -x .svn base/([^ ]*) .*|diff -ruN a/\1 b/\1|") > "$OUT" || true
+(cd "$(dirname "$BASE")" && diff -ruN -x .svn base "$SRC" | sed -E "s|^--- base/([^\t]*).*|--- a/\1|; s|^\+\+\+ $SRC/([^\t]*).*|+++ b/\1|; s|^diff -ruN -x .svn base/([^ ]*) .*|diff --git a/\1 b/\1|") > "$OUT" || true
 # verify
 (cd "$BASE" && patch -p1 -s < "$OUT")
 if diff -r -x .svn -q "$BASE" "$SRC"; then echo "OK: $OUT reproduces $SRC ($(grep -c '^+++ ' "$OUT") files)"; else echo "MISMATCH"; exit 1; fi

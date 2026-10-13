@@ -1,4 +1,4 @@
-diff -ruN a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
+diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
 --- a/common/platform/unix/SysProcess.cpp
 +++ b/common/platform/unix/SysProcess.cpp
 @@ -258,15 +258,77 @@
@@ -116,7 +116,7 @@ diff -ruN a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProces
          if (resolved != NULL)
          {
              size_t len = strlen(resolved);
-diff -ruN a/common/platform/unix/SysProcess.hpp b/common/platform/unix/SysProcess.hpp
+diff --git a/common/platform/unix/SysProcess.hpp b/common/platform/unix/SysProcess.hpp
 --- a/common/platform/unix/SysProcess.hpp
 +++ b/common/platform/unix/SysProcess.hpp
 @@ -47,6 +47,7 @@
@@ -144,7 +144,7 @@ diff -ruN a/common/platform/unix/SysProcess.hpp b/common/platform/unix/SysProces
       static void beep(int frequency, int duration);
  
   protected:
-diff -ruN a/interpreter/platform/unix/SysFileSystem.cpp b/interpreter/platform/unix/SysFileSystem.cpp
+diff --git a/interpreter/platform/unix/SysFileSystem.cpp b/interpreter/platform/unix/SysFileSystem.cpp
 --- a/interpreter/platform/unix/SysFileSystem.cpp
 +++ b/interpreter/platform/unix/SysFileSystem.cpp
 @@ -68,6 +68,18 @@
@@ -495,7 +495,7 @@ diff -ruN a/interpreter/platform/unix/SysFileSystem.cpp b/interpreter/platform/u
      if (!SystemInterpreter::getEnvironmentVariable("TMPDIR", temporary))
      {
          temporary = "/tmp";
-diff -ruN a/interpreter/platform/unix/SysFileSystem.hpp b/interpreter/platform/unix/SysFileSystem.hpp
+diff --git a/interpreter/platform/unix/SysFileSystem.hpp b/interpreter/platform/unix/SysFileSystem.hpp
 --- a/interpreter/platform/unix/SysFileSystem.hpp
 +++ b/interpreter/platform/unix/SysFileSystem.hpp
 @@ -109,6 +109,7 @@
@@ -506,7 +506,7 @@ diff -ruN a/interpreter/platform/unix/SysFileSystem.hpp b/interpreter/platform/u
       static bool  normalizePathName(const char *name, FileNameBuffer &resolvedName);
       static RexxString* extractDirectory(RexxString *file);
       static RexxString* extractExtension(RexxString *file);
-diff -ruN a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform/unix/SystemCommands.cpp
+diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform/unix/SystemCommands.cpp
 --- a/interpreter/platform/unix/SystemCommands.cpp
 +++ b/interpreter/platform/unix/SystemCommands.cpp
 @@ -58,6 +58,7 @@
@@ -677,7 +677,7 @@ diff -ruN a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform/
  
      // The command handlers for shells other than "sh" will only work
      // if a shell with this named is installed on the system
-diff -ruN a/interpreter/platform/unix/SystemInterpreter.cpp b/interpreter/platform/unix/SystemInterpreter.cpp
+diff --git a/interpreter/platform/unix/SystemInterpreter.cpp b/interpreter/platform/unix/SystemInterpreter.cpp
 --- a/interpreter/platform/unix/SystemInterpreter.cpp
 +++ b/interpreter/platform/unix/SystemInterpreter.cpp
 @@ -43,6 +43,8 @@
@@ -726,7 +726,7 @@ diff -ruN a/interpreter/platform/unix/SystemInterpreter.cpp b/interpreter/platfo
      // A NULL value is an unset operation
      if (value == NULL)
      {
-diff -ruN a/wasm/node-pre.js b/wasm/node-pre.js
+diff --git a/wasm/node-pre.js b/wasm/node-pre.js
 --- a/wasm/node-pre.js
 +++ b/wasm/node-pre.js
 @@ -36,8 +36,12 @@
