@@ -12,7 +12,8 @@
 #             the web build, in the same variant (bin-web-test), in a
 #             headless browser (tests/suite-browser/run.py)
 #   windows   the node variant (bin-node-test) under Node on windows-latest,
-#             run from Git Bash; compared with the node reference
+#             run from Git Bash; compared with results/suite-windows-*.csv
+#             (or, while there is none, with the node reference)
 #
 # Actions > suite > Run workflow; or
 #   gh api -X POST repos/JosepMariaBlasco/oorexxwasm/actions/workflows/suite.yml/dispatches \
@@ -187,7 +188,7 @@ jobs:
       - name: Test suite checkout (test/trunk r${{ env.REV }})
         run: svn export -q -r "$REV" https://svn.code.sf.net/p/oorexx/code-0/test/trunk "$ORX_WASM_WORK/oorexx-test"
       - name: Pack
-        run: tar -C "$ORX_WASM_WORK" -czf "$RUNNER_TEMP/windows-suite.tar.gz" build-wasm/bin-node-test oorexx-test
+        run: tar -C "$ORX_WASM_WORK" -czf "$RUNNER_TEMP/windows-suite.tar.gz" build-wasm/bin-node-test build-wasm/samples oorexx-test
       - uses: actions/upload-artifact@v7
         with:
           name: windows-suite-input
@@ -217,32 +218,23 @@ jobs:
         with:
           name: windows-suite-input
           path: input
-      - name: Unpack, launchers
+      - name: Unpack
         run: |
           W=$(cd .. && pwd); tar -C "$W" -xzf input/windows-suite.tar.gz
-          B=$(cygpath -w "$W/build-wasm/bin-node-test")
-          # launchers outside bin-node-test: there, cmd.exe would take
-          # rexx.js for the command "rexx" (.JS is in PATHEXT); the classes
-          # are found through REXX_PATH, rexx.img next to rexx.js
-          L=$W/launchers; mkdir -p "$L"
-          for t in rexx rexxc rxqueue rxsubcom; do
-            [[ $t == rexx ]] && f= || f=--orx-wasm-$t
-            printf '#!/usr/bin/env bash\nREXX_PATH="%s;$REXX_PATH" exec node "%s\\rexx.js" %s "$@"\n' "$B" "$B" "$f" > "$L/$t"
-            printf '@echo off\r\nset "REXX_PATH=%s;%%REXX_PATH%%"\r\nnode "%s\\rexx.js" %s %%*\r\n' "$B" "$B" "$f" > "$L/$t.cmd"
-            chmod +x "$L/$t"
-          done
-          cat "$L/rexxc" "$L/rexxc.cmd"
-          echo "$L" >> "$GITHUB_PATH"
-          "$L/rexx" -e 'parse version v; say v; say .RexxInfo~platform directory()'
+          # bin-node-test has the bash launchers and the .cmd ones (cmd.exe
+          # takes rexx.cmd before rexx.js: .CMD comes first in PATHEXT)
+          echo "$(cygpath -w "$W/build-wasm/bin-node-test")" >> "$GITHUB_PATH"
+          "$W/build-wasm/bin-node-test/rexx" -e 'parse version v; say v; say .RexxInfo~platform .RexxInfo~executable directory()'
       - name: Run the suite
         run: |
           W=$(cd .. && pwd)
-          ORX_WASM_WORK=$W tests/run-suite.sh "$W/launchers/rexx" "$RUNNER_TEMP/suite-windows" "$(nproc)" 300 "$PATTERN"
+          ORX_WASM_WORK=$W tests/run-suite.sh "$W/build-wasm/bin-node-test/rexx" "$RUNNER_TEMP/suite-windows" "$(nproc)" 300 "$PATTERN"
       - name: Compare with the node reference run
         run: |
           OUT=$RUNNER_TEMP/suite-windows
-          BASE=results/suite-wasm-r$REV-series.csv
-          { echo "## windows (Node on windows-latest; reference: node, test/trunk r$REV)"; echo; } >> "$GITHUB_STEP_SUMMARY"
+          BASE=results/suite-windows-r$REV-series.csv
+          [[ -f $BASE ]] || BASE=results/suite-wasm-r$REV-series.csv
+          { echo "## windows (Node on windows-latest, test/trunk r$REV)"; echo; echo "Reference: \`$BASE\`"; echo; } >> "$GITHUB_STEP_SUMMARY"
           python tests/suite-check.py "$BASE" "$OUT/results.csv" --pattern "$PATTERN" --md "$OUT/check.md"; rc=$?
           cat "$OUT/check.md" >> "$GITHUB_STEP_SUMMARY"
           exit $rc

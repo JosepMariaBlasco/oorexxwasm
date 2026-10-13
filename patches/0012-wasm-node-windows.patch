@@ -83,7 +83,20 @@ diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProce
  #endif
  
  #if defined(__EMSCRIPTEN__)
-@@ -605,7 +667,7 @@
+@@ -500,9 +562,10 @@
+     // WASM under Node: the `rexx` launcher next to rexx.js, if this file
+     // system can see it (NODERAWFS); realpath() below fails otherwise and
+     // the result is NULL (.nil), as in the browser.
+-    if (wasmScriptDirectory(path, sizeof(path) - 5))
++    // (Windows: rexx.cmd, wasm/build-node.sh makes both)
++    if (wasmScriptDirectory(path, sizeof(path) - 9))
+     {
+-        strcat(path, "rexx");
++        strcat(path, isWindowsHost() ? "rexx.cmd" : "rexx");
+     }
+ #else
+     // run Darwin/Solaris/BSD-specific functions to retrieve the path
+@@ -605,7 +668,7 @@
  #endif // __EMSCRIPTEN__
  
      // this is the file location with any symbolic links resolved.
@@ -92,7 +105,7 @@ diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProce
      if (modulePath == NULL)
      {
          return NULL;
-@@ -635,7 +697,7 @@
+@@ -635,7 +698,7 @@
      char dir[PATH_MAX];
      if (wasmScriptDirectory(dir, sizeof(dir)) && access(dir, F_OK) == 0)
      {
@@ -570,13 +583,52 @@ diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform
  
  // special return codes of wasmCommandRun
  #define WASM_CMD_NO_PROCESSES  (-100000)
-@@ -882,17 +892,34 @@
+@@ -882,17 +892,73 @@
  
      var file = args[0];
      var rest = args.slice(1);
 -    if (flags & 8)
 +    var win = process.platform === 'win32';
 +    var same = null;                           // Windows: the file for OUTPUT+ERROR
++    if (win && !(flags & 16))
++    {   // Windows, a program run directly (ADDRESS PATH, or a shell such as
++        // bash): Node finds an .exe in PATH, but a .cmd or .bat (npm's
++        // command shims, rexx.cmd ...) only runs through cmd.exe.  Look the
++        // name up as cmd.exe would (current directory, PATH, PATHEXT); no
++        // backslashes or double quotes in regular expressions in EM_JS code
++        var pth = require('path'), bs = String.fromCharCode(92), dq = String.fromCharCode(34);
++        var exts = (env.PATHEXT || '.COM;.EXE;.BAT;.CMD').split(';');
++        var named = file.indexOf('/') >= 0 || file.indexOf(bs) >= 0 || file.indexOf(':') >= 0;
++        var dirs = named ? [''] : [dir || process.cwd()].concat((env.PATH || '').split(';'));
++        var found = null;
++        for (var di = 0; di < dirs.length && !found; di++)
++        {
++            if (!named && !dirs[di]) continue;
++            var cands = (pth.extname(file) ? [''] : []).concat(exts);
++            for (var ei = 0; ei < cands.length && !found; ei++)
++            {
++                var c = dirs[di] ? pth.join(dirs[di], file + cands[ei]) : file + cands[ei];
++                try { if (fs.statSync(c).isFile()) found = c; } catch (e) { }
++            }
++        }
++        var low = found ? found.toLowerCase() : '';
++        if (found && (low.endsWith('.cmd') || low.endsWith('.bat')))
++        {
++            var quote = function(a) {
++                var special = ' &|<>^()%!,;=' + dq + String.fromCharCode(9);
++                var need = a.length === 0;
++                for (var i = 0; i < a.length && !need; i++) need = special.indexOf(a.charAt(i)) >= 0;
++                return need ? dq + a.split(dq).join(dq + dq) + dq : a;
++            };
++            rest = ['/d', '/s', '/c', dq + [found].concat(rest).map(quote).join(' ') + dq];
++            file = env.COMSPEC || 'cmd.exe';
++            flags |= 16;
++        }
++        else if (found)
++        {
++            file = found;
++        }
++    }
 +    if ((flags & 8) && !win)
      {   // OUTPUT and ERROR interleaved into one target
          rest = ['-c', 'exec 2>&1; exec "$0" "$@"', file].concat(rest);
@@ -608,7 +660,7 @@ diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform
      };
      if (flags & 1)
      {
-@@ -910,8 +937,17 @@
+@@ -910,8 +976,17 @@
      }
      catch (e)
      {
@@ -626,7 +678,7 @@ diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform
      globalThis.__orxCmd = [r.stdout || null, r.stderr || null];
      if (r.error)
      {
-@@ -971,9 +1007,10 @@
+@@ -971,9 +1046,10 @@
   * WASM version of the process part of ioCommandHandler (see above).
   */
  static RexxObjectPtr wasmCommandHandler(RexxExitContext *context, CSTRING commandString,
@@ -639,7 +691,7 @@ diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform
      CSTRING inputBuffer = NULL;
      size_t inputLength = 0;
  
-@@ -1080,6 +1117,44 @@
+@@ -1080,6 +1156,44 @@
              argv[1] = NULL;
          }
      }
@@ -684,7 +736,7 @@ diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform
      else
      {   // Set up the full path to the requested shell.
          strcpy(shell, SYSSHELLPATH);
-@@ -1106,7 +1181,7 @@
+@@ -1106,7 +1220,7 @@
      }
  
  #if defined(__EMSCRIPTEN__)
@@ -693,7 +745,7 @@ diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform
  #else
      if (ioContext->IsRedirectionRequested())
      {
-@@ -1321,6 +1396,13 @@
+@@ -1321,6 +1435,13 @@
      _instance->addCommandHandler("",        (REXXPFN)ioCommandHandler, HandlerType::REDIRECTING);
      _instance->addCommandHandler("COMMAND", (REXXPFN)ioCommandHandler, HandlerType::REDIRECTING);
      _instance->addCommandHandler("SYSTEM",  (REXXPFN)ioCommandHandler, HandlerType::REDIRECTING);
@@ -787,6 +839,43 @@ diff --git a/interpreter/runtime/RexxUtilCommon.cpp b/interpreter/runtime/RexxUt
      // validate the file specification
      validateFileSpec();
      // process the SysFileTreeOptions
+diff --git a/wasm/build-node.sh b/wasm/build-node.sh
+--- a/wasm/build-node.sh
++++ b/wasm/build-node.sh
+@@ -49,7 +49,8 @@
+ #   EXTRA_OBJECTS="a.o b.o" wasm/build-node.sh ...  (more objects to link in:
+ #   wasm/build-test.sh)
+ # Output: OUTDIR/{rexx.js,rexx.wasm,rexx.img,*.cls} and the launchers
+-#   rexx, rexxc, rxqueue, rxsubcom (shell scripts running node rexx.js)
++#   rexx, rexxc, rxqueue, rxsubcom (shell scripts running node rexx.js), and
++#   rexx.cmd ... for Windows
+ set -euo pipefail
+ SRC=$(cd "$(dirname "$0")/.." && pwd)
+ BUILD=$(cd "${1:-$SRC/build-wasm}" && pwd)
+@@ -91,6 +92,11 @@
+ PATH="\$DIR:\$PATH" exec node "\$DIR/rexx.js" ${2:+$2 }"\$@"
+ SH
+   chmod +x "$OUT/$1"
++  # and for Windows (cmd.exe, PowerShell): the classes via REXX_PATH, not
++  # PATH, where cmd.exe would take rexx.js for "rexx" (.JS is in PATHEXT);
++  # rexx.img is found next to rexx.js
++  printf '@echo off\r\nrem ooRexx/WASM %s (Node, host file system), for Windows\r\nsetlocal\r\nset "REXX_PATH=%%~dp0;%%REXX_PATH%%"\r\nnode "%%~dp0rexx.js" %s%%*\r\n' \
++    "$1" "${2:+$2 }" > "$OUT/$1.cmd"
+ }
+ launcher rexx
+ # multi-call tools of the same rexx.js/rexx.wasm (see wasm/rexxc-main.cpp)
+diff --git a/wasm/build-test.sh b/wasm/build-test.sh
+--- a/wasm/build-test.sh
++++ b/wasm/build-test.sh
+@@ -192,6 +192,8 @@
+ PATH="$DIR:$PATH" exec node "$DIR/rexx.js" --orx-wasm-rexxinstance "$@"
+ SH
+   chmod +x "$BUILD/bin-node-test/rexxinstance"
++  printf '@echo off\r\nsetlocal\r\nset "REXX_PATH=%%~dp0;%%REXX_PATH%%"\r\nnode "%%~dp0rexx.js" --orx-wasm-rexxinstance %%*\r\n' \
++    > "$BUILD/bin-node-test/rexxinstance.cmd"
+ fi
+ if [[ $WHICH != node ]]; then
+   EXTRA_OBJECTS="${objects[*]}" "$SRC/wasm/build-web.sh" "$BUILD" "$BUILD/bin-web-test"
 diff --git a/wasm/node-pre.js b/wasm/node-pre.js
 --- a/wasm/node-pre.js
 +++ b/wasm/node-pre.js

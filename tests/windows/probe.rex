@@ -77,6 +77,14 @@ call probe "rexx compiled",          "address system 'rexx probe-c.rxc' with out
 call probe "rexx source",            "address system 'rexx probe-c.rex' with output stem o. error stem e.; return rc o.0 e.0 o.1"
 call probe "compiled exists",        "return SysFileExists('probe-c.rxc') stream('probe-c.rxc', 'c', 'query size')"
 
+-- other processes and the session queue (RXQUEUESESSION), through the daemon
+call probe "RXQUEUESESSION",         "return value('RXQUEUESESSION',,'ENVIRONMENT')"
+call probe "echo | rxqueue",         "address cmd 'echo piped| rxqueue'; n = queued(); if n > 0 then parse pull x; return rc n x"
+call probe "rxqueue /fifo, INPUT",   "address cmd 'rxqueue /fifo' with input using (('a', 'b')); n = queued(); do queued(); pull .; end; return rc n"
+call probe "a child queues",         "address cmd 'rexx -e ""queue ''fromchild''""'; n = queued(); if n > 0 then parse pull x; return rc n x"
+call probe "ADDRESS PATH rexxc",     "address path 'rexxc' with output stem o. error stem e.; return rc o.0 e.0"
+call probe "executable",             "return .RexxInfo~executable"
+
 -- the queues (the session queue; a named queue needs the RexxAPI daemon)
 call probe "session queue",         "push 'pushed'; parse pull x; return x"
 call probe "named queue (daemon)",  "n = .RexxQueue~create; q = .RexxQueue~new(n); q~queue('hi'); y = q~pull; .RexxQueue~delete(n); return y"
