@@ -71,6 +71,9 @@ jobs:
       - name: rexx -v
         continue-on-error: true
         run: set +e; rexx -v; echo "exit status $?"
+      - name: paths traced (ORX_WASM_DEBUG_PATHS, temporary)
+        continue-on-error: true
+        run: set +e; ORX_WASM_DEBUG_PATHS=1 rexx -e "say directory()"; echo "exit status $?"
       - name: probe (Git Bash)
         continue-on-error: true
         run: set +e; mkdir -p scratch && cd scratch && rexx ../pkg/tests/probe.rex; echo "exit status $?"

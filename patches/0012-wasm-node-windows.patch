@@ -92,8 +92,22 @@ diff -ruN a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProces
      if (modulePath == NULL)
      {
          return NULL;
-@@ -635,7 +697,7 @@
+@@ -633,9 +695,21 @@
+ #if defined(__EMSCRIPTEN__)
+     // WASM: the directory of rexx.js, if this file system can see it
      char dir[PATH_MAX];
++    // TEMPORARY (Windows bring-up): ORX_WASM_DEBUG_PATHS traces this
++    if (getenv("ORX_WASM_DEBUG_PATHS") != NULL)
++    {
++        int got = wasmScriptDirectory(dir, sizeof(dir));
++        char cwd[PATH_MAX];
++        fprintf(stderr, "[paths] windowsHost=%d scriptDirectory=%d '%s' access=%d errno=%d\n",
++                (int)isWindowsHost(), got, got ? dir : "", got ? access(dir, F_OK) : -2, errno);
++        char *rp = got ? realPath(dir) : NULL;
++        fprintf(stderr, "[paths] realPath='%s' getcwd='%s' PATH='%s'\n", rp ? rp : "(null)",
++                getcwd(cwd, sizeof(cwd)) ? cwd : "(null)", getenv("PATH") ? getenv("PATH") : "(null)");
++        free(rp);
++    }
      if (wasmScriptDirectory(dir, sizeof(dir)) && access(dir, F_OK) == 0)
      {
 -        char *resolved = realpath(dir, NULL);
@@ -451,7 +465,19 @@ diff -ruN a/interpreter/platform/unix/SysFileSystem.cpp b/interpreter/platform/u
      return strrchr(name, PathDelimiter);             // find the last backslash in name
  }
  
-@@ -1772,6 +1964,16 @@
+@@ -1760,6 +1952,11 @@
+  */
+ const char* SysFileSystem::getPathStart(const char *name)
+ {
++    // Windows host: after a drive letter (FILESPEC('Drive') is "C:")
++    if (SysProcess::isWindowsHost() && isalpha((unsigned char)name[0]) && name[1] == ':')
++    {
++        return name + 2;
++    }
+     // this always starts with the name
+     return name;
+ }
+@@ -1772,6 +1969,16 @@
   */
  bool SysFileSystem::getTemporaryPath(FileNameBuffer &temporary)
  {
