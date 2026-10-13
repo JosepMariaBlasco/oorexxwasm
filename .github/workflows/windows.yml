@@ -118,6 +118,16 @@ jobs:
           node -e "const r=require('child_process').spawnSync(process.env.ComSpec,['/d','/s','/c','\"rexx -v\"'],{windowsVerbatimArguments:true});console.log(JSON.stringify([r.status,String(r.stdout).length,String(r.stderr)]))"
           echo "--- from Rexx"
           rexx -e "address cmd 'rexx six.rex' with output stem o.; say rc o.0 o.1; address cmd 'node -e ""console.log(41+1)""' with output stem o.; say rc o.0 o.1"
+          cat > nest.rex <<'EOF'
+          lib = arg(1)
+          address cmd 'rexx six.rex' with output stem o. error stem e.; say 'a' rc o.0 o.1 '|' e.0 e.1
+          address cmd 'rexx six.rex > out2.txt'; say 'b' rc linein('out2.txt') stream('out2.txt','c','query size'); call stream 'out2.txt', 'c', 'close'
+          address cmd 'node "'lib'/rexx.js" six.rex' with output stem o. error stem e.; say 'c' rc o.0 o.1 '|' e.0 e.1
+          address cmd 'rexx six.rex'; say 'd (to the terminal)' rc
+          address cmd 'set' with output stem o.; do i = 1 to o.0; if pos('ORX', o.i) > 0 | pos('NODE', o.i) > 0 then say 'env' o.i; end
+          address path 'node' lib'/rexx.js' 'six.rex' with output stem o. error stem e.; say 'f' rc o.0 o.1 '|' e.0 e.1
+          EOF
+          sed -i 's/^          //' nest.rex; rexx nest.rex "$(cygpath -m "$lib")"
       - name: Smoke test
         continue-on-error: true
         run: set +e; cd scratch && rexx ../pkg/tests/smoke.rex; echo "exit status $?"
