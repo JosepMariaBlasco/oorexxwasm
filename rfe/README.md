@@ -10,6 +10,7 @@ the test results and a link to the patches at the commit they describe.
 
 | Date | Update |
 |---|---|
+| 2026-10-13 | [Node on Windows, patch 8 of the RFE](2026-10-13/update.md) |
 | 2026-10-12 | [The JavaScript bridge is now patch 7 of the RFE](2026-10-12/update.md) |
 | 2026-10-11 (2) | [A sixth patch, the API test groups run, prefixes for Rexx's output](2026-10-11-2/update.md) |
 | 2026-10-11 | [The five patches on Emscripten 6.0.12, tested on r13268](2026-10-11/update.md) |

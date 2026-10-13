@@ -1,0 +1,38 @@
+group,native,node,chromium,firefox,webkit,windows,category,why
+ooRexx/API/oo/METHOD.testGroup,ok,ok,fail 1/0,fail 1/0,fail 1/0,ok,processes,TEST_REXXC_WITH_NEWROUTINE_LOADPACKAGEFROMDATA: rexxc RC 127 (the API groups need wasm/build-test.sh's bin-web-test)
+ooRexx/API/oo/ProcessInvocation.testGroup,ok,ok,fail 54/0,fail 54/0,fail 54/0,ok,processes,runs testbinaries' rexxinstance as a command
+ooRexx/API/oo/ProcessRexxStart.testGroup,ok,ok,fail 20/0,fail 20/0,fail 20/0,ok,processes,runs testbinaries' rexxinstance as a command
+ooRexx/base/bif/ADDRESS.testGroup,ok,ok,ok,ok,ok,fail 1/0,,
+ooRexx/base/bif/ARG.testGroup,ok,ok,fail 1/0,fail 1/0,fail 1/0,ok,processes,TEST_EXTERNAL_CALLS: RC 127 for an external command
+ooRexx/base/bif/CHAROUT.testGroup,fail 1/0,fail 1/0,fail 0/1,fail 0/1,fail 0/1,fail 1/0,processes,'rexx delMe...rex' failed with RC 127
+ooRexx/base/bif/CONDITION.testGroup,ok,ok,fail 2/1,fail 2/1,fail 2/1,ok,processes,"external command raises FAILURE (RC 127), test expects ERROR"
+ooRexx/base/bif/LINEIN.testGroup,ok,ok,fail 1/0,fail 1/0,fail 1/0,ok,processes,'echo hello hello>' file: no command
+ooRexx/base/bif/LINEOUT.testGroup,fail 1/0,fail 1/0,ok,ok,ok,fail 1/0,,
+ooRexx/base/bif/QUALIFY.testGroup,ok,ok,ok,ok,ok,fail 1/0,,
+ooRexx/base/bif/STREAM.testGroup,ok,ok,fail 0/4,fail 0/4,fail 0/4,fail 4/0,processes,'id -u' failed with RC 127
+ooRexx/base/class/File.testGroup,ok,fail 3/0,fail 4/0,fail 4/0,fail 3/0,fail 11/0,"processes, memfs, flaky",searchPath('sh'): no shell on PATH; *_FRACTIONS: MEMFS file times read back in whole ms (one of them passes by chance now and then: 3 or 4 failures)
+ooRexx/base/class/Method.testGroup,ok,ok,fail 0/2,fail 0/2,fail 0/2,ok,processes,rexxc: RC 127
+ooRexx/base/class/MutexSemaphore.testGroup,ok,ok,ok,ok,ok,timeout,"upstream, flaky","hangs at interpreter termination under load, as natively (todo 10)"
+ooRexx/base/class/RexxInfo.testGroup,ok,ok,fail 1/0,fail 1/0,fail 1/0,fail 1/0,install,TEST_REXXINFO_EXECUTABLE: executable expected to be a File (it is .nil)
+ooRexx/base/class/RexxInteger.testGroup,ok,ok,ok,ok,ok,fail 1/0,upstream,"TEST_INTEGER_TIME with TZ=UTC (bug #2110): on 32-bit builds (wasm32) TIME('O') is a String, never a RexxInteger; the test expects one when the offset is 0. Any other time zone passes"
+ooRexx/base/class/RexxQueue.testGroup,ok,ok,fail 0/1,fail 0/1,fail 0/1,ok,processes,'rexx -e ...' RC 127
+ooRexx/base/class/Routine.testGroup,ok,ok,fail 0/2,fail 0/2,fail 0/2,ok,processes,rexxc: RC 127
+ooRexx/base/class/Stream.testGroup,ok,ok,fail 0/8,fail 0/8,fail 0/8,fail 7/0,processes,'id -u' / 'rexx ...' RC 127
+ooRexx/base/directives/OPTIONS.testGroup,ok,ok,fail 2/6,fail 2/6,fail 2/6,fail 1/0,processes,command results RC 127
+ooRexx/base/keyword/ADDRESS.testGroup,ok,ok,fail 23/0,fail 23/0,fail 23/0,fail 5/0,processes,"shell commands (cd, exit, cat, sort...) RC 127"
+ooRexx/base/keyword/CALL.testGroup,ok,ok,fail 1/0,fail 1/0,ok,ok,stack,"TEST_STACKSIZE: Error 11 at ~900 (Chromium), ~1300 (Firefox) levels; WebKit passes (~5000) or not (3614 with the WebKit of the GitHub runners): it depends on the engine build"
+ooRexx/base/keyword/PARSE.testGroup,ok,ok,fail 1/0,fail 1/0,fail 1/0,ok,processes,external command RC 127
+ooRexx/base/keyword/SIGNAL.testGroup,ok,ok,fail 0/1,fail 0/1,fail 0/1,ok,processes,command FAILURE
+ooRexx/base/keyword/TRACE.testGroup,ok,ok,ok,ok,fail 1/0,ok,flaky,TEST_TRACE_LABEL_WITH_FORWARD: trace line count depends on thread timing (also seen under Node)
+ooRexx/base/rexxutil/Macrospace.testGroup,ok,ok,fail 0/1,fail 0/1,fail 0/1,ok,processes,'rexx -e ...' RC 127
+ooRexx/base/rexxutil/SysSearchPath.testGroup,ok,ok,fail 1/0,fail 1/0,fail 1/0,fail 1/0,processes,"SysSearchPath('PATH', 'sh'): no shell"
+ooRexx/base/runtime.objects/environmentEntries.testGroup,ok,ok,fail 1/0,fail 1/0,fail 1/0,ok,processes,address '' 'exit': .rs -1
+ooRexx/base/source.file/incorrectCharacters.testGroup,ok,ok,fail 0/1,fail 0/1,fail 0/1,ok,processes,'rexx ...' RC 127
+ooRexx/base/special.variables/RESULT_RC_SIGL.testGroup,ok,ok,fail 1/0,fail 1/0,fail 1/0,ok,processes,external rexx RC 127
+ooRexx/extensions/rxsock/socketClass.testGroup,ok,ok,fail 9/0,fail 9/0,fail 9/0,ok,sockets,server/client tests (no listen) and socket options (.nil)
+ooRexx/regressions/bug2003_guard_when.testGroup,ok,ok,fail 0/1,fail 0/1,fail 0/1,ok,processes,'rexx guard_when.rex' RC 127
+ooRexx/samples/samples.testGroup,ok,ok,fail 29/0,fail 29/0,fail 29/0,ok,processes,the samples are run as a rexx process (and are not in the browser's file system)
+ooRexx/utilities/rexx/rexx_command.testGroup,ok,ok,fail 0/28,fail 0/28,fail 0/28,ok,processes,runs rexx as a command
+ooRexx/utilities/rexxc/rexxc.testGroup,ok,ok,fail 0/8,fail 0/8,fail 0/8,ok,processes,runs rexxc as a command
+ooRexx/utilities/rxqueue/rxQueue.testGroup,ok,ok,fail 0/8,fail 0/8,fail 0/8,fail 1/0,processes,runs rxqueue as a command
+ooRexx/utilities/rxsubcom/rxsubcom.testGroup,ok,ok,fail 7/0,fail 7/0,fail 7/0,ok,processes,runs rxsubcom as a command
