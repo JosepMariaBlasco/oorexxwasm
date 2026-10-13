@@ -839,6 +839,69 @@ diff --git a/interpreter/runtime/RexxUtilCommon.cpp b/interpreter/runtime/RexxUt
      // validate the file specification
      validateFileSpec();
      // process the SysFileTreeOptions
+diff --git a/rexxapi/common/platform/unix/SysNodeConnection.cpp b/rexxapi/common/platform/unix/SysNodeConnection.cpp
+--- a/rexxapi/common/platform/unix/SysNodeConnection.cpp
++++ b/rexxapi/common/platform/unix/SysNodeConnection.cpp
+@@ -261,6 +261,10 @@
+         {
+             var path = UTF8ToString(i32()[p + 2]);
+             var lock = path + '.lock';
++            // Windows: a named pipe, not a file; the lock goes to the
++            // temporary directory, and there is no socket file to watch
++            var win = process.platform === 'win32';
++            if (win) lock = require('path').join(require('os').tmpdir(), path.substring(path.lastIndexOf(String.fromCharCode(92)) + 1) + '.lock');
+             var listen = function() {
+                 // single daemon per service: a lock file holding our pid
+                 try
+@@ -296,7 +300,7 @@
+                     try { fs.writeFileSync(lock, String(process.pid), { mode: 0o600 }); }
+                     catch (e4) { done(-1); return; }
+                 }
+-                try { fs.unlinkSync(path); } catch (e) {}
++                if (!win) try { fs.unlinkSync(path); } catch (e) {}
+                 var srv = { server: null, pending: [], waiter: null, path: path, lock: lock };
+                 var server = net.createServer(function(sock) {
+                     var sid = addSocket(sock);
+@@ -309,6 +313,7 @@
+                     done(-1);
+                 });
+                 server.listen(path, function() {
++                    if (win) { var wsid = st.next++; st.servers.set(wsid, srv); done(wsid); return; }
+                     try { fs.chmodSync(path, 0o600); } catch (e) {}
+                     var ino = 0;
+                     try { ino = fs.statSync(path).ino; } catch (e) {}
+@@ -352,7 +357,7 @@
+             {
+                 st.servers.delete(id);
+                 try { srv.server.close(); } catch (e) {}
+-                try { fs.unlinkSync(srv.path); } catch (e) {}
++                if (process.platform !== 'win32') try { fs.unlinkSync(srv.path); } catch (e) {}
+                 try { fs.unlinkSync(srv.lock); } catch (e) {}
+                 if (srv.waiter) { var w = srv.waiter; srv.waiter = null; w(-1); }
+             }
+@@ -374,7 +379,7 @@
+                 }
+                 var child = require('child_process').spawn(process.execPath,
+                     [script, '--orx-wasm-rxapi'],
+-                    { detached: true, stdio: ['ignore', 'ignore', err], cwd: '/' });
++                    { detached: true, stdio: ['ignore', 'ignore', err], cwd: '/', windowsHide: true });
+                 if (typeof err === 'number') fs.closeSync(err);
+                 child.on('error', function() {});
+                 child.unref();
+@@ -493,6 +498,13 @@
+     var user;
+     try { user = os.userInfo().username; } catch (e) { user = String(process.getuid ? process.getuid() : 0); }
+     var name = dir + '/.ooRexx-' + ver + '.' + rel + '.' + mod + '-wasm-' + user + '.service';
++    // Windows: Node's local sockets are named pipes, in their own namespace
++    // (no backslashes in EM_JS code: the preprocessor passes them on as is)
++    if (process.platform === 'win32')
++    {
++        var bs = String.fromCharCode(92);
++        name = bs + bs + '.' + bs + 'pipe' + bs + '.ooRexx-' + ver + '.' + rel + '.' + mod + '-wasm-' + user + '.service';
++    }
+     if (lengthBytesUTF8(name) >= size) return 0;
+     stringToUTF8(name, buf, size);
+     return 1;
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
