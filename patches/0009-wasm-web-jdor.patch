@@ -79,10 +79,10 @@ index 786af1f..e949832 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index d0a2cda..5d6085c 100644
+index b08c041..d9042bc 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -224,7 +224,58 @@ off, or changes the strings.
+@@ -227,7 +227,58 @@ off, or changes the strings.
  isolated (see above).  `wasm/tests/web-api.py BIN_WEB` runs assertions over the
  API in headless Chromium (Python Playwright): output, interactive and fixed
  stdin, EOF, stop, threads, files in and out, extension classes, rexxtry,
@@ -142,7 +142,7 @@ index d0a2cda..5d6085c 100644
  
  ## The test suite's API groups (`wasm/build-test.sh`)
  
-@@ -435,7 +486,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -439,7 +490,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.

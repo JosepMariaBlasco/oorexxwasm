@@ -20,15 +20,15 @@ sessions by pid).  qualify-node-cli.sh checks queues across processes.
  rexxapi/client/LocalAPIManager.cpp            |  14 +
  .../platform/unix/SysLocalAPIManager.cpp      |  42 +-
  .../platform/unix/SysLocalAPIManager.hpp      |   4 +
- .../platform/unix/SysNodeConnection.cpp       | 782 ++++++++++++++++++
+ .../platform/unix/SysNodeConnection.cpp       | 850 ++++++++++++++++++
  .../platform/unix/SysNodeConnection.hpp       |  89 ++
  utilities/rexx/platform/unix/rexx.cpp         |  29 +-
- wasm/README.md                                |  16 +-
+ wasm/README.md                                |  19 +-
  wasm/build-node.sh                            |   7 +-
  wasm/rxqueue-main.cpp                         |  43 +
  wasm/rxsubcom-main.cpp                        |  43 +
  wasm/tests/qualify-node-cli.sh                |  13 +
- 13 files changed, 1112 insertions(+), 16 deletions(-)
+ 13 files changed, 1183 insertions(+), 16 deletions(-)
  create mode 100644 rexxapi/common/platform/unix/SysNodeConnection.cpp
  create mode 100644 rexxapi/common/platform/unix/SysNodeConnection.hpp
  create mode 100644 wasm/rxqueue-main.cpp
@@ -230,10 +230,10 @@ index 339f053..87ca6c7 100644
  #endif
 diff --git a/rexxapi/common/platform/unix/SysNodeConnection.cpp b/rexxapi/common/platform/unix/SysNodeConnection.cpp
 new file mode 100644
-index 0000000..e2bbb47
+index 0000000..01582d1
 --- /dev/null
 +++ b/rexxapi/common/platform/unix/SysNodeConnection.cpp
-@@ -0,0 +1,782 @@
+@@ -0,0 +1,850 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -256,14 +256,20 @@ index 0000000..e2bbb47
 +/* a Unix socket next to the native one (".ooRexx-V.R.M-wasm-USER.service"),  */
 +/* and clients connect to it; the daemon is launched on first use, detached. */
 +/*                                                                            */
-+/* Sockets live on the JS main thread (Node's net is asynchronous and needs  */
-+/* the event loop, which is free: the interpreter runs on a pthread).        */
-+/* Connect, listen, accept and close are proxied to the main thread with     */
++/* Sockets live on an I/O thread of their own: a pthread that stays in its   */
++/* event loop (Node's net is asynchronous and needs one).  Not the JS main   */
++/* thread: that one may be busy waiting for a Rexx thread (a synchronous     */
++/* JavaScript handler, wasm/web-js.cpp), and the Rexx thread may be waiting  */
++/* for rxapi (a queue, the macrospace lookup of any external call), whose    */
++/* reply would then never arrive.  The I/O thread is started at the first   */
++/* operation, or earlier by the JavaScript bridge (orxNetIoStart), as it     */
++/* takes the main thread to start a pthread.                                 */
++/* Connect, listen, accept and close are proxied to the I/O thread with      */
 +/* emscripten_proxy_sync_with_ctx(); the JS side completes them              */
 +/* asynchronously and calls orxNetFinish(ctx), releasing the blocked caller. */
 +/* The data path avoids those round trips (each costs a postMessage wakeup  */
-+/* of the main thread): write() calls write(2) on the socket's host fd       */
-+/* directly from the calling thread (fs.writeSync), and the main thread      */
++/* of the I/O thread): write() calls write(2) on the socket's host fd        */
++/* directly from the calling thread (fs.writeSync), and the I/O thread       */
 +/* copies incoming data into a per-connection receive ring in wasm memory    */
 +/* (NodeRing) that read() consumes, sleeping on a futex when it is empty.    */
 +/* Thus read() blocks like recv(), one server thread per connection works as */
@@ -285,6 +291,8 @@ index 0000000..e2bbb47
 +#include <emscripten.h>
 +#include <emscripten/proxying.h>
 +#include <emscripten/threading.h>
++#include <climits>
++#include <pthread.h>
 +#include <stdlib.h>
 +#include <stdio.h>
 +#include <stdint.h>
@@ -323,9 +331,9 @@ index 0000000..e2bbb47
 +}
 +
 +/*
-+ * Receive ring of a connection: the main thread copies incoming socket data
++ * Receive ring of a connection: the I/O thread copies incoming socket data
 + * into it (single producer) and the thread reading the connection consumes
-+ * it (single consumer) without a round trip to the main thread.  head and
++ * it (single consumer) without a round trip to the I/O thread.  head and
 + * tail are byte counters (mod 2^32); seq changes (and is notified) on every
 + * producer update, so a reader can sleep on it without missing one.
 + * Layout read by JS by offset: seq 0, head 4, tail 8, state 12, data 16.
@@ -344,7 +352,7 @@ index 0000000..e2bbb47
 +
 +
 +/**
-+ * Called by the JS side (on the main thread) when an operation is complete.
++ * Called by the JS side (on the I/O thread) when an operation is complete.
 + */
 +extern "C" EMSCRIPTEN_KEEPALIVE void orxNetFinish(em_proxying_ctx *ctx)
 +{
@@ -352,12 +360,14 @@ index 0000000..e2bbb47
 +}
 +
 +
-+// Start operation `op` on the main thread; ctx is finished when it is done
-+// (possibly later, from an event handler).  ctx is 0 for a synchronous call
-+// made on the main thread itself (only used for OP_CLOSE).
++// Start operation `op` on the I/O thread (or the main thread, if there is no
++// I/O thread); ctx is finished when it is done (possibly later, from an event
++// handler).  ctx is 0 for a synchronous call made on that thread itself (only
++// used for OP_CLOSE).
 +EM_JS(void, orxNetStart, (em_proxying_ctx *ctx, void *op), {
-+    var net = require('net');
-+    var fs = require('fs');
++    var mod = process.getBuiltinModule || require;
++    var net = mod('net');
++    var fs = mod('fs');
 +    var st = globalThis.__orxNet;
 +    if (!st)
 +    {
@@ -549,11 +559,12 @@ index 0000000..e2bbb47
 +                    var ino = 0;
 +                    try { ino = fs.statSync(path).ino; } catch (e) {}
 +                    // if our socket file disappears or is replaced, nobody can
-+                    // reach us any more: go away instead of lingering
++                    // reach us any more: go away instead of lingering (the
++                    // whole process: process.exit() would end only this thread)
 +                    var timer = setInterval(function() {
 +                        var gone = true;
 +                        try { gone = fs.statSync(path).ino !== ino; } catch (e) {}
-+                        if (gone) process.exit(0);
++                        if (gone) process.kill(process.pid, 'SIGTERM');
 +                    }, 30000);
 +                    if (timer.unref) timer.unref();
 +                    var sid = st.next++;
@@ -605,10 +616,10 @@ index 0000000..e2bbb47
 +                var err = 'ignore';
 +                if (process.env.ORX_WASM_RXAPI_DEBUG)
 +                {
-+                    try { err = fs.openSync(require('os').tmpdir() + '/orx-wasm-rxapi-debug.log', 'a'); }
++                    try { err = fs.openSync(mod('os').tmpdir() + '/orx-wasm-rxapi-debug.log', 'a'); }
 +                    catch (e) { err = 'ignore'; }
 +                }
-+                var child = require('child_process').spawn(process.execPath,
++                var child = mod('child_process').spawn(process.execPath,
 +                    [script, '--orx-wasm-rxapi'],
 +                    { detached: true, stdio: ['ignore', 'ignore', err], cwd: '/' });
 +                if (typeof err === 'number') fs.closeSync(err);
@@ -627,38 +638,95 @@ index 0000000..e2bbb47
 +});
 +
 +
++extern "C" int orxNetIoStart();
++
 +namespace
 +{
-+void runOnMain(em_proxying_ctx *ctx, void *arg)
++// the I/O thread: 0 not started, 1 starting, 2 running, -1 failed to start
++// (the sockets then live on the main thread, as they used to)
++int32_t ioState = 0;
++pthread_t ioThread;
++
++void *ioMain(void *)
++{
++    __atomic_store_n(&ioState, 2, __ATOMIC_SEQ_CST);
++    emscripten_futex_wake(&ioState, INT_MAX);
++    // stay in this thread's event loop, running the operations proxied here
++    emscripten_exit_with_live_runtime();
++    return NULL;
++}
++
++void runOnIo(em_proxying_ctx *ctx, void *arg)
 +{
 +    orxNetStart(ctx, (NodeOp *)arg);
 +}
 +
 +/**
-+ * Run a socket operation on the main thread and wait for its completion.
++ * Run a socket operation on the I/O thread and wait for its completion.
 + */
 +int32_t nodeOp(NodeOp &op)
 +{
 +    op.result = -1;
 +    if (emscripten_is_main_runtime_thread())
 +    {
-+        // the main thread cannot wait for its own event loop; only the
-+        // synchronous operations can be done here (e.g. closing connections
-+        // from the exit-time destructor)
-+        if (op.op == OP_CLOSE || op.op == OP_CLOSE_SERVER)
++        // the main thread cannot wait for an event loop; only closing can be
++        // done from here (e.g. the exit-time destructor), and only if the
++        // sockets are its own; otherwise the process's end closes them
++        if ((op.op == OP_CLOSE || op.op == OP_CLOSE_SERVER) &&
++            __atomic_load_n(&ioState, __ATOMIC_SEQ_CST) != 2)
 +        {
 +            orxNetStart(NULL, &op);
 +            return op.result;
 +        }
-+        return -1;
++        return op.op == OP_CLOSE || op.op == OP_CLOSE_SERVER ? 0 : -1;
 +    }
-+    if (!emscripten_proxy_sync_with_ctx(emscripten_proxy_get_system_queue(),
-+                                        emscripten_main_runtime_thread_id(), runOnMain, &op))
++    pthread_t target = orxNetIoStart() ? ioThread : emscripten_main_runtime_thread_id();
++    if (!emscripten_proxy_sync_with_ctx(emscripten_proxy_get_system_queue(), target, runOnIo, &op))
 +    {
 +        return -1;
 +    }
 +    return op.result;
 +}
++}
++
++
++/**
++ * Start the I/O thread, if not started yet, and wait until it runs.  Starting
++ * a pthread takes the JS main thread, so this must happen while that thread is
++ * free: at the first RexxAPI operation, or earlier (the JavaScript bridge calls
++ * it before its first request, as the main thread may later wait for Rexx
++ * threads).  Under Node only; true if the I/O thread runs.
++ */
++extern "C" int orxNetIoStart()
++{
++    int32_t state = __atomic_load_n(&ioState, __ATOMIC_SEQ_CST);
++    if (state == 2)
++    {
++        return 1;
++    }
++    if (state == 0 && (emscripten_is_main_runtime_thread() || !SysNodeConnection::available()))
++    {
++        return 0;
++    }
++    int32_t expected = 0;
++    if (__atomic_compare_exchange_n(&ioState, &expected, 1, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
++    {
++        pthread_attr_t attr;
++        pthread_attr_init(&attr);
++        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
++        pthread_attr_setstacksize(&attr, 64 * 1024);
++        if (pthread_create(&ioThread, &attr, ioMain, NULL) != 0)
++        {
++            __atomic_store_n(&ioState, -1, __ATOMIC_SEQ_CST);
++            emscripten_futex_wake(&ioState, INT_MAX);
++        }
++        pthread_attr_destroy(&attr);
++    }
++    while ((state = __atomic_load_n(&ioState, __ATOMIC_SEQ_CST)) == 1)
++    {
++        emscripten_futex_wait(&ioState, 1, 100.0);
++    }
++    return state == 2;
 +}
 +
 +
@@ -835,7 +903,7 @@ index 0000000..e2bbb47
 +
 +/**
 + * Read from the receive ring: what is there (up to bufsize), else sleep until
-+ * the main thread adds data.  0 at end of file, -1 on failure.
++ * the I/O thread adds data.  0 at end of file, -1 on failure.
 + */
 +int SysNodeSocketConnection::readRing(void *buf, size_t bufsize)
 +{
@@ -861,7 +929,7 @@ index 0000000..e2bbb47
 +        int32_t state = __atomic_load_n(&ring->state, __ATOMIC_SEQ_CST);
 +        if (state & NODE_RING_PENDING)
 +        {
-+            // the ring was full: have the main thread move the rest in
++            // the ring was full: have the I/O thread move the rest in
 +            NodeOp op = { OP_PUMP, id, NULL, NULL, 0, 0, NULL, 0 };
 +            if (nodeOp(op) < 0)
 +            {
@@ -896,8 +964,8 @@ index 0000000..e2bbb47
 +    int32_t result;
 +    if (fd >= 0 && !emscripten_is_main_runtime_thread())
 +    {
-+        // write(2) straight from this thread: no round trip to the main
-+        // thread (the main thread only ever reads this socket)
++        // write(2) straight from this thread: no round trip to the I/O
++        // thread (the I/O thread only ever reads this socket)
 +        result = orxNetWriteDirect(fd, buf, (int32_t)bufsize, buf2, (int32_t)buf2size);
 +    }
 +    else
@@ -1018,7 +1086,7 @@ index 0000000..e2bbb47
 +#endif
 diff --git a/rexxapi/common/platform/unix/SysNodeConnection.hpp b/rexxapi/common/platform/unix/SysNodeConnection.hpp
 new file mode 100644
-index 0000000..252a7ea
+index 0000000..492f36f
 --- /dev/null
 +++ b/rexxapi/common/platform/unix/SysNodeConnection.hpp
 @@ -0,0 +1,89 @@
@@ -1034,11 +1102,11 @@ index 0000000..252a7ea
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* WASM under Node: RexxAPI connections over a Unix domain socket, using      */
-+/* Node's net module on the JS main thread.  The interpreter (and the rxapi   */
-+/* daemon) run on pthreads; each operation is proxied to the main thread and  */
-+/* the calling thread blocks until the asynchronous socket operation is done  */
-+/* (emscripten_proxy_sync_with_ctx), so the protocol code and APIServer are   */
-+/* used unchanged.  See SysNodeConnection.cpp.                                */
++/* Node's net module on an I/O thread of their own.  The interpreter (and the */
++/* rxapi daemon) run on pthreads; each operation is proxied to the I/O thread */
++/* and the calling thread blocks until the asynchronous socket operation is  */
++/* done (emscripten_proxy_sync_with_ctx), so the protocol code and APIServer  */
++/* are used unchanged.  See SysNodeConnection.cpp.                            */
 +/*                                                                            */
 +/*----------------------------------------------------------------------------*/
 +
@@ -1084,7 +1152,7 @@ index 0000000..252a7ea
 +    int id;                // JS-side socket id, 0 when not connected
 +    int fd;                // its host file descriptor (-1: unknown), written
 +                           // directly from the calling thread
-+    NodeRing *ring;        // receive ring filled by the main thread
++    NodeRing *ring;        // receive ring filled by the I/O thread
 +
 +    int readRing(void *buf, size_t bufsize);
 +};
@@ -1162,7 +1230,7 @@ index 6d0b5ff..e78f195 100644
  #endif
  
 diff --git a/wasm/README.md b/wasm/README.md
-index 7ae0127..afc5a3d 100644
+index 7ae0127..e704208 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -13,9 +13,11 @@ transport for stream sockets.
@@ -1180,7 +1248,7 @@ index 7ae0127..afc5a3d 100644
  * user identity: Emscripten has no passwd database, so `getpwnam()` and
    `getpwuid()` are wrapped to return the user the process runs as (the host
    user under Node, the synthetic user `wasm` in the browser), for `USERID()`,
-@@ -104,6 +106,14 @@ entry of the same `rexx.js` (`wasm/rexxc-main.cpp`).  Error numbers seen by
+@@ -104,6 +106,17 @@ entry of the same `rexx.js` (`wasm/rexxc-main.cpp`).  Error numbers seen by
  Rexx programs (RC of CD, stream `ERROR:n`, SysMkDir, ...) are the Linux ones,
  not the WASI ones of the Emscripten libc (`HOST_ERRNO`).
  
@@ -1189,7 +1257,10 @@ index 7ae0127..afc5a3d 100644
 +Unix socket `$XDG_RUNTIME_DIR|$TMPDIR|/tmp/.ooRexx-5.3.0-wasm-USER.service`)
 +that outlives the session like `rxapi`.  `ORX_WASM_RXAPI=inprocess` keeps the
 +server in-process (not shared), which is also the fallback when the daemon
-+cannot be reached; `ORX_WASM_RXAPI_DEBUG=1` traces the transport.
++cannot be reached; `ORX_WASM_RXAPI_DEBUG=1` traces the transport.  The
++daemon's connections live on an I/O thread of their own (a pthread in its
++event loop), not on the JS main thread, so that the RexxAPI keeps working
++while that thread waits for a Rexx thread.
 +`bin-node/rxqueue` and `bin-node/rxsubcom` are multi-call entries as well.
 +
      ./wasm/build-node.sh /tmp/oorexx-wasm-build

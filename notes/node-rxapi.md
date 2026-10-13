@@ -27,16 +27,17 @@ macrospace seen by another interpreter could not work.
   keeps it apart from a native rxapi — handles are 32-bit pointers of the
   daemon's memory). Computed in JS from the host environment, so the MEMFS
   and NODERAWFS builds use the same daemon.
-- **Blocking I/O from pthreads**: Node's `net` is asynchronous and lives on
-  the JS main thread, which is idle (PROXY_TO_PTHREAD). The node socket
-  objects are only ever touched on the main thread. Connect, listen, accept
-  and close are proxied to it with `emscripten_proxy_sync_with_ctx()`; the JS
-  side completes the operation from socket events and calls
-  `orxNetFinish(ctx)`, releasing the blocked thread. Reads and writes avoid
-  the proxy (see "Fast path" below). `read()` blocks like `recv()`, and a
-  blocking PULL in the daemon only blocks its connection's thread. On the
-  main thread itself (exit-time destructor) only close is possible, done
-  synchronously.
+- **Blocking I/O from pthreads**: Node's `net` is asynchronous and needs an
+  event loop. The sockets live on an **I/O thread** of their own: a detached
+  pthread that calls `emscripten_exit_with_live_runtime()` and so stays in its
+  worker's event loop (see "The I/O thread" below). The node socket objects
+  are only ever touched there. Connect, listen, accept and close are proxied
+  to it with `emscripten_proxy_sync_with_ctx()`; the JS side completes the
+  operation from socket events and calls `orxNetFinish(ctx)`, releasing the
+  blocked thread. Reads and writes avoid the proxy (see "Fast path" below).
+  `read()` blocks like `recv()`, and a blocking PULL in the daemon only
+  blocks its connection's thread. On the JS main thread (exit-time
+  destructor) nothing is done: the process's end closes the sockets.
 - **Client** (`SysLocalAPIManager`): under Node, `newClientConnection()`
   connects to the daemon; if that fails, the normal
   `establishServerConnection()` logic calls `startServerProcess()`, which now
@@ -51,7 +52,9 @@ macrospace seen by another interpreter could not work.
   retire), or older than 10 s with nobody listening. Socket mode 0600.
 - **Lifetime**: the daemon stays resident, like native rxapi; there is no
   idle exit. It does exit if its socket file disappears or is replaced
-  (checked every 30 s), instead of lingering unreachable.
+  (checked every 30 s), instead of lingering unreachable (with
+  `process.kill(process.pid, 'SIGTERM')`: on the I/O thread,
+  `process.exit()` would end only that worker).
 - **Fallbacks** to the in-process server (unshared): browser (no
   `process`/`require`), `ORX_WASM_RXAPI=inprocess`, daemon cannot be
   launched, or not reachable after the retries.
@@ -67,19 +70,51 @@ macrospace seen by another interpreter could not work.
   fallback to stderr; the daemon started in that mode appends its trace to
   `$TMPDIR/orx-wasm-rxapi-debug.log`.
 
+## The I/O thread
+
+Until 13/10/2026 the sockets lived on the JS main thread, which looked idle
+(PROXY_TO_PTHREAD). It is not always: when JavaScript calls a Rexx method
+synchronously (a `.JSObject` handler used as a `sort` comparator, an
+override of `.js~extend`), the main thread waits in `js_sync_call` for the
+Rexx thread, and its event loop does not run. The daemon's replies, which
+arrive as `data` events, then never came:
+
+- the handler itself used the RexxAPI (a queue, or any external function:
+  their lookup asks the daemon for a macrospace function first): a hang,
+  every time;
+- another Rexx thread waited for the daemon holding the interpreter's kernel
+  lock (`RexxQueryMacro` in `RexxActivation::callMacroSpaceFunction` and
+  `PackageManager::loadRequires`; an ooRexx inconsistency, native too: there
+  every thread stops while rxapi answers), so the handler waited for the
+  lock: a hang, now and then (a stress test of `.js~extend` with four
+  threads, in its stop phase, when the main thread first called `SysSleep`).
+
+Found with the stacks of every thread at the hang: the Node inspector's
+`NodeWorker` domain attaches to the pthreads' workers and `Debugger.pause`
+interrupts even a thread blocked in `Atomics.wait`; a link with
+`--profiling-funcs` gives the wasm function names.
+
+The I/O thread fixes both, whatever the main thread does. Starting a pthread
+takes the main thread (a worker posts `spawnThread` to it), so it is started
+while that thread is free: by `orxNetIoStart()`, at the first RexxAPI
+operation and, before that, at the JavaScript bridge's first request (which
+cannot come from a handler). If it cannot be started, the sockets stay on the
+main thread, as before. Per-call costs are unchanged (queue/pull/queued/
+SysSleep about 70–150 µs each, before and after).
+
 ## Fast path for reads and writes
 
 A first version proxied every `ApiConnection` operation, reads and writes
-included, to the JS main thread. That costs a postMessage wakeup per
+included, to the JS main thread (now: to the I/O thread). That costs a postMessage wakeup per
 operation, and a request/reply needs at least four (client write + read,
 daemon read + write): ~0.45 ms per API call. The current design:
 
 - **Writes** go straight from the calling pthread: connect/accept report
   the socket's host fd (`sock._handle.fd`) and `write()` calls
   `fs.writeSync(fd, ...)` in an EM_JS on that thread (EAGAIN → 0.2 ms nap and
-  retry). The main thread only ever reads the socket, so nothing interleaves.
+  retry). The I/O thread only ever reads the socket, so nothing interleaves.
 - **Reads** use a per-connection receive ring (`NodeRing`, 64 KiB, allocated
-  by C and handed over in the connect/accept operation): the main thread's
+  by C and handed over in the connect/accept operation): the I/O thread's
   `data` handler copies into it (single producer), bumps `seq` and
   `Atomics.notify`s; `read()` (single consumer) copies out without any proxy
   and sleeps with `emscripten_futex_wait(&seq)` when empty. If the ring is

@@ -110,7 +110,7 @@ What the page *can* do is call Rexx without waiting: send the call, go on, and r
 
 This is why a handler in the page is always queued, and why the browser has finished dispatching an event by the time Rexx sees it.
 
-In the worker's realm and under Node, JavaScript does wait for a synchronous handler when a Rexx thread is waiting for JavaScript (a comparator for `sort`): that thread runs the method, and meanwhile it cannot wait for JavaScript in turn, since JavaScript is waiting for it. `~await` and the page are errors there. When JavaScript calls a handler on its own (a timer, a Node server), it does not wait: the realm's thread must stay free, because what finishes later (sockets, the page, the RexxAPI daemon under Node) needs it. So the method runs on a thread of its own, may wait for JavaScript, and JavaScript gets `undefined`. A condition there, or one an event listener does not pass on, is written on the standard error.
+In the worker's realm and under Node, JavaScript does wait for a synchronous handler when a Rexx thread is waiting for JavaScript (a comparator for `sort`): that thread runs the method, and meanwhile it cannot wait for JavaScript in turn, since JavaScript is waiting for it. `~await` and the page are errors there. Everything else may be used, the RexxAPI under Node included (queues, the lookup of external functions): its daemon's replies do not go through the realm's thread. When JavaScript calls a handler on its own (a timer, a Node server), it does not wait: the realm's thread must stay free, because what finishes later (sockets, the page) needs it. So the method runs on a thread of its own, may wait for JavaScript, and JavaScript gets `undefined`. A condition there, or one an event listener does not pass on, is written on the standard error.
 
 In the page, what can be done:
 
@@ -285,3 +285,4 @@ Further replies on the list are very welcome.
 | The pairs of `.js~extend` are released by the collectors, as everything else: no `.js~detach` (it was needed for them) | Classes |
 | `ooRexx.js`'s global is `ooRexx` (was `OoRexx`) | Rexx from the page |
 | Questions to decide: answered | Questions decided |
+| A synchronous handler under Node may use the RexxAPI (queues, external functions) while JavaScript waits for it, and so may other Rexx threads meanwhile (it could hang) | Waiting |

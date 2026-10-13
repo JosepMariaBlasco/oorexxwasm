@@ -110,25 +110,25 @@ copied as arrays and plain objects.
   iteration, options latest and max, release).  Documented in wasm/README.md.
 ---
  interpreter/package/PackageManager.cpp |   16 +
- wasm/README.md                         |  181 +++
+ wasm/README.md                         |  182 +++
  wasm/build-node.sh                     |   17 +-
  wasm/build-web.sh                      |   17 +-
- wasm/extra-packages.cpp                |   66 ++
+ wasm/extra-packages.cpp                |   66 +
  wasm/js-bridge.js                      |  241 ++++
  wasm/js-realm.js                       |  817 +++++++++++++
  wasm/tests/js-extend-gc.rex            |   88 ++
  wasm/tests/js-extend.rex               |  157 +++
  wasm/tests/js-proxy.rex                |  127 ++
- wasm/tests/qualify-node-cli.sh         |  167 +++
+ wasm/tests/qualify-node-cli.sh         |  198 +++
  wasm/tests/web-api.html                |    4 +-
  wasm/tests/web-api.py                  |  191 ++-
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 1513 ++++++++++++++++++++++++
+ wasm/web-js.cpp                        | 1527 ++++++++++++++++++++++++
  wasm/web/js.cls                        |  670 +++++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  181 +++
- 19 files changed, 4526 insertions(+), 12 deletions(-)
+ 19 files changed, 4572 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -175,10 +175,10 @@ index 9324d0b..786af1f 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index e674dcb..a70b7a5 100644
+index d6f2caf..4878c9a 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -236,6 +236,185 @@ from the test suite's directory:
+@@ -239,6 +239,186 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -261,12 +261,13 @@ index e674dcb..a70b7a5 100644
 +  `forEach`, `map`, `dispatchEvent`), the method runs on that thread and
 +  JavaScript gets its result (a condition is thrown as a `RexxError`);
 +  meanwhile that thread cannot wait for JavaScript (`~await`, the page:
-+  errors).  Called by JavaScript on its own (a timer, a Node server, a
++  errors), but may use the RexxAPI (queues, external functions), as may
++  the other threads.  Called by JavaScript on its own (a timer, a Node server, a
 +  Promise settling), the method runs at once on a thread of its own (one
 +  call at a time, attached to the interpreter for the call), may wait for
 +  JavaScript, and JavaScript gets undefined: the realm's thread cannot wait
-+  for it, since what finishes later (sockets, the RexxAPI daemon under Node,
-+  the page) needs that thread's event loop.  A condition JavaScript does not
++  for it, since what finishes later (sockets, the page) needs that thread's
++  event loop.  A condition JavaScript does not
 +  pass on (there, or in an event listener) is written on the standard error.
 +* Queued handlers: with option `queued`, and always in the page (whose
 +  thread may not block), the function queues the call and returns undefined
@@ -364,7 +365,7 @@ index e674dcb..a70b7a5 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -244,6 +423,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -247,6 +427,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).
@@ -2004,10 +2005,10 @@ index 0000000..c89f67e
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..5db9694 100755
+index e1c1cd8..37b2136 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -200,6 +200,173 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
+@@ -200,6 +200,204 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
  check "name resolution (host resolver)" '^localhost=1 127\.0\.0\.1$' '^invalid=0$' '^reverse=1 ' "^hostname=$(hostname)\$" '^hostid=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' -- \
    "$X dns.rex"
  
@@ -2172,6 +2173,37 @@ index e1c1cd8..5db9694 100755
 +# and their pairs, released by the two collectors (no .js~detach)
 +check "JavaScript objects: an extending class's pairs are released by the collectors" '^8 passed, 0 failed$' '!^FAIL ' -- \
 +  "NODE_OPTIONS=--expose-gc timeout 300 $X '$(cd "$(dirname "$0")" && pwd)/js-extend-gc.rex'"
++
++# --- the RexxAPI while JavaScript waits for a synchronous handler: in the
++# handler (a queue, external calls: their lookup asks rxapi) and on another
++# thread at the same time (its rxapi replies must not need the main thread)
++cat > "$T/jsrxapi.rex" <<'EOF'
++arr = .js~newArray(3, 1, 2)
++.local~pulled = 0
++arr~sort(.js~handler(.Cmp~new, "cmp"))
++say "sorted:" arr~join(",") "pulled:" .pulled
++.local~others = 0
++.Other~new~start("go")
++do i = 1 to 200; a = .js~newArray(3, 1, 2); a~sort(.js~handler(.Cmp~new, "plain")); end
++.local~stop = 1
++call SysSleep 0.2
++say "loops: done" (.others > 0)
++::requires "js.cls"
++::class Cmp
++::method cmp
++  use arg a, b
++  queue a; parse pull x; call SysSleep 0
++  if x = a then .local~pulled += 1
++  return a - b
++::method plain
++  use arg a, b
++  return a - b
++::class Other
++::method go
++  do while .local~stop \== 1; call SysSleep 0; queue "x"; parse pull .; .local~others += 1; end
++EOF
++check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^sorted: 1,2,3 pulled: [1-9][0-9]*$' \
++  '^loops: done 1$' -- "timeout 120 $X jsrxapi.rex"
 +
 +# --- a logic error (here: no rexx.img) traps on a pthread; the process must
 +# end with a non-zero status, as native ooRexx's does
@@ -2499,10 +2531,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..0b01a3a
+index 0000000..f32ce72
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,1513 @@
+@@ -0,0 +1,1527 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -2791,10 +2823,24 @@ index 0000000..0b01a3a
 +    emscripten_futex_wake(&sc->state, INT_MAX);
 +}
 +
++// the RexxAPI's I/O thread (rexxapi/common/platform/unix/SysNodeConnection.cpp)
++extern "C" int orxNetIoStart();
++
 +// pass a request to the main runtime thread and wait for the reply, running
 +// the synchronous handlers JavaScript calls meanwhile
 +static std::string jsCall(RexxThreadContext *c, int op, const std::string &data)
 +{
++    // Under Node, the RexxAPI's sockets need an event loop that runs while
++    // the main runtime thread waits for a synchronous handler: their own
++    // thread's.  Starting it takes the main runtime thread, which is free
++    // now (the first request cannot come from a handler), but may not be
++    // when the handler needs the RexxAPI (a queue, any external call).
++    static int32_t ioReady = 0;
++    if (!__atomic_load_n(&ioReady, __ATOMIC_SEQ_CST))
++    {
++        orxNetIoStart();
++        __atomic_store_n(&ioReady, 1, __ATOMIC_SEQ_CST);
++    }
 +    JsRequest req = {};
 +    req.op = op;
 +    req.data = data.data();

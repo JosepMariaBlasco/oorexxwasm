@@ -171,10 +171,10 @@ index 8848967..3b1f460 100644
      if (callDebugInputExit(activation, value))
      {
 diff --git a/wasm/README.md b/wasm/README.md
-index c2c2a0f..8be6f25 100644
+index a69251d..cfa0ef9 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -143,6 +143,76 @@ threads, SysSleep, RxSock and `.StreamSocket` over WebSocket, external data
+@@ -146,6 +146,76 @@ threads, SysSleep, RxSock and `.StreamSocket` over WebSocket, external data
  queue, rxregexp, rxmath, deep recursion (Error 11, at a depth set by the
  browser; see the limits below).
  

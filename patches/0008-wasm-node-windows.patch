@@ -950,21 +950,21 @@ index 80892fa..cb018f4 100644
      validateFileSpec();
      // process the SysFileTreeOptions
 diff --git a/rexxapi/common/platform/unix/SysNodeConnection.cpp b/rexxapi/common/platform/unix/SysNodeConnection.cpp
-index e2bbb47..97b4acc 100644
+index 01582d1..500ab26 100644
 --- a/rexxapi/common/platform/unix/SysNodeConnection.cpp
 +++ b/rexxapi/common/platform/unix/SysNodeConnection.cpp
-@@ -261,6 +261,10 @@ EM_JS(void, orxNetStart, (em_proxying_ctx *ctx, void *op), {
+@@ -271,6 +271,10 @@ EM_JS(void, orxNetStart, (em_proxying_ctx *ctx, void *op), {
          {
              var path = UTF8ToString(i32()[p + 2]);
              var lock = path + '.lock';
 +            // Windows: a named pipe, not a file; the lock goes to the
 +            // temporary directory, and there is no socket file to watch
 +            var win = process.platform === 'win32';
-+            if (win) lock = require('path').join(require('os').tmpdir(), path.substring(path.lastIndexOf(String.fromCharCode(92)) + 1) + '.lock');
++            if (win) lock = mod('path').join(mod('os').tmpdir(), path.substring(path.lastIndexOf(String.fromCharCode(92)) + 1) + '.lock');
              var listen = function() {
                  // single daemon per service: a lock file holding our pid
                  try
-@@ -296,7 +300,7 @@ EM_JS(void, orxNetStart, (em_proxying_ctx *ctx, void *op), {
+@@ -306,7 +310,7 @@ EM_JS(void, orxNetStart, (em_proxying_ctx *ctx, void *op), {
                      try { fs.writeFileSync(lock, String(process.pid), { mode: 0o600 }); }
                      catch (e4) { done(-1); return; }
                  }
@@ -973,7 +973,7 @@ index e2bbb47..97b4acc 100644
                  var srv = { server: null, pending: [], waiter: null, path: path, lock: lock };
                  var server = net.createServer(function(sock) {
                      var sid = addSocket(sock);
-@@ -309,6 +313,7 @@ EM_JS(void, orxNetStart, (em_proxying_ctx *ctx, void *op), {
+@@ -319,6 +323,7 @@ EM_JS(void, orxNetStart, (em_proxying_ctx *ctx, void *op), {
                      done(-1);
                  });
                  server.listen(path, function() {
@@ -981,7 +981,7 @@ index e2bbb47..97b4acc 100644
                      try { fs.chmodSync(path, 0o600); } catch (e) {}
                      var ino = 0;
                      try { ino = fs.statSync(path).ino; } catch (e) {}
-@@ -352,7 +357,7 @@ EM_JS(void, orxNetStart, (em_proxying_ctx *ctx, void *op), {
+@@ -363,7 +368,7 @@ EM_JS(void, orxNetStart, (em_proxying_ctx *ctx, void *op), {
              {
                  st.servers.delete(id);
                  try { srv.server.close(); } catch (e) {}
@@ -990,16 +990,16 @@ index e2bbb47..97b4acc 100644
                  try { fs.unlinkSync(srv.lock); } catch (e) {}
                  if (srv.waiter) { var w = srv.waiter; srv.waiter = null; w(-1); }
              }
-@@ -374,7 +379,7 @@ EM_JS(void, orxNetStart, (em_proxying_ctx *ctx, void *op), {
+@@ -385,7 +390,7 @@ EM_JS(void, orxNetStart, (em_proxying_ctx *ctx, void *op), {
                  }
-                 var child = require('child_process').spawn(process.execPath,
+                 var child = mod('child_process').spawn(process.execPath,
                      [script, '--orx-wasm-rxapi'],
 -                    { detached: true, stdio: ['ignore', 'ignore', err], cwd: '/' });
 +                    { detached: true, stdio: ['ignore', 'ignore', err], cwd: '/', windowsHide: true });
                  if (typeof err === 'number') fs.closeSync(err);
                  child.on('error', function() {});
                  child.unref();
-@@ -493,6 +498,13 @@ EM_JS(int, orxNetServiceName, (char *buf, int size, int ver, int rel, int mod),
+@@ -561,6 +566,13 @@ EM_JS(int, orxNetServiceName, (char *buf, int size, int ver, int rel, int mod),
      var user;
      try { user = os.userInfo().username; } catch (e) { user = String(process.getuid ? process.getuid() : 0); }
      var name = dir + '/.ooRexx-' + ver + '.' + rel + '.' + mod + '-wasm-' + user + '.service';
@@ -1014,10 +1014,10 @@ index e2bbb47..97b4acc 100644
      stringToUTF8(name, buf, size);
      return 1;
 diff --git a/wasm/README.md b/wasm/README.md
-index a70b7a5..d0a2cda 100644
+index 4878c9a..b08c041 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -131,6 +131,19 @@ host name and interface address come from `node:os`
+@@ -134,6 +134,19 @@ host name and interface address come from `node:os`
      ./wasm/build-node.sh /tmp/oorexx-wasm-build
      ./wasm/tests/qualify-node-cli.sh /tmp/oorexx-wasm-build/bin-node
  
