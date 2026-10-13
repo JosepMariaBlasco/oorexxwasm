@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Grokking in Rexx</title>
+<meta name="description" content="A neural network written in ooRexx learns modular addition in your browser, and draws what happens inside it while it learns.">
+<link rel="icon" href="oryx.svg" type="image/svg+xml">
+<!-- The ooRexx runtime and the Rexx Parser come from the ooRexx Playground
+     site this page lives in (one directory up): see RUNTIME below. -->
+<link rel="stylesheet" href="../rexx-parser/rexx-light.css">
+<style>
+@font-face { font-family: "Plex Mono"; font-weight: 400; src: url(../fonts/ibm-plex-mono-latin-400-normal.woff2) format("woff2"); }
+@font-face { font-family: "Plex Mono"; font-weight: 400; font-style: italic; src: url(../fonts/ibm-plex-mono-latin-400-italic.woff2) format("woff2"); }
+@font-face { font-family: "Plex Mono"; font-weight: 700; src: url(../fonts/ibm-plex-mono-latin-700-normal.woff2) format("woff2"); }
+@font-face { font-family: "Plex Mono"; font-weight: 700; font-style: italic; src: url(../fonts/ibm-plex-mono-latin-700-italic.woff2) format("woff2"); }
+@font-face { font-family: "Plex Cond"; font-weight: 400; src: url(../fonts/ibm-plex-sans-condensed-latin-400-normal.woff2) format("woff2"); }
+@font-face { font-family: "Plex Cond"; font-weight: 500; src: url(../fonts/ibm-plex-sans-condensed-latin-500-normal.woff2) format("woff2"); }
+@font-face { font-family: "Plex Cond"; font-weight: 600; src: url(../fonts/ibm-plex-sans-condensed-latin-600-normal.woff2) format("woff2"); }
+
+:root {
+  --ground: #e9ebee;        /* the page around the two panels */
+  --paper:  #ffffff;        /* the panels */
+  --ink:    #222428;
+  --soft:   #5f646b;
+  --rule:   #d3d6db;
+  --oryx:   #ff3300;        /* the red of Graham Wilson's oryx */
+  --oryx-dark: #c42800;
+  --code-ground: #fbfbfc;
+  --sans: "Plex Cond", "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
+  --mono: "Plex Mono", "IBM Plex Mono", ui-monospace, monospace;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--ground); color: var(--ink);
+  font: 16px/1.45 var(--sans);
+  display: flex; flex-direction: column;
+}
+a { color: inherit; text-decoration-color: var(--oryx); text-underline-offset: 2px; }
+a:hover { color: var(--oryx-dark); }
+:focus-visible { outline: 2px solid var(--oryx); outline-offset: 2px; }
+
+/* ---- header ---------------------------------------------------------- */
+header {
+  display: grid; grid-template-columns: auto 1fr auto; gap: 18px; align-items: center;
+  padding: 14px 22px 12px;
+}
+header img { width: 64px; height: auto; display: block; }
+header h1 {
+  margin: 0; font-weight: 600; font-size: 30px; line-height: 1.05; letter-spacing: -0.01em;
+}
+header p { margin: 4px 0 0; color: var(--soft); max-width: 78ch; font-size: 15px; }
+header nav { font-size: 14px; color: var(--soft); text-align: right; line-height: 1.6; }
+
+/* ---- the two panels ---------------------------------------------------- */
+main {
+  flex: 1; min-height: 0;
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 14px;
+  padding: 0 14px 14px;
+}
+.panel {
+  background: var(--paper); border: 1px solid var(--rule); border-radius: 6px;
+  display: flex; flex-direction: column; min-height: 0; overflow: hidden;
+}
+.bar {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 10px 14px; border-bottom: 1px solid var(--rule);
+}
+.bar .name { font-family: var(--mono); font-weight: 700; font-size: 14px; }
+.bar .meta { color: var(--soft); font-size: 14px; }
+.bar .grow { flex: 1; }
+select {
+  font: 14px var(--sans); color: var(--ink); background: var(--paper);
+  border: 1px solid var(--rule); border-radius: 4px; padding: 4px 6px; max-width: 16em;
+}
+
+/* left: the program */
+#code { flex: 1; overflow: auto; background: var(--code-ground); }
+#code .rx-blockwrap { overflow: visible; }
+#code pre { margin: 0; padding: 12px 16px 40px 0; font: 12px/1.5 var(--mono); background: transparent; }
+#code pre.rx-numbered { margin-left: 3.4em; }
+#code .highlight-rexx-light { background: transparent; }
+#code .highlight-rexx-light pre { background: transparent; }
+#code pre.plain { padding-left: 16px; color: #333; }
+.target { animation: flash 1.6s ease-out; }
+@keyframes flash { from { background: rgba(255, 51, 0, .16); } to { background: transparent; } }
+#hlnote { color: var(--soft); font-size: 13px; }
+
+/* right: run and watch */
+#run {
+  font: 600 16px var(--sans); letter-spacing: .02em;
+  color: #fff; background: var(--oryx); border: 0; border-radius: 4px;
+  padding: 8px 26px; cursor: pointer; min-width: 7.5em;
+}
+#run:hover { background: var(--oryx-dark); }
+#run:disabled { background: #c9ccd1; cursor: default; }
+#run.stop { background: var(--ink); }
+#state { font-size: 15px; }
+#clock { font-family: var(--mono); font-size: 14px; color: var(--soft); }
+.watch { flex: 1; overflow: auto; padding: 14px; display: flex; flex-direction: column; gap: 16px; }
+.stage { position: relative; width: 100%; aspect-ratio: 1000 / 640; border: 1px solid var(--rule); border-radius: 4px; background: #fff; }
+.stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.stage .idle {
+  position: absolute; inset: 0; display: grid; place-content: center; gap: 6px; text-align: center;
+  color: var(--soft); padding: 24px;
+}
+.stage .idle strong { color: var(--ink); font-size: 20px; font-weight: 600; }
+.stage .idle span { max-width: 46ch; margin: 0 auto; }
+.stage.live .idle { display: none; }
+
+.guide { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 28px; font-size: 15px; }
+.guide h2 { grid-column: 1 / -1; margin: 0; font-size: 17px; font-weight: 600; }
+.guide p { margin: 0; }
+.guide b { font-weight: 600; }
+.k-train { color: #1f77b4; font-weight: 600; }
+.k-test  { color: #e66e14; font-weight: 600; }
+
+details { border-top: 1px solid var(--rule); padding-top: 10px; }
+summary { cursor: pointer; font-weight: 500; }
+summary span { color: var(--soft); font-weight: 400; }
+#out {
+  margin: 8px 0 0; max-height: 260px; overflow: auto;
+  font: 12px/1.45 var(--mono); color: #333; background: var(--code-ground);
+  border: 1px solid var(--rule); border-radius: 4px; padding: 8px 10px; white-space: pre;
+}
+#out .err { color: #b3261e; }
+
+footer { padding: 0 22px 14px; font-size: 13px; color: var(--soft); }
+
+@media (max-width: 980px) {
+  body { display: block; height: auto; }
+  header { grid-template-columns: auto 1fr; }
+  header nav { grid-column: 1 / -1; text-align: left; }
+  main { display: flex; flex-direction: column-reverse; }
+  #code { max-height: 70vh; }
+  .guide { grid-template-columns: 1fr; }
+}
+@media (max-width: 600px) {
+  header { padding: 12px 16px; }
+  header img { width: 44px; }
+  header h1 { font-size: 24px; }
+  main { padding: 0 8px 8px; }
+}
+@media (prefers-reduced-motion: reduce) { .target { animation: none; } }
+</style>
+</head>
+<body>
+
+<header>
+  <img src="oryx.svg" alt="The ooRexx oryx">
+  <div>
+    <h1>Grokking in Rexx</h1>
+    <p>A small neural network learns addition modulo 13 from 153 examples. It memorises
+    them in a few dozen epochs, and only hundreds of epochs later does it get right the
+    16 sums it has never seen: that late jump is called <i>grokking</i>. The network, its
+    training and the drawings are all one ooRexx program, printed here, running in your browser.</p>
+  </div>
+  <nav>
+    <a href="../">ooRexx Playground</a><br>
+    <a href="https://github.com/JosepMariaBlasco/oorexxwasm">ooRexx for WebAssembly</a>
+  </nav>
+</header>
+
+<main>
+  <section class="panel" aria-label="The program">
+    <div class="bar">
+      <span class="name">grok-live.rex</span>
+      <span class="meta" id="lines"></span>
+      <span class="grow"></span>
+      <span id="hlnote"></span>
+      <label><span class="meta">Go to</span>
+        <select id="sections" aria-label="Go to a section of the program"></select></label>
+    </div>
+    <div id="code"><pre class="plain">Loading the program…</pre></div>
+  </section>
+
+  <section class="panel" aria-label="Run it">
+    <div class="bar">
+      <button id="run" disabled>Run</button>
+      <span id="state">Loading ooRexx…</span>
+      <span class="grow"></span>
+      <span id="clock"></span>
+    </div>
+    <div class="watch">
+      <div class="stage" id="stage">
+        <canvas id="canvas" width="1000" height="640"></canvas>
+        <div class="idle">
+          <strong>Press Run to train the network</strong>
+          <span>The pictures are drawn by the program, epoch by epoch, while it learns.
+          A whole run takes a few minutes; it groks at about epoch 900.</span>
+        </div>
+      </div>
+
+      <div class="guide">
+        <h2>What you are looking at</h2>
+        <p><b>Loss and accuracy.</b> <span class="k-train">Train</span> is how the network
+        does on the 153 pairs it learns from; <span class="k-test">test</span>, on the 16 it
+        never sees. Train reaches 100% almost at once: that is memorising. Test stays low for
+        a long time, then jumps. The red line marks the epoch when every test pair is right.</p>
+        <p><b>The table.</b> The 169 sums <i>a</i> + <i>b</i> mod 13, as the network answers
+        them now: green is right, red is wrong. The framed cells are the test pairs: they
+        turn green long after all the others.</p>
+        <p><b>Fourier energy.</b> Each number 0–12 enters the network as a list of 12
+        weights, its <i>embedding</i>. Read along the 13 numbers, those weights can be split
+        into waves of frequency <i>k</i>. The darker a row, the more of the embeddings is in
+        that wave; the bars show the same thing now.</p>
+        <p><b>Why it matters.</b> A network that has grokked has stopped storing a list of
+        answers: it places the numbers on circles, like the hours of a clock, and adds by
+        turning. The few dark rows are those circles.</p>
+      </div>
+
+      <details id="console" open>
+        <summary>Console <span>the program's own trace: one line every 10, then every 50 epochs</span></summary>
+        <pre id="out"></pre>
+      </details>
+    </div>
+  </section>
+</main>
+
+<footer>
+  ooRexx 5.3.0 compiled to WebAssembly · highlighting by the
+  <a href="https://rexx.epbcn.com/rexx-parser/">Rexx Parser</a>, also running here in Rexx ·
+  drawing with JDOR, Rony G. Flatscher's drawing commands for ooRexx · the oryx is by
+  Graham Wilson · grok.rex by Josep Maria Blasco, Apache 2.0
+</footer>
+
+<script src="../ooRexx.js"></script>
+<script>
+"use strict";
+(() => {
+  const PROGRAM = "grok-live.rex";
+  const RXPATH = "/usr/lib/ooRexx:/usr/lib/rexx-parser/bin";
+  const $ = (id) => document.getElementById(id);
+  const codeBox = $("code"), runBtn = $("run"), state = $("state"), clock = $("clock");
+  const out = $("out"), stage = $("stage"), canvas = $("canvas");
+  const enc = new TextEncoder();
+  const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+
+  // A one-shot highlighter: the Rexx Parser's Highlighter, run once on the program.
+  const HL = [
+    'Parse Arg file',
+    'source = .Array~new',
+    'Do While Lines(file) > 0',
+    '  source~append(LineIn(file))',
+    'End',
+    'options. = 0',
+    'options.mode = "HTML"',
+    'options.style = "light"',
+    'html = .Highlighter~new(file, source, options.)~parse',
+    'If html~isA(.Array) Then html = html~makeString("L", "0a"x)',
+    'Call CharOut , html',
+    '::Requires "Rexx.Parser.cls"',
+    '::Requires "parser/Highlighter.cls"',
+  ].join("\n");
+
+  let rexx = null, source = null, run = null, t0 = 0, tick = 0;
+
+  // ---- the program, plain first, then highlighted --------------------------------
+  const sourceP = fetch(PROGRAM).then((r) => {
+    if (!r.ok) throw new Error(PROGRAM + ": HTTP " + r.status);
+    return r.text();
+  });
+  sourceP.then((text) => {
+    source = text;
+    const lines = text.split("\n");
+    $("lines").textContent = lines.length + " lines";
+    codeBox.innerHTML = '<pre class="plain">' + esc(text) + "</pre>";
+    sections(lines);
+  }).catch((e) => { codeBox.innerHTML = '<pre class="plain">Could not load ' + esc(String(e)) + "</pre>"; });
+
+  // The jump list: grok.rex's numbered sections ("-- 3. The network --") and the
+  // boxed headings of its routines ("/* Drawing (ADDRESS JDOR) */").
+  function sections(lines) {
+    const sel = $("sections"), opts = [["", "the beginning", 1]];
+    lines.forEach((l, i) => {
+      let m = /^-- (\d+\. .+?)\s+--\s*$/.exec(l);
+      if (m) { opts.push(["", m[1], i + 1]); return; }
+      m = /^\/\* ([A-Z][A-Za-z ()]+?)\s{2,}\*\/\s*$/.exec(l);
+      if (m && i > 40 && /^\/\*\s+\*\/\s*$/.test(lines[i - 1] || "") && m[1] !== "Copyright")
+        opts.push(["", "Routines: " + m[1], i + 1]);
+      m = /^-- (What this program .+?)\s+--\s*$/.exec(l);
+      if (m) opts.push(["", m[1], i + 1]);
+    });
+    sel.innerHTML = opts.map(([, t, n]) => `<option value="${n}">${esc(t)}</option>`).join("");
+    sel.addEventListener("change", () => goTo(+sel.value));
+  }
+  function goTo(n) {
+    const el = document.getElementById("rx1-" + n);
+    if (el) {
+      codeBox.scrollTo({ top: el.offsetTop - 12, behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+      el.classList.remove("target"); void el.offsetWidth; el.classList.add("target");
+    } else {
+      const lh = 12 * 1.5;   // plain text: by line height
+      codeBox.scrollTo({ top: (n - 1) * lh });
+    }
+  }
+
+  async function highlight() {
+    $("hlnote").textContent = "highlighting, in Rexx…";
+    const r = await fetch("../rexx-parser.json");
+    if (!r.ok) throw new Error("rexx-parser.json: HTTP " + r.status);
+    const files = {};
+    const j = await r.json();
+    for (const k in j) files[k] = enc.encode(j[k]);
+    files["/tmp/hl/hl.rex"] = HL;
+    files["/tmp/hl/" + PROGRAM] = source;
+    let html = "";
+    const t = performance.now();
+    const h = rexx.run({ args: ["/tmp/hl/hl.rex", PROGRAM], files, cwd: "/tmp/hl",
+                         env: { REXX_PATH: RXPATH }, onOut: (s) => { html += s; }, onErr: () => {} });
+    const { rc } = await h.done;
+    if (rc !== 0 || !html.includes("rx-blockwrap")) throw new Error("the highlighter failed (rc " + rc + ")");
+    const keep = codeBox.scrollTop;
+    codeBox.innerHTML = html;
+    const wrap = codeBox.firstElementChild;
+    wrap.classList.remove("highlight-rexx-dark");
+    wrap.classList.add("highlight-rexx-light");
+    const pre = codeBox.querySelector("pre");
+    if (pre) pre.classList.add("rx-numbered");
+    codeBox.scrollTop = keep;
+    $("hlnote").textContent = "highlighted by the Rexx Parser, in Rexx, in " +
+      ((performance.now() - t) / 1000).toFixed(1) + " s";
+  }
+
+  // ---- the runtime -----------------------------------------------------------------
+  ooRexx.load().then(async (r) => {
+    rexx = r;
+    await sourceP;
+    runBtn.disabled = false;
+    state.textContent = "Ready.";
+    highlight().catch((e) => { $("hlnote").textContent = "plain text (" + e.message + ")"; });
+  }).catch((e) => {
+    state.textContent = "ooRexx could not start: " + e.message +
+      (self.crossOriginIsolated ? "" : " (this page must be served cross-origin isolated)");
+  });
+
+  // ---- running -----------------------------------------------------------------------
+  const ctx = canvas.getContext("2d");
+  function onJdor(msg) {
+    if (msg.op === "window" && msg.width > 0 && msg.height > 0) {
+      if (canvas.width !== msg.width || canvas.height !== msg.height) {
+        canvas.width = msg.width; canvas.height = msg.height;
+        stage.style.aspectRatio = msg.width + " / " + msg.height;
+      }
+    } else if (msg.op === "frame" && msg.bitmap) {
+      stage.classList.add("live");
+      ctx.drawImage(msg.bitmap, 0, 0);
+      msg.bitmap.close();
+    }
+  }
+  function print(text, cls) {
+    const atEnd = out.scrollTop + out.clientHeight >= out.scrollHeight - 4;
+    if (cls) { const s = document.createElement("span"); s.className = cls; s.textContent = text; out.appendChild(s); }
+    else out.appendChild(document.createTextNode(text));
+    if (atEnd) out.scrollTop = out.scrollHeight;
+  }
+  const mmss = (ms) => { const s = Math.floor(ms / 1000); return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0"); };
+
+  runBtn.addEventListener("click", () => {
+    if (run) { run.stop(); return; }
+    out.textContent = "";
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    run = rexx.run({ args: [PROGRAM], files: { ["/home/rexx/" + PROGRAM]: source },
+                     onOut: (t) => print(t), onErr: (t) => print(t, "err"), onJdor,
+                     screen: { width: 1000, height: 640 } });
+    runBtn.textContent = "Stop"; runBtn.classList.add("stop");
+    state.textContent = "Training…";
+    t0 = performance.now();
+    clock.textContent = "0:00";
+    tick = setInterval(() => { clock.textContent = mmss(performance.now() - t0); }, 1000);
+    run.done.then(({ rc, stopped }) => {
+      clearInterval(tick);
+      clock.textContent = mmss(performance.now() - t0);
+      state.textContent = stopped ? "Stopped." : rc === 0 ? "Finished. Run it again: same seed, same numbers." : "Ended with return code " + rc + ".";
+    }).finally(() => {
+      run = null;
+      runBtn.textContent = "Run"; runBtn.classList.remove("stop");
+    });
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && run) run.stop();
+  });
+})();
+</script>
+</body>
+</html>

@@ -19,6 +19,9 @@ cp "$HERE"/fonts/*.woff2 "$HERE"/fonts/OFL-IBM-Plex.txt "$OUT/fonts/"
 cp "$HERE/htaccess" "$OUT/.htaccess"
 # a diagnostic page for WebAssembly memory limits (iOS), not linked from the Playground
 cp "$HERE/memtest.html" "$OUT/"
+# "Grokking in Rexx" (grok/README.md): a page of its own that uses this site's runtime
+mkdir -p "$OUT/grok"
+cp "$HERE"/grok/index.html "$HERE"/grok/grok-live.rex "$HERE"/grok/oryx.svg "$OUT/grok/"
 # the Rexx Parser (vendored subset, import-rexx-parser.sh): CSS for the editor
 mkdir -p "$OUT/rexx-parser"
 # every style for the style chooser, as on the Parser's site ("test*" are dev fixtures)

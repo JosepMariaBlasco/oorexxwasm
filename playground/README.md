@@ -39,6 +39,9 @@ Workbench, a separate page.
   declared maximum against a budget of the page's process; the web build caps
   the maximum at 512 MiB for that reason (`wasm/build-web.sh`). Headless WebKit
   on Linux: 22 memories of 2 GiB at once, 65 of 512 MiB.
+- `grok/` — *Grokking in Rexx*, a page of its own on this site (`grok/`):
+  a neural network in ooRexx that learns modular addition and draws itself
+  learning with `ADDRESS JDOR`; see `grok/README.md`.
 - `build-site.sh [BIN_WEB] [OUT]` — assembles the site (default
   `$ORX_WASM_WORK/site`; `$ORX_WASM_WORK` is the directory that contains this
   repository's clone, see the top README).
