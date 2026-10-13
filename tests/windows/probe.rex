@@ -72,6 +72,11 @@ call probe "qualify('~/x')",         "return qualify('~/x')"
 call probe "SysFileTree backslash",  "call lineout 'sub\t.txt', 'x'; call lineout 'sub\t.txt'; call SysFileTree 'sub\*.txt', 'x.', 'FO'; call SysFileDelete 'sub\t.txt'; return x.0 x.1"
 call probe "filespec drive/path",    "f = 'C:\dir\sub\name.ext'; return filespec('d', f) '|' filespec('p', f) '|' filespec('n', f)"
 
+call probe "rexxc",                  "call lineout 'probe-c.rex', 'say 6 * 7'; call lineout 'probe-c.rex'; address system 'rexxc probe-c.rex probe-c.rxc' with output stem o. error stem e.; r = rc o.0 e.0; do i = 1 to o.0; r = r '|' o.i; end; do i = 1 to e.0; r = r '|E' e.i; end; return r"
+call probe "rexx compiled",          "address system 'rexx probe-c.rxc' with output stem o. error stem e.; r = rc o.0 e.0; do i = 1 to o.0; r = r '|' o.i; end; do i = 1 to e.0; r = r '|E' e.i; end; return r"
+call probe "rexx source",            "address system 'rexx probe-c.rex' with output stem o. error stem e.; return rc o.0 e.0 o.1"
+call probe "compiled exists",        "return SysFileExists('probe-c.rxc') stream('probe-c.rxc', 'c', 'query size')"
+
 -- the queues (the session queue; a named queue needs the RexxAPI daemon)
 call probe "session queue",         "push 'pushed'; parse pull x; return x"
 call probe "named queue (daemon)",  "n = .RexxQueue~create; q = .RexxQueue~new(n); q~queue('hi'); y = q~pull; .RexxQueue~delete(n); return y"
