@@ -20,6 +20,8 @@
   .row { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; }
   output { display: block; margin-top: .5rem; overflow-wrap: anywhere; }
   .muted { color: var(--muted); }
+  a { color: var(--accent); }
+  footer { border-top: 1px solid var(--line); margin-top: 2rem; font-size: .9rem; }
 </style>
 </head>
 <body>
@@ -60,6 +62,13 @@ which a Rexx script below defines.</p>
 what the scripts before them defined. <code>SAY</code> writes to the
 browser's console. View this page's source for the rest.</p>
 </section>
+
+<footer class="muted">
+<p>ooRexx for WebAssembly:
+<a href="https://github.com/JosepMariaBlasco/oorexxwasm">the project</a> ·
+<a href="https://github.com/JosepMariaBlasco/oorexxwasm/blob/main/INSTALL.md">how to install it</a> ·
+<a href="https://rexx.epbcn.com/oorexx-wasm/">the ooRexx Playground</a></p>
+</footer>
 
 <script src="ooRexx.js"></script>
 
