@@ -9,7 +9,10 @@ Rexx to JavaScript and to the page.
 
 **Try it:** the [ooRexx Playground](https://rexx.epbcn.com/oorexx-wasm/) runs
 ooRexx in your browser (needs a browser with cross-origin isolation:
-current Chrome, Edge, Firefox or Safari).
+current Chrome, Edge, Firefox or Safari), and
+[*ooRexx in a web page*](https://rexx.epbcn.com/oorexx-wasm/example/) is a
+page scripted in Rexx with `<script type="text/rexx">` (its source:
+[`web/`](web/)).
 
 **Install it:** `npm install -g oorexxwasm` for Node.js (Linux, macOS,
 Windows), or the zips of the

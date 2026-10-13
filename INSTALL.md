@@ -45,7 +45,8 @@ node serve.mjs              # then open http://localhost:8000/
 
 `index.html` is an example page: its `<script type="text/rexx">` elements
 set the page's text, handle a button, and define a routine that the page's
-JavaScript calls. Its `README.md` lists the files and shows the API.
+JavaScript calls. It is also
+[online](https://rexx.epbcn.com/oorexx-wasm/example/). Its `README.md` lists the files and shows the API.
 
 To use ooRexx in your own pages, copy the seven interpreter files
 (`ooRexx.js`, `ooRexx-worker.js`, `rexx.js`, `rexx.wasm`, `rexx.data`,

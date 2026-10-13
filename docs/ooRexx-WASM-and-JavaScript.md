@@ -199,7 +199,7 @@ A session is a run whose program, `.js~session`, hands the page a `.JSSession` a
 <script type="text/rexx" src="app.rex"></script>
 ```
 
-When the page has any, `ooRexx.js` starts a session once the document is parsed, with both realms granted (they are the page's own scripts), and runs them in order, each as a routine named after its `src`. A script sees what the scripts before it defined, its handlers run once the scripts are done, its output goes to the console, and an error is logged and does not stop the next script. `ooRexx.scripts` is a Promise of that session.
+When the page has any, `ooRexx.js` starts a session once the document is parsed, with both realms granted (they are the page's own scripts), and runs them in order, each as a routine named after its `src`. A script sees what the scripts before it defined, its handlers run once the scripts are done, its output goes to the console, and an error is logged and does not stop the next script. `ooRexx.scripts` is a Promise of that session. [*ooRexx in a web page*](https://rexx.epbcn.com/oorexx-wasm/example/) is such a page.
 
 ## Classes
 
