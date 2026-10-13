@@ -495,6 +495,24 @@ diff --git a/interpreter/platform/unix/SysFileSystem.cpp b/interpreter/platform/
              return true;
          }
          // erange indicates the buffer was too small. Anything else is a
+@@ -1352,7 +1543,7 @@
+  */
+ bool samePaths(const char *path1, const char *path2)
+ {
+-    AutoFree actualPath1 = realpath(path1, NULL);
++    AutoFree actualPath1 = SysProcess::realPath(path1);
+ 
+     // realpath() gives a NULL return if the file does not exist. For this operation
+     // at least one of the file must exist. If either does not exist, they cannot be bad.
+@@ -1361,7 +1552,7 @@
+         return false;
+     }
+ 
+-    AutoFree actualPath2 = realpath(path2, NULL);
++    AutoFree actualPath2 = SysProcess::realPath(path2);
+ 
+     if (actualPath2 == NULL)
+     {
 @@ -1746,6 +1937,13 @@
   */
  const char* SysFileSystem::getPathEnd(const char *name)
@@ -575,7 +593,30 @@ diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform
      return GlobalNames::INITIALADDRESS;
  }
  
-@@ -843,6 +852,7 @@
+@@ -476,7 +485,8 @@
+             *u++ = *s;
+             escape = false;
+         }
+-        else if ( c == '\\' )
++        // (Windows host: a backslash separates directories, see SysProcess.hpp)
++        else if ( c == '\\' && !SysProcess::isWindowsHost() )
+         {
+             escape = true;
+         }
+@@ -508,6 +518,12 @@
+     }
+     if ((!*st) || (strlen(cmd) == 2))
+     {
++        // Windows host: a bare CD shows the directory, as cmd.exe does: let
++        // cmd.exe run it
++        if (SysProcess::isWindowsHost())
++        {
++            return false;
++        }
+         home_dir = getenv("HOME");
+         if (!home_dir)
+         {
+@@ -843,6 +859,7 @@
  #define WASM_CMD_OUTPUT     2
  #define WASM_CMD_ERROR      4
  #define WASM_CMD_SAME       8      // OUTPUT and ERROR to the same target
@@ -583,7 +624,7 @@ diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform
  
  // special return codes of wasmCommandRun
  #define WASM_CMD_NO_PROCESSES  (-100000)
-@@ -882,17 +892,73 @@
+@@ -882,17 +899,73 @@
  
      var file = args[0];
      var rest = args.slice(1);
@@ -660,7 +701,7 @@ diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform
      };
      if (flags & 1)
      {
-@@ -910,8 +976,17 @@
+@@ -910,8 +983,17 @@
      }
      catch (e)
      {
@@ -678,7 +719,7 @@ diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform
      globalThis.__orxCmd = [r.stdout || null, r.stderr || null];
      if (r.error)
      {
-@@ -971,9 +1046,10 @@
+@@ -971,9 +1053,10 @@
   * WASM version of the process part of ioCommandHandler (see above).
   */
  static RexxObjectPtr wasmCommandHandler(RexxExitContext *context, CSTRING commandString,
@@ -691,7 +732,7 @@ diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform
      CSTRING inputBuffer = NULL;
      size_t inputLength = 0;
  
-@@ -1080,6 +1156,44 @@
+@@ -1080,6 +1163,44 @@
              argv[1] = NULL;
          }
      }
@@ -736,7 +777,7 @@ diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform
      else
      {   // Set up the full path to the requested shell.
          strcpy(shell, SYSSHELLPATH);
-@@ -1106,7 +1220,7 @@
+@@ -1106,7 +1227,7 @@
      }
  
  #if defined(__EMSCRIPTEN__)
@@ -745,7 +786,7 @@ diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform
  #else
      if (ioContext->IsRedirectionRequested())
      {
-@@ -1321,6 +1435,13 @@
+@@ -1321,6 +1442,13 @@
      _instance->addCommandHandler("",        (REXXPFN)ioCommandHandler, HandlerType::REDIRECTING);
      _instance->addCommandHandler("COMMAND", (REXXPFN)ioCommandHandler, HandlerType::REDIRECTING);
      _instance->addCommandHandler("SYSTEM",  (REXXPFN)ioCommandHandler, HandlerType::REDIRECTING);
