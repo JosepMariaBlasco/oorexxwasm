@@ -35,7 +35,13 @@ if [[ ! -d "$OOREXX/.svn" ]]; then
   svn checkout -q -r "$REV" https://svn.code.sf.net/p/oorexx/code-0/main/trunk "$OOREXX"
   for p in "$PROJECT"/patches/*.patch; do
     echo "== apply $(basename "$p")"
-    (cd "$OOREXX" && svn patch -q "$p")   # svn patch: git format, executable bits
+    # svn patch: git format, executable bits.  It does not fail on a file it
+    # skips or a hunk it rejects, it only says so: stop here then
+    out=$(cd "$OOREXX" && svn patch "$p" 2>&1)
+    if grep -Eqi '^(Skipped|>.*rejected)|conflict' <<<"$out"; then
+      echo "$out" | grep -Ei 'skipped|rejected|conflict' >&2
+      echo "== $(basename "$p") does not apply cleanly" >&2; exit 1
+    fi
   done
 else
   echo "== $OOREXX already exists; not re-applying patches"
