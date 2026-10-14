@@ -277,6 +277,18 @@ with sync_playwright() as p:
     pick(pg, "Rexx Parser"); pg.click("#run")
     check("parser sample", wait_idle(pg, 60) and "keywords used:" in out(pg) and "SAY(" in out(pg), out(pg)[-300:])
     check("parser sample ANSI colored", pg.locator('#out span[style*="rgb("]').count() > 20)
+    # Run before rexx-parser.json has arrived (a slow server): the run waits for it
+    slow = b.new_page(viewport={"width": 1280, "height": 900})
+    held = []
+    slow.route("**/rexx-parser.json", lambda route: held.append(route))   # held until we let it go
+    slow.goto(BASE); slow.wait_for_selector("#rstate[data-state=ready]", timeout=20000)
+    slow.locator("nav.programs button", has_text="Rexx Parser").first.click(); slow.click("#run")
+    time.sleep(0.5)
+    waited = "loading the Rexx Parser" in slow.locator("#status").inner_text() and len(held) == 1
+    for r in held: r.continue_()
+    wait_idle(slow, 60)
+    check("Run waits for the Rexx Parser", waited and "keywords used:" in slow.locator("#out").inner_text(), slow.locator("#out").inner_text()[-300:])
+    slow.close()
     pg.set_input_files("#picker", [{"name": "p.rex", "mimeType": "text/plain",
         "buffer": b'p = .Rexx.Parser~new("t", .array~of("x = 1"))\nsay "first:" p~firstElement~class\ncall highlight "-a p.rex"\n::requires "Rexx.Parser.cls"\n'}])
     pg.click("#run")

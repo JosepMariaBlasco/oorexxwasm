@@ -456,6 +456,8 @@ footer a { color: var(--accent); }
   const parserLoad = fetch("rexx-parser.json").then((r) => r.ok ? r.json() : Promise.reject(new Error(r.status)))
     .then((j) => { const f = {}; for (const k in j) f[k] = enc.encode(j[k]); parserFiles = f; })
     .catch(() => { parserFiles = null; });
+  let parserSettled = false;        // a run started before it arrives waits for it
+  parserLoad.finally(() => { parserSettled = true; });
   const history = [];               // lines sent from the console, oldest first
   let hpos = 0, hdraft = "";
 
@@ -1572,6 +1574,13 @@ footer a { color: var(--accent); }
         } catch (e) { setRunning(false); emit("Could not load the sample's files: " + e.message + "\n", "x"); return; }
         finally { starting = false; }
       }
+      if (run) return;
+    }
+    if (!parserSettled) {               // every run gets the Rexx Parser: wait for it
+      starting = true;
+      statusEl.innerHTML = "<span>loading the Rexx Parser…</span>";
+      setRunning(true);
+      try { await parserLoad; } finally { starting = false; }
       if (run) return;
     }
     if (mounts.size) {

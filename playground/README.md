@@ -127,7 +127,8 @@ in headless Chromium.
   every run under `/usr/lib/rexx-parser/` with `REXX_PATH=/usr/lib/ooRexx:
   /usr/lib/rexx-parser/bin`. So programs can `::requires "Rexx.Parser.cls"`,
   `"parser/Highlighter.cls"`, or `call highlight "-a file"` / `call elements`.
-  Sample: `samples/parser.rex`.
+  Sample: `samples/parser.rex`. A Run pressed before the file has arrived
+  waits for it ("loading the Rexx Parser…"), so every run has the Parser.
 - Highlighted editor: a run that stays up for the page's life runs
   `hlserver.rex` (parser loaded once) and answers each "id count" + lines
   request on stdin with the Highlighter's HTML (or `ERR line code text`). The
