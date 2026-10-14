@@ -23,40 +23,45 @@ the HTML canvas, no Java involved.
   OffscreenCanvases; at most once per animation frame a visible window's
   image goes to the page as an ImageBitmap.  Areas use polygon-clipping
   (MIT, wasm/web/polygon-clipping.umd.min.js), loaded on first use.
+  Without antialiasing (render aliasOff) a shape goes through a mask
+  whose pixels are taken whole or not at all, as Java's are.
 - wasm/web-jdor.cpp: the package "jdor" (JdorNewHandler,
-  JdorAddEnvironment, JdorSetup) and a redirecting command handler added
-  with AddCommandEnvironment; each command is passed synchronously to the
-  main runtime thread (emscripten_proxy_sync_with_ctx), which may finish
-  it later; Rexx variables the command needs are resolved on the
-  interpreter thread; sleeping happens there too.
+  JdorAddEnvironment, JdorSetup, JdorObjectCall) and a redirecting
+  command handler added with AddCommandEnvironment; each command is
+  passed synchronously to the main runtime thread
+  (emscripten_proxy_sync_with_ctx), which may finish it later; Rexx
+  variables the command needs are resolved on the interpreter thread;
+  sleeping happens there too.  A method of an object that reads it now
+  (an Image's getRGB(x, y)) is passed the same way (JdorObjectCall).
 - wasm/extra-packages.cpp: lists "jdor" too (web-jdor.cpp provides
   orx_wasm_jdor_package()), for the hook in PackageManager.cpp.
 - wasm/web/jdor.cls: requiring it sets up the JDOR environment;
   addJdorHandler (as BSF4ooRexx's jdor.cls) sets up more; JdorObject, the
   Rexx side of the objects commands return ("a JDOR Image (#99)",
-  toString, kind, getters such as rc~width, passed back by name).
+  toString, kind, getters such as rc~width, methods that read the object
+  now such as rc~getRGB(x, y), passed back by name).
 - wasm/web/BSF.CLS (also preloaded as bsf.cls): not the Java bridge; just
   what BSF4ooRexx JDOR programs use (.bsf~new of the handler,
   bsf.importClass, BsfCommandHandler "add", bsf.createJavaArrayOf, pp, a
   few .java.lang.System properties), so they also run unchanged.
 - wasm/web/ooRexx.js: run({onJdor, screen}) and run.jdorEvent(); the page
   decides how to show the windows (ooRexx-worker.js relays the messages).
-- wasm/tests/web-api.py: 8 JDOR cases.
+- wasm/tests/web-api.py: 12 JDOR cases.
 ---
  interpreter/package/PackageManager.cpp |    4 +-
- wasm/README.md                         |   56 +-
+ wasm/README.md                         |   67 +-
  wasm/build-web.sh                      |   22 +-
  wasm/extra-packages.cpp                |    9 +-
  wasm/tests/web-api.html                |   21 +-
- wasm/tests/web-api.py                  |   41 +-
- wasm/web-jdor.cpp                      |  425 +++++
- wasm/web-jdor.js                       | 2060 ++++++++++++++++++++++++
+ wasm/tests/web-api.py                  |   75 +-
+ wasm/web-jdor.cpp                      |  467 +++++
+ wasm/web-jdor.js                       | 2204 ++++++++++++++++++++++++
  wasm/web/BSF.CLS                       |  110 ++
- wasm/web/jdor.cls                      |  116 ++
+ wasm/web/jdor.cls                      |  124 ++
  wasm/web/ooRexx-worker.js              |   14 +-
  wasm/web/ooRexx.js                     |   19 +-
  wasm/web/polygon-clipping.umd.min.js   |   39 +
- 13 files changed, 2914 insertions(+), 22 deletions(-)
+ 13 files changed, 3153 insertions(+), 22 deletions(-)
  create mode 100644 wasm/web-jdor.cpp
  create mode 100644 wasm/web-jdor.js
  create mode 100644 wasm/web/BSF.CLS
@@ -79,10 +84,10 @@ index 786af1f..e949832 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index f6bf132..7cfbe86 100644
+index f6bf132..f772dd2 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -227,7 +227,58 @@ off, or changes the strings.
+@@ -227,7 +227,69 @@ off, or changes the strings.
  isolated (see above).  `wasm/tests/web-api.py BIN_WEB` runs assertions over the
  API in headless Chromium (Python Playwright): output, interactive and fixed
  stdin, EOF, stop, threads, files in and out, extension classes, rexxtry,
@@ -112,16 +117,25 @@ index f6bf132..7cfbe86 100644
 +  that commands return (colors, fonts, images, shapes...) are `JdorObject`s
 +  that say what they are, not Java objects: `a JDOR Image (#99)`, `toString`
 +  `JDOR Image #99: 500x500, type 2 (ARGB), an OffscreenCanvas`, `kind`
-+  `Image`; getters like `rc~width` work, and they can be passed back by
-+  variable name, also to another handler.  Where the Java handler throws a
++  `Image`; getters like `rc~width` work, and so do the methods that read the
++  object when they are called, as the Java ones of the same names: an
++  Image's `getRGB(x, y)` (its current pixel, a signed ARGB integer), a
++  Stroke's `getDashArray`, an Area's `isRectangular` and `isEmpty`, a
++  Polygon's `npoints`, a PathIterator's `isDone` and `getWindingRule`.  They
++  can be passed back by variable name, also to another handler.  Where the Java handler throws a
 +  Java exception, the ERROR condition's description reads `JDOR (web): ...`.
 +* Programs written for BSF4ooRexx also run unchanged: `web/BSF.CLS` (also
 +  `bsf.cls`; not the Java bridge, there is no Java here) provides
 +  `.bsf~new("org.oorexx.handlers.jdor.JavaDrawingHandler")`,
 +  `bsf.importClass` of it, `BsfCommandHandler "add"`, `bsf.createJavaArrayOf`,
 +  a few `.java.lang.System~getProperty` values and `pp()`.
++* `render aliasOff`: a canvas always antialiases the edges of paths, so a
++  shape is drawn into a mask, each pixel at least half covered is taken
++  whole (as Java, without antialiasing, takes the pixels whose centres are
++  inside) and the paint goes through the mask: no partly painted pixels,
++  lines of 1 pixel on whole pixels.
 +* Implementation: `web-jdor.cpp` is the package `jdor` (routines
-+  `JdorNewHandler`, `JdorAddEnvironment`, `JdorSetup`; a redirecting command
++  `JdorNewHandler`, `JdorAddEnvironment`, `JdorSetup`, `JdorObjectCall`; a redirecting command
 +  handler added at run time with `AddCommandEnvironment`), found by
 +  `PackageManager` through a weak hook, `orx_wasm_extra_packages()`, that
 +  only this build defines.  Each command is passed synchronously
@@ -129,7 +143,9 @@ index f6bf132..7cfbe86 100644
 +  that hosts the run and never blocks: `web-jdor.js` (a `--pre-js`) draws on
 +  `OffscreenCanvas`es there, possibly finishing later (decoding and encoding
 +  images are asynchronous), and asks the C++ side for Rexx variables it needs
-+  (nicknames resolved through variables, `assignRC`, `getState`).  Sleeping
++  (nicknames resolved through variables, `assignRC`, `getState`); a method
++  of a `JdorObject` that reads the object (`getRGB`) is passed the same way,
++  after the commands before it.  Sleeping
 +  happens on the interpreter thread.  At most once per animation frame each
 +  visible window's image goes to the page as an `ImageBitmap`
 +  (`onJdor` in `ooRexx.js`; the page decides how to show windows).  Areas
@@ -142,7 +158,7 @@ index f6bf132..7cfbe86 100644
  
  ## The test suite's API groups (`wasm/build-test.sh`)
  
-@@ -439,7 +490,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -439,7 +501,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
@@ -297,7 +313,7 @@ index b13d517..cb5c6fa 100644
  };
  </script>
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 808926a..30a7a94 100755
+index 808926a..90d9bae 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -42,7 +42,7 @@ Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP
@@ -309,7 +325,7 @@ index 808926a..30a7a94 100755
  from playwright.sync_api import sync_playwright
  
  if len(sys.argv) != 2:
-@@ -137,6 +137,45 @@ CASES = [
+@@ -137,6 +137,79 @@ CASES = [
                         '::options trace r', {},
       lambda r: r["out"].count("  worker") == 12 and "total 4\n" in r["out"] and "*-*" in r["err"]
                 and r["err"] == r["trace"] and r["errmsg"] == ""),
@@ -352,15 +368,49 @@ index 808926a..30a7a94 100755
 +                 'shape u area a; areaAdd u b; shapeBounds u; say rc\nshape i area a; areaIntersect i b; shapeBounds i; say rc\n'
 +                 '::requires "jdor.cls"', {},
 +     lambda r: r["out"] == "0.0 0.0 15.0 10.0\n5.0 0.0 5.0 10.0\n"),
++  # methods that read the object now (JdorObjectCall): an Image's getRGB(x, y) is its current pixel
++  ("jdor getRGB", 'address jdor\nnewImage 20 20; image; img = rc; say img~getRGB(5, 5)\n'
++                  'color red; fillRect 10 10; say img~getRGB(5, 5) img~getRGB(15, 15)\n'
++                  'pushImage snap; imageCopy snap; cp = rc; color blue; fillRect 10 10; say cp~getRGB(5, 5) img~getRGB(5, 5)\n'
++                  'color half 0 255 0 128; fillRect 20 20; p = img~getRGB(15, 15); numeric digits 12; p = p + 2**32\n'
++                  'say p % 2**24 (p % 256 // 256 >= 254); numeric digits\n'
++                  'newImage 4 4 TYPE_INT_RGB; image; say rc~getRGB(0, 0)\n'
++                  'signal on syntax; say img~getRGB(20, 0)\nsyntax: say condition("O")~code condition("O")~message\n'
++                  '::requires "jdor.cls"', {},
++     lambda r: r["out"] == "0\n-65536 0\n-65536 -16776961\n128 1\n-16777216\n93.900 JDOR (web): Coordinate out of bounds!.\n"),
++  ("jdor getters", 'address jdor\nnewImage 20 20\n\'stroke s 2 0 0 10 "(4,2)" 1\'; stroke; da = rc~getDashArray; say da~items da[1] da[2]\n'
++                   'stroke t 1; stroke; say rc~getDashArray\n'
++                   'shape r rect 10 10 20 20; shape a area r; say rc~isRectangular rc~isEmpty\n'
++                   'shape e ellipse 0 0 10 10; shape b area e; say rc~isRectangular; areaSubtract a r; say rc~isEmpty\n'
++                   '\'shape pg Polygon "(10,40,10)" "(10,10,40)" 3\'; say rc~npoints\n'
++                   'pathIterator r; say rc~isDone rc~getWindingRule\n'
++                   'signal on syntax; say rc~noSuchMethod(1)\nsyntax: say condition("O")~code\n::requires "jdor.cls"', {},
++     lambda r: r["out"] == "2 4.0 2.0\nThe NIL object\n1 0\n0\n1\n3\n0 1\n97.1\n"),
++  # render aliasOff: a pixel is painted or not, as Java without antialiasing
++  ("jdor aliasOff", 'address jdor\nnewImage 40 40; render aliasOff; color red\nmoveTo 3 3; fillOval 30 25; moveTo 2 36; drawLine 37 36\n'
++                    'image; img = rc; bad = 0; ink = 0\n'
++                    'do y = 0 to 39; do x = 0 to 39; p = img~getRGB(x, y); if p = -65536 then ink += 1; else if p \\= 0 then bad += 1; end; end\n'
++                    'say bad (ink > 500) img~getRGB(20, 36) img~getRGB(20, 37)\n'
++                    'newImage 40 40; render aliasOff; color red; shape a arc 5 5 30 30 0 90 pie; drawShape a\n'
++                    'image; say rc~getRGB(28, 20) rc~getRGB(28, 21) rc~getRGB(20, 12) rc~getRGB(21, 12)\n'
++                    'newImage 40 40; render aliasOn; color red; moveTo 3 3; fillOval 30 25; image; img = rc; bad = 0\n'
++                    'do y = 0 to 39; do x = 0 to 39; p = img~getRGB(x, y); if p \\= 0, p \\= -65536 then bad += 1; end; end\n'
++                    'say (bad > 0)\n::requires "jdor.cls"', {},
++     lambda r: r["out"] == "0 1 -65536 0\n-65536 0 -65536 0\n1\n"),
++  ("jdor argument errors", 'address jdor\n\'newImage -5 10\'; say rc\n\'shape s polygon "(1,2)" "(1,2,3)" 3\'; say rc\n'
++                           'e = .array~new; address jdor with error append using (e); pathWindingRule; say rc\n'
++                           'say e[1]~substr(e[1]~pos("cause: [") + 8)\n::requires "jdor.cls"', {},
++     lambda r: r["out"] == "-102\n-102\n-102\nJDOR (web): this command needs exactly 1 or 2 arguments (the name of the shape and "
++                           "optionally the new winding rule argument), received 0 instead]\n"),
    # .JSObject: JavaScript objects as Rexx objects (wasm/web-js.cpp, wasm/js-bridge.js, wasm/web/js.cls)
    ("js not granted", 'say .js~Math~max(1, 2)\n::requires "js.cls"', {},
       lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
 diff --git a/wasm/web-jdor.cpp b/wasm/web-jdor.cpp
 new file mode 100644
-index 0000000..63dfc90
+index 0000000..7c5a58b
 --- /dev/null
 +++ b/wasm/web-jdor.cpp
-@@ -0,0 +1,425 @@
+@@ -0,0 +1,467 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -442,7 +492,9 @@ index 0000000..63dfc90
 +{
 +    const char *address;    //  0: the environment name
 +    const char *command;    //  4: the command (UTF-8, NUL-terminated)
-+    int32_t     op;         //  8: 1 command, 2 new handler, 3 bind address to handler
++    int32_t     op;         //  8: 1 command, 2 new handler, 3 bind address to handler,
++                            //     4 a method of an object (address: its name, command:
++                            //     the object's reference, vars: the arguments)
 +    int32_t     handler;    // 12: handler id (op 3)
 +    int32_t     outRedir;   // 16: output is redirected (op 1)
 +    const char *vars;       // 20: resolved variables (records), or NULL
@@ -761,11 +813,51 @@ index 0000000..63dfc90
 +    return 0;
 +}
 +
++// JdorObjectCall(ref, name, args): a method of an object of the handler that
++// reads it now (rc~getRGB(x, y)), run on the main runtime thread after the
++// commands sent before it.  Returns an Array with the result, or .nil when the
++// object has no such method; an error of the method raises SYNTAX 93.900.
++RexxRoutine3(RexxObjectPtr, JdorObjectCall, CSTRING, ref, CSTRING, name, RexxArrayObject, args)
++{
++    std::string a;
++    size_t n = context->ArraySize(args), count = 0;
++    std::string items;
++    for (size_t i = 1; i <= n; i++)
++    {
++        RexxObjectPtr item = context->ArrayAt(args, i);
++        fromRexx(context->threadContext, items, item == NULLOBJECT ? context->Nil() : item);
++        count++;
++    }
++    putRec(a, 'A', std::to_string(count));
++    a += items;
++    JdorRequest req = {};
++    req.address = name;
++    req.command = ref;
++    req.op = 4;
++    req.vars = a.c_str();
++    std::string reply = jdorCall(req);
++    size_t pos = 0;
++    Rec r;
++    while (nextRec(reply, pos, r))
++    {
++        switch (r.tag)
++        {
++            case 'R': return context->ArrayOfOne(toRexx(context->threadContext, reply, pos));
++            case 'C':
++                context->ThrowException1(Rexx_Error_Incorrect_method_user_defined, context->String(r.data.c_str()));
++                return NULLOBJECT;
++            default: break;           // 'X': no such method
++        }
++    }
++    return context->Nil();
++}
++
 +static RexxRoutineEntry jdorRoutines[] =
 +{
 +    REXX_TYPED_ROUTINE(JdorSetup, JdorSetup),
 +    REXX_TYPED_ROUTINE(JdorNewHandler, JdorNewHandler),
 +    REXX_TYPED_ROUTINE(JdorAddEnvironment, JdorAddEnvironment),
++    REXX_TYPED_ROUTINE(JdorObjectCall, JdorObjectCall),
 +    REXX_LAST_ROUTINE()
 +};
 +
@@ -788,10 +880,10 @@ index 0000000..63dfc90
 +}
 diff --git a/wasm/web-jdor.js b/wasm/web-jdor.js
 new file mode 100644
-index 0000000..293c974
+index 0000000..9467c84
 --- /dev/null
 +++ b/wasm/web-jdor.js
-@@ -0,0 +1,2060 @@
+@@ -0,0 +1,2204 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -1141,13 +1233,18 @@ index 0000000..293c974
 +  }
 +  function toPath2D(path) {
 +    const p = new Path2D();
++    let sx = 0, sy = 0, cx = 0, cy = 0;   // where the subpath starts, the current point
 +    for (const s of path) {
 +      switch (s[0]) {
-+        case 'M': p.moveTo(s[1], s[2]); break;
-+        case 'L': p.lineTo(s[1], s[2]); break;
-+        case 'Q': p.quadraticCurveTo(s[1], s[2], s[3], s[4]); break;
-+        case 'C': p.bezierCurveTo(s[1], s[2], s[3], s[4], s[5], s[6]); break;
-+        case 'Z': p.closePath(); break;
++        case 'M': p.moveTo(s[1], s[2]); sx = cx = s[1]; sy = cy = s[2]; break;
++        case 'L': p.lineTo(s[1], s[2]); cx = s[1]; cy = s[2]; break;
++        case 'Q': p.quadraticCurveTo(s[1], s[2], s[3], s[4]); cx = s[3]; cy = s[4]; break;
++        case 'C': p.bezierCurveTo(s[1], s[2], s[3], s[4], s[5], s[6]); cx = s[5]; cy = s[6]; break;
++        case 'Z':
++          // the closing segment as a line of its own: Chromium may stroke a closing
++          // segment half a pixel off (the first radius of a pie, after a curve)
++          if (cx !== sx || cy !== sy) p.lineTo(sx, sy);
++          p.closePath(); cx = sx; cy = sy; break;
 +      }
 +    }
 +    return p;
@@ -1360,19 +1457,14 @@ index 0000000..293c974
 +    }
 +
 +    // ---- drawing with the current GC -------------------------------------
-+    render(fn, opts) {
-+      opts = opts || {};
-+      const g = this.gc, ctx = this.ctx;
-+      ctx.save();
++    // the clips, the transformation, the stroke and the font of the GC, on ctx
++    geometry(ctx, opts) {
++      const g = this.gc;
 +      for (const c of g.clips) { ctx.setTransform(c.m[0], c.m[1], c.m[2], c.m[3], c.m[4], c.m[5]); ctx.clip(toPath2D(c.path)); }
 +      // strokes on pixel centres, as Java's stroke normalisation does
 +      const m = g.m, off = opts.stroke ? 0.5 : 0;
 +      ctx.setTransform(m[0], m[1], m[2], m[3], m[4] + off, m[5] + off);
 +      ctx.imageSmoothingEnabled = false;          // Java's default interpolation: nearest neighbour
-+      const comp = g.composite, rule = comp.rule;
-+      ctx.globalAlpha = comp.alpha;
-+      const style = this.paintStyle();
-+      ctx.fillStyle = style; ctx.strokeStyle = style;
 +      const s = g.stroke;
 +      ctx.lineWidth = s.width === 0 ? 1 : s.width;
 +      ctx.lineCap = ['butt', 'round', 'square'][s.cap];
@@ -1381,6 +1473,17 @@ index 0000000..293c974
 +      ctx.setLineDash(s.dash ? s.dash : []);
 +      ctx.lineDashOffset = s.phase || 0;
 +      ctx.font = cssFont(g.font);
++    }
++    render(fn, opts) {
++      opts = opts || {};
++      const g = this.gc, ctx = this.ctx;
++      if (opts.shape && g.aa === 'ALIASOFF') { this.renderAliased(fn, opts); return; }
++      ctx.save();
++      this.geometry(ctx, opts);
++      const comp = g.composite, rule = comp.rule;
++      ctx.globalAlpha = comp.alpha;
++      const style = this.paintStyle();
++      ctx.fillStyle = style; ctx.strokeStyle = style;
 +      if (g.xor) {
 +        ctx.globalCompositeOperation = 'difference';
 +      } else if (rule === 9) {        // DST: leaves the destination alone
@@ -1409,6 +1512,65 @@ index 0000000..293c974
 +      ctx.restore();
 +      this.changed();
 +    }
++    // "render aliasOff": a canvas always antialiases the edges of paths, Java without
++    // antialiasing sets a pixel or leaves it alone (its centre inside the shape or
++    // not).  So the shape is drawn in white into a mask the size of the image, every
++    // pixel of the mask at least half covered becomes opaque and the others
++    // transparent, and the paint goes onto the image through that mask.
++    scratch(name, w, h) {
++      const k = '_' + name;
++      if (!this[k] || this[k].width !== w || this[k].height !== h) this[k] = new OffscreenCanvas(w, h);
++      return this[k];
++    }
++    renderAliased(fn, opts) {
++      const g = this.gc, W = this.image.canvas.width, H = this.image.canvas.height;
++      const comp = g.composite, rule = comp.rule;
++      if (rule === 9 && !g.xor) return;            // DST: leaves the destination alone
++      const mk = this.scratch('mask', W, H), m = mk.getContext('2d', { willReadFrequently: true });
++      m.setTransform(1, 0, 0, 1, 0, 0); m.globalCompositeOperation = 'source-over'; m.clearRect(0, 0, W, H);
++      m.save(); this.geometry(m, opts); m.globalAlpha = 1; m.fillStyle = m.strokeStyle = '#fff'; fn(m); m.restore();
++      const id = m.getImageData(0, 0, W, H), d = id.data;
++      let any = false;
++      for (let i = 3; i < d.length; i += 4) {
++        if (d[i] >= 128) { d[i] = 255; any = true; } else d[i] = 0;
++        d[i - 3] = d[i - 2] = d[i - 1] = 255;
++      }
++      if (!any) return;
++      m.putImageData(id, 0, 0);
++      // the paint (in user space) over the whole image, kept where the mask is
++      const pl = this.scratch('paint', W, H), p = pl.getContext('2d');
++      p.setTransform(1, 0, 0, 1, 0, 0); p.globalCompositeOperation = 'copy'; p.globalAlpha = 1;
++      const opaque = !g.xor && (rule === 1 || rule === 8);   // CLEAR, DST_OUT: only the coverage counts
++      if (opaque) { p.fillStyle = '#000'; p.fillRect(0, 0, W, H); }
++      else {
++        const gm = g.m, inv = invert(gm);
++        let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
++        for (const [cx, cy] of [[0, 0], [W, 0], [0, H], [W, H]]) {
++          const ux = inv[0] * cx + inv[2] * cy + inv[4], uy = inv[1] * cx + inv[3] * cy + inv[5];
++          x0 = Math.min(x0, ux); y0 = Math.min(y0, uy); x1 = Math.max(x1, ux); y1 = Math.max(y1, uy);
++        }
++        p.setTransform(gm[0], gm[1], gm[2], gm[3], gm[4], gm[5]);
++        p.fillStyle = this.paintStyle();
++        p.fillRect(x0 - 1, y0 - 1, x1 - x0 + 2, y1 - y0 + 2);
++        p.setTransform(1, 0, 0, 1, 0, 0);
++      }
++      p.globalCompositeOperation = 'destination-in'; p.drawImage(mk, 0, 0);
++      const ctx = this.ctx;
++      ctx.save();
++      ctx.globalAlpha = opaque ? 1 : comp.alpha;
++      if (g.xor) ctx.globalCompositeOperation = 'difference';
++      else {
++        // Java composites only where the shape covers: clip the unbounded operations to it
++        if ([2, 5, 6, 7, 11].includes(rule) && opts.area) { this.geometry(ctx, opts); ctx.clip(opts.area); }
++        ctx.globalCompositeOperation = { 1: 'destination-out', 2: 'copy', 3: 'source-over', 4: 'destination-over',
++          5: 'source-in', 6: 'destination-in', 7: 'source-out', 8: 'destination-out', 10: 'source-atop',
++          11: 'destination-atop', 12: 'xor' }[rule];
++      }
++      ctx.setTransform(1, 0, 0, 1, 0, 0);
++      ctx.drawImage(pl, 0, 0);
++      ctx.restore();
++      this.changed();
++    }
 +    paintStyle() {
 +      const p = this.gc.paint;
 +      if (p.kind === 'Color') return cssColor(p);
@@ -1433,12 +1595,12 @@ index 0000000..293c974
 +      for (let k = 0; k <= n; k++) gr.addColorStop(k / n, cssColor(((k0 + k) & 1) ? p.c2 : p.c1));
 +      return gr;
 +    }
-+    fillPath(path) { const p2 = toPath2D(path); this.render((c) => c.fill(p2, 'nonzero'), { area: p2 }); }
++    fillPath(path) { const p2 = toPath2D(path); this.render((c) => c.fill(p2, 'nonzero'), { area: p2, shape: true }); }
 +    fillShape(s) {
 +      const path = shapePath(s), p2 = toPath2D(path), rule = s.type === 'Area' || s.wind === 0 ? 'evenodd' : 'nonzero';
-+      this.render((c) => c.fill(p2, rule), { area: p2 });
++      this.render((c) => c.fill(p2, rule), { area: p2, shape: true });
 +    }
-+    drawPath(path) { const p2 = toPath2D(path); this.render((c) => c.stroke(p2), { stroke: true }); }
++    drawPath(path) { const p2 = toPath2D(path); this.render((c) => c.stroke(p2), { stroke: true, shape: true }); }
 +  }
 +
 +  function invert(m) {
@@ -1750,6 +1912,7 @@ index 0000000..293c974
 +      [w, ht] = ints2(c, 1); c.canon(w + ' ' + ht);
 +      if (c.n > 3) { type = constant(IMAGE_TYPES, c.arg(3), 'type'); c.canon(nameOf(IMAGE_TYPES, type)); }
 +    }
++    if (w <= 0 || ht <= 0) iae('Width (' + w + ') and height (' + ht + ') cannot be <= 0');
 +    c.write(c.canonical);
 +    h.gcStack = [];
 +    h.image = newImageObj(w, ht, type);
@@ -2487,8 +2650,10 @@ index 0000000..293c974
 +      case 'Polygon': {
 +        if (n !== 6) iae('this command needs exactly 3 (xPointsArray yPointsArray nPoints) arguments, received ' + (n - 3) + ' instead');
 +        const xs = c.numArray(c.arg(3), parseIntJ), ys = c.numArray(c.arg(4), parseIntJ), np = parseIntJ(c.arg(5));
++        if (np < 0) iae('npoints < 0');
++        if (np > xs.length || np > ys.length) iae('npoints > xpoints.length || npoints > ypoints.length');
 +        c.canon(intArrayExpr(xs) + ' ' + intArrayExpr(ys) + ' ' + c.arg(5));
-+        s = shape(type, { path: polyPath(xs, ys, np, true), wind: 0 });
++        s = shape(type, { path: polyPath(xs, ys, np, true), wind: 0, npoints: np });
 +        break;
 +      }
 +      case 'QuadCurve2D': case 'RoundRectangle2D': {
@@ -2645,7 +2810,7 @@ index 0000000..293c974
 +    c.write(c.canonical + ' ' + c.arg(1) + ' ' + c.arg(2));
 +  });
 +  def('pathWindingRule', (c) => {
-+    if (c.n !== 2 && c.n > 3) iae('this command needs exactly 1 or 2 arguments (the name of the shape and optionally the new winding rule argument), received ' + (c.n - 1) + ' instead');
++    if (c.n < 2 || c.n > 3) iae('this command needs exactly 1 or 2 arguments (the name of the shape and optionally the new winding rule argument), received ' + (c.n - 1) + ' instead');
 +    const p = pathArg(c, 1);
 +    c.canon(c.arg(1));
 +    if (c.n === 2) c.result = '' + p.wind;
@@ -2791,8 +2956,79 @@ index 0000000..293c974
 +    return reply(parts);
 +  }
 +
++  // Methods a Rexx program may send to a JdorObject that read the object now (the
++  // getters of attrs() are fixed when the object reaches Rexx): rc~getRGB(x, y).
++  // As the Java methods of the same names; booleans are 1 and 0.
++  const toInt = (v) => { const n = Number(v); if (!Number.isInteger(n)) throw new JdorError('not a whole number: "' + v + '"'); return n; };
++  function areaIsRectangular(mp) {
++    if (mp.length === 0) return true;
++    if (mp.length !== 1 || mp[0].length !== 1) return false;
++    const r = mp[0][0].slice(0, -1).filter((pt, i, a) => i === 0 || pt[0] !== a[i - 1][0] || pt[1] !== a[i - 1][1]);
++    if (r.length !== 4) return false;
++    for (let i = 0; i < 4; i++) { const a = r[i], b = r[(i + 1) % 4]; if (a[0] !== b[0] && a[1] !== b[1]) return false; }
++    return true;
++  }
++  const METHODS = {
++    BufferedImage: {
++      GETRGB(o, args) {
++        if (args.length !== 2) throw new JdorError('getRGB needs 2 arguments (x y), received ' + args.length);
++        const x = toInt(args[0]), y = toInt(args[1]);
++        if (x < 0 || y < 0 || x >= o.canvas.width || y >= o.canvas.height) throw new JdorError('Coordinate out of bounds!');
++        const d = o.ctx.getImageData(x, y, 1, 1).data, a = ALPHA_TYPES.includes(o.type) ? d[3] : 255;
++        return '' + (((a << 24) | (d[0] << 16) | (d[1] << 8) | d[2]) | 0);
++      },
++    },
++    BasicStroke: {
++      GETDASHARRAY: (o) => o.dash && o.dash.length ? { array: o.dash.map(jf) } : null,
++    },
++    Shape: {
++      ISEMPTY(o) {
++        if (o.type === 'Area') return o.mp.length === 0 ? '1' : '0';
++        if (o.type === 'Line2D') return undefined;
++        const b = shapeBounds(o);
++        return b[2] <= 0 || b[3] <= 0 ? '1' : '0';
++      },
++      ISRECTANGULAR: (o) => o.type === 'Area' ? (areaIsRectangular(o.mp) ? '1' : '0') : undefined,
++      ISPOLYGONAL: (o) => o.type === 'Area' ? '1' : undefined,
++      NPOINTS: (o) => o.type === 'Polygon' ? '' + o.npoints : undefined,
++      GETWINDINGRULE: (o) => '' + (o.type === 'Area' ? 0 : o.wind),
++    },
++    PathIterator: {
++      ISDONE: (o) => (o.path.length === 0 ? '1' : '0'),
++      GETWINDINGRULE: (o) => '' + o.wind,
++    },
++  };
++  function readArgs(bytes) {          // A n, then n values -> [string | object | null]
++    const recs = parseRecords(bytes), out = [];
++    let i = 1;
++    const val = () => {
++      const r = recs[i++];
++      if (!r || r.tag === 'N' || r.tag === 'U') return null;
++      if (r.tag === 'J') return objs.get(parseInt(r.data.split('\t').pop().split(':')[1], 10)) || null;
++      if (r.tag === 'A') { const n = parseInt(r.data, 10), a = []; for (let k = 0; k < n; k++) a.push(val()); return a; }
++      return r.data;
++    };
++    const n = recs.length && recs[0].tag === 'A' ? parseInt(recs[0].data, 10) : 0;
++    for (let k = 0; k < n; k++) out.push(val());
++    return out;
++  }
++  function callMethod(ref, name, varBytes) {   // op 4: R value, or X (no such method), or C
++    const parts = [];
++    const o = objs.get(parseInt(String(ref).split('\t').pop().split(':')[1], 10));
++    const m = o && METHODS[o.kind] && METHODS[o.kind][String(name).toUpperCase()];
++    let v;
++    if (m) {
++      try { v = m(o, varBytes ? readArgs(varBytes) : []); }
++      catch (e) { rec(parts, 'C', e instanceof JdorError ? e.toString() : 'JDOR (web): ' + e); return reply(parts); }
++    }
++    if (v === undefined) rec(parts, 'X', '');
++    else { rec(parts, 'R', ''); value(parts, v); }
++    return reply(parts);
++  }
++
 +  let queue = Promise.resolve();      // serialise commands that wait for the browser
 +  function execute(op, address, command, isOR, varBytes) {
++    if (op === 4) return callMethod(command, address, varBytes);
 +    if (op === 2) {                   // a new handler
 +      const h = new Handler();
 +      const parts = []; rec(parts, 'R', ''); value(parts, h.obj);
@@ -2970,10 +3206,10 @@ index 0000000..59e2f82
 +  end
 diff --git a/wasm/web/jdor.cls b/wasm/web/jdor.cls
 new file mode 100644
-index 0000000..8ef981a
+index 0000000..170b156
 --- /dev/null
 +++ b/wasm/web/jdor.cls
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,124 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -3030,8 +3266,12 @@ index 0000000..8ef981a
 + * Objects that commands return (colors, fonts, images, shapes, ...) are
 + * JdorObject instances that say what they are: STRING "a JDOR Image (#99)",
 + * TOSTRING "JDOR Image #99: 500x500, type 2 (ARGB), an OffscreenCanvas",
-+ * KIND "Image"; the getters work (rc~width, rc~getWidth, rc~red), and
-+ * passing one back by variable name works as in JDOR.
++ * KIND "Image"; the getters work (rc~width, rc~getWidth, rc~red), and so do
++ * the methods that read the object at the time of the call, as the Java ones
++ * of the same names: an Image's getRGB(x, y) (its pixel, a signed ARGB
++ * integer), a Stroke's getDashArray, an Area's isRectangular and isEmpty, a
++ * Polygon's npoints, a PathIterator's isDone and getWindingRule.  Passing
++ * one back by variable name works as in JDOR.
 + */
 +call JdorSetup .JdorObject
 +call addJdorHandler                 -- set up the JDOR environment
@@ -3083,12 +3323,16 @@ index 0000000..8ef981a
 +::method toString                   -- JDOR Image #99: what it is
 +  expose display
 +  return display
-+::method unknown                    -- getters: x~size, x~getSize, x~isBold
++::method unknown                    -- getters: x~size, x~getSize, x~isBold, x~getRGB(3, 4)
 +  expose attrs
 +  use arg name, args
 +  n = name~upper
-+  if attrs~hasIndex(n) then return attrs[n]
-+  if n~startsWith("GET"), attrs~hasIndex(n~substr(4)) then return attrs[n~substr(4)]
++  if args~items = 0 then do         -- the getters known when the object was made
++    if attrs~hasIndex(n) then return attrs[n]
++    if n~startsWith("GET"), attrs~hasIndex(n~substr(4)) then return attrs[n~substr(4)]
++  end
++  r = JdorObjectCall(self~jdorRef, n, args)   -- the methods that read the object now
++  if r \== .nil then return r[1]
 +  raise syntax 97.1 array(self, name)
 diff --git a/wasm/web/ooRexx-worker.js b/wasm/web/ooRexx-worker.js
 index 71cd58a..2edbbe8 100644

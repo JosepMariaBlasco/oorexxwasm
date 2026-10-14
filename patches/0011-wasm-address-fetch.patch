@@ -265,7 +265,7 @@ index ac71775..d9ef340 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index d3891ce..d4725ef 100755
+index d9e50b0..9b1ad23 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -65,6 +65,9 @@ class H(SimpleHTTPRequestHandler):
@@ -278,10 +278,10 @@ index d3891ce..d4725ef 100755
  time.sleep(0.7)
  
  CASES = [
-@@ -179,6 +182,9 @@ CASES = [
-                  'shape u area a; areaAdd u b; shapeBounds u; say rc\nshape i area a; areaIntersect i b; shapeBounds i; say rc\n'
-                  '::requires "jdor.cls"', {},
-      lambda r: r["out"] == "0.0 0.0 15.0 10.0\n5.0 0.0 5.0 10.0\n"),
+@@ -213,6 +216,9 @@ CASES = [
+                            'say e[1]~substr(e[1]~pos("cause: [") + 8)\n::requires "jdor.cls"', {},
+      lambda r: r["out"] == "-102\n-102\n-102\nJDOR (web): this command needs exactly 1 or 2 arguments (the name of the shape and "
+                            "optionally the new winding rule argument), received 0 instead]\n"),
 +  # ADDRESS FETCH (wasm/web/fetch.cls over cmdhandler.cls and js.cls): the portable test
 +  ("fetch", open(f"{SRC}/wasm/tests/fetch.rex").read(), {"js": {"worker": True}, "args": ["http://127.0.0.1:8124"]},
 +     lambda r: "44 passed, 0 failed" in r["out"] and r["rc"] == 0),
