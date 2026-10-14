@@ -322,6 +322,62 @@ with sync_playwright() as p:
     check("F12 on a stale or broken program says why", "syntax error" in m or "Still reading" in m, m)
     for f in ("nav.rex", "navlib.cls"): pg.locator(f'.f[data-path="/home/rexx/{f}"] .del').click()
 
+    # line numbers: automatic (more than 20 lines), the user's choice remembered; Settings back to automatic
+    def nums(): return pg.evaluate("document.getElementById('editor').classList.contains('nums')")
+    def jsv(expr): return pg.evaluate(expr)
+    pg.evaluate("localStorage.removeItem('orx-pg-lines')")
+    pick(pg, "Hello")
+    check("line numbers: none for a short program", not nums() and not pg.is_checked("#numson"))
+    pick(pg, "rexxtry")
+    nl = jsv("document.getElementById('src').value.split('\\n').length")
+    g = jsv("document.getElementById('gutter').textContent").split("\n")
+    check("line numbers: shown for a long program", nums() and pg.is_checked("#numson") and g[0] == "1" and g[nl - 1] == str(nl), (nums(), g[:2], nl))
+    jsv("(() => { const s = document.getElementById('src'); s.scrollTop = 400; s.dispatchEvent(new Event('scroll')); })()")
+    check("line numbers scroll with the program", jsv("document.getElementById('gutter').scrollTop === document.getElementById('src').scrollTop && document.getElementById('src').scrollTop > 0"))
+    pg.uncheck("#numson"); pick(pg, "Hello"); pick(pg, "rexxtry")
+    check("line numbers: turned off and remembered", not nums() and jsv("localStorage.getItem('orx-pg-lines')") == "off")
+    pg.check("#numson"); pick(pg, "Hello")
+    check("line numbers: turned on, also for short programs", nums())
+    pg.click("#settingsbtn"); pg.select_option("#numsmode", ""); pg.keyboard.press("Escape")
+    check("line numbers: Settings makes them automatic again", not nums() and jsv("localStorage.getItem('orx-pg-lines')") is None)
+
+    # find (Ctrl+F in the editor; Enter, Shift+Enter, Esc) and go to a line (:N, Ctrl+G)
+    pick(pg, "rexxtry")
+    SRC = pg.input_value("#src")
+    import re as _re
+    hits = [m.start() for m in _re.finditer("say", SRC, _re.I)]
+    def caret(): return jsv("[document.getElementById('src').selectionStart, document.getElementById('src').selectionEnd]")
+    jsv("(() => { const s = document.getElementById('src'); s.focus(); s.setSelectionRange(0, 0); })()")
+    pg.keyboard.press("Control+f")
+    check("find: Ctrl+F in the editor opens the bar", pg.is_visible("#findbar") and jsv("document.activeElement.id") == "findq")
+    pg.keyboard.type("say")
+    n = pg.locator("#findn").inner_text()
+    check("find: the first match, counted and marked", n == f"1 of {len(hits)}" and caret() == [hits[0], hits[0] + 3]
+          and pg.locator("#marks mark").count() == len(hits) and pg.locator("#marks mark.cur").count() == 1, (n, caret(), len(hits)))
+    pg.keyboard.press("Enter")
+    check("find: Enter goes to the next one", pg.locator("#findn").inner_text() == f"2 of {len(hits)}" and caret() == [hits[1], hits[1] + 3])
+    pg.keyboard.press("Shift+Enter"); pg.keyboard.press("Shift+Enter")
+    check("find: Shift+Enter goes back, wrapping around", pg.locator("#findn").inner_text() == f"{len(hits)} of {len(hits)}" and caret() == [hits[-1], hits[-1] + 3])
+    st = jsv("(() => { const s = document.getElementById('src'); return [s.scrollTop, s.clientHeight]; })()")
+    lh = 19.5; line_last = SRC[:hits[-1]].count("\n")
+    check("find: the match is scrolled into view", st[0] <= line_last * lh <= st[0] + st[1], (st, line_last))
+    pg.keyboard.press("Escape")
+    check("find: Esc closes it, the match stays selected", not pg.is_visible("#findbar") and jsv("document.activeElement.id") == "src"
+          and caret() == [hits[-1], hits[-1] + 3] and pg.locator("#marks mark").count() == 0)
+    pg.keyboard.press("Control+f"); pg.keyboard.type("zzqqzz")
+    check("find: no match", pg.locator("#findn").inner_text() == "no match" and "none" in (pg.get_attribute("#findq", "class") or ""))
+    pg.keyboard.press("Escape")
+    pg.keyboard.press("Control+g"); pg.keyboard.type("10")
+    off10 = sum(len(l) + 1 for l in SRC.split("\n")[:9])
+    check("go to a line: Ctrl+G, :10", pg.input_value("#findq") == ":10" and caret() == [off10, off10], (pg.input_value("#findq"), caret(), off10))
+    pg.keyboard.press("Escape")
+    jsv(f"(() => {{ const s = document.getElementById('src'); s.focus(); s.setSelectionRange({hits[2]}, {hits[2] + 3}); }})()")
+    pg.click("#findbtn")
+    check("find: the button, with the selected text", pg.input_value("#findq").lower() == "say" and pg.locator("#findn").inner_text() == f"3 of {len(hits)}",
+          (pg.input_value("#findq"), pg.locator("#findn").inner_text()))
+    pg.keyboard.press("Escape")
+    check("find: Esc in the bar does not touch the run state", pg.locator("#run").inner_text().strip().upper() == "RUN")
+
     # linked folders (File System Access API), driven with OPFS directories (same API, no picker)
     OPFS = """async (op) => {
       const root = await navigator.storage.getDirectory();

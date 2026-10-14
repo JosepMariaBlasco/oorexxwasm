@@ -152,6 +152,17 @@ in headless Chromium.
   uppercased, strings as written. Works on the last text the Parser read
   without errors; otherwise a note says why. The "go to…" select lists the
   definitions (labels indented under their routine or method).
+- Line numbers: `#gutter`, a `<pre>` over the textarea's left padding (which
+  grows to make room), scrolled with it. Automatic by default: shown when the
+  program has more than 20 lines; the "lines" checkbox stores an explicit
+  on/off (`orx-pg-lines`), and Settings can make it automatic again.
+- Find: a bar over the editor (the "find" button, or Ctrl/Cmd+F with the
+  focus in the editor; elsewhere the browser's own find). Plain text,
+  case-insensitive; every match is marked in `#marks`, a translucent layer
+  between `#hl` and `#src` (a chosen style's background would hide anything
+  under `#hl`). Enter / Shift+Enter (or F3) move, selecting the match in the
+  textarea and scrolling to it; Esc closes and leaves it selected. `:N` (or
+  Ctrl/Cmd+G) goes to line N. The marks follow edits while the bar is open.
 - Style chooser (after the Parser's `js/style-chooser.js`): every
   `rexx-*.css` but `test*`, fetched when first chosen; "auto" follows the page
   theme on the page's background, a chosen style brings its own background

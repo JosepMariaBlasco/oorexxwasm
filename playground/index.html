@@ -117,6 +117,40 @@ textarea {
 }
 .editor:not(.lit) .hl { visibility: hidden; }
 .hl .bad { text-decoration: underline wavy var(--err); text-decoration-skip-ink: none; }
+/* line numbers: a gutter over the left padding, scrolled with the textarea */
+.editor .gutter {
+  display: none; position: absolute; top: 0; left: 0; bottom: 0; z-index: 2; overflow: hidden; pointer-events: none;
+  box-sizing: border-box; width: calc(var(--gw, 2) * 1ch + 15px); margin: 0;
+  font: 13px/1.5 var(--mono); padding: 10px 8px 10px 6px; white-space: pre; text-align: right;
+  color: var(--gutter); background: inherit; border-right: 1px solid var(--line);
+}
+.editor.nums .gutter { display: block; }
+.editor.nums #src, .editor.nums .hl, .editor.nums .marks { padding-left: calc(var(--gw, 2) * 1ch + 25px); }
+/* find: the matches, marked in a translucent layer over the highlighted text (a style's
+   own background would hide anything under it), under the textarea */
+.marks {
+  position: absolute; inset: 0; overflow: hidden; pointer-events: none; margin: 0;
+  font: 13px/1.5 var(--mono); padding: 10px 14px; white-space: pre; tab-size: 2; color: transparent;
+}
+.marks mark { color: transparent; background: color-mix(in srgb, #e8b623 32%, transparent); border-radius: 2px; }
+.marks mark.cur { background: color-mix(in srgb, #f08a24 45%, transparent); box-shadow: 0 0 0 1px #d9740f; }
+.findbar {
+  position: absolute; top: 6px; right: 20px; z-index: 3; display: flex; align-items: center; gap: 3px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 3px 4px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .18); font: 12px var(--mono); color: var(--muted); max-width: calc(100% - 28px);
+}
+.findbar[hidden] { display: none; }
+.findbar input {
+  font: 12px var(--mono); color: var(--ink); background: var(--code-bg); border: 1px solid var(--line);
+  border-radius: 3px; padding: 3px 6px; width: 22ch; min-width: 0; outline: none;
+}
+.findbar input:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.findbar input.none { border-color: var(--err); }
+.findbar .n { min-width: 7ch; text-align: center; white-space: nowrap; }
+.findbar button { border: 0; background: none; color: var(--muted); font: 14px/1 var(--sans); padding: 3px 6px; border-radius: 3px; cursor: pointer; }
+.findbar button:hover { background: var(--accent); color: var(--accent-ink); }
+.hint .hbtn { font: 12px var(--mono); color: var(--muted); background: none; border: 1px solid var(--line); border-radius: 3px; padding: 0 6px; cursor: pointer; }
+.hint .hbtn:hover { color: var(--ink); border-color: var(--muted); }
 .hint .lint { color: var(--err); flex: 1 1 100%; order: -1; }
 .hint .navmsg { color: var(--muted); flex: 1 1 100%; order: -1; }
 .hint label { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
@@ -272,11 +306,18 @@ footer a { color: var(--accent); }
         <label class="args"><span class="label">Arguments</span>
           <input id="args" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="(none)"></label>
       </div>
-      <div class="editor" id="editor"><div class="hl" id="hl" aria-hidden="true"></div><textarea id="src"
-        spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Rexx source"></textarea></div>
+      <div class="editor" id="editor"><div class="hl" id="hl" aria-hidden="true"></div><div class="marks" id="marks" aria-hidden="true"></div><textarea id="src"
+        spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Rexx source"></textarea><pre class="gutter" id="gutter" aria-hidden="true"></pre>
+        <div class="findbar" id="findbar" role="search" hidden><input id="findq" spellcheck="false" autocapitalize="off" autocomplete="off"
+          placeholder="find, or :line" aria-label="Find in the program (Enter: next, Shift+Enter: previous, Esc: close; :N goes to line N)"><span
+          class="n" id="findn" aria-live="polite"></span><button type="button" id="findprev" title="Previous match (Shift+Enter)" aria-label="Previous match">&uarr;</button><button
+          type="button" id="findnext" title="Next match (Enter)" aria-label="Next match">&darr;</button><button
+          type="button" id="findclose" title="Close (Esc)" aria-label="Close the find bar">&times;</button></div></div>
       <div class="hint"><span class="lint" id="lint" hidden></span><span class="navmsg" id="navmsg" hidden></span><span id="fname"></span><span><label
         title="Go to a label, routine, class or method (F12 or Ctrl+click on a name goes to its definition, Alt+Left goes back)"><select
         id="outline" aria-label="Go to a definition"><option value="">go to&hellip;</option></select></label>
+        <button type="button" class="hbtn" id="findbtn" title="Find in the program (Ctrl+F in the editor; Ctrl+G goes to a line)">find</button>
+        <label title="Line numbers. Automatic: shown for programs of more than 20 lines. What you choose here is remembered (Settings can make it automatic again)"><input type="checkbox" id="numson"> lines</label>
         <label title="Syntax highlighting and checking by the Rexx Parser"><input type="checkbox" id="hlon" checked> highlight</label>
         <label title="Highlighting style (the Rexx Parser's stylesheets)">style <select id="hlstyle"></select></label>
         &middot; Ctrl+Enter runs &middot; Esc stops</span></div>
@@ -313,7 +354,7 @@ footer a { color: var(--accent); }
         <span class="label">Console</span>
         <span class="legend"><i class="o">stdout</i><i class="e">stderr</i><i class="t">trace</i><i class="u">you</i>
           <button class="small" id="clear" type="button">Clear</button>
-          <button class="small" id="settingsbtn" type="button" title="Console colors" aria-label="Settings">&#9881;</button></span>
+          <button class="small" id="settingsbtn" type="button" title="Settings: console colors, line numbers" aria-label="Settings">&#9881;</button></span>
       </div>
       <div class="console" id="console"><div class="flow"><pre id="out" aria-live="polite"></pre><label
         class="prompt" id="prompt" hidden><input id="line" spellcheck="false" autocapitalize="off"
@@ -338,6 +379,10 @@ footer a { color: var(--accent); }
     <p>Each theme (light, dark) keeps its own colors. They are remembered in this browser.</p>
     <div class="colors" id="colors"></div>
     <div class="dfoot"><button class="small" type="button" id="colorsreset">Reset to defaults</button></div>
+    <h3>Editor</h3>
+    <p><label>Line numbers <select id="numsmode"><option value="">automatic: for programs of more than 20 lines</option><option
+      value="on">always</option><option value="off">never</option></select></label></p>
+    <p>Remembered in this browser; the <b>lines</b> box under the editor changes it too.</p>
   </div>
 </dialog>
 
@@ -354,7 +399,7 @@ footer a { color: var(--accent); }
       <li>The console understands ANSI escape sequences for colors and styles (<code>'1b'x || '[31m'</code>…; see the <i>ANSI colors</i> sample); <code>ESC[2J</code> clears it.</li>
     </ul>
     <h3>The editor</h3>
-    <p>The <a href="https://rexx.epbcn.com/rexx-parser/" target="_blank" rel="noopener">Rexx Parser</a> highlights the program and checks its syntax as you type: an error is shown under the editor and its line is underlined. <b>style</b> picks one of the Parser's highlighting styles (<i>auto</i> follows the page theme); <b>highlight</b> turns it all off. <kbd>F12</kbd> (or <kbd>Ctrl</kbd>+click, <kbd>Cmd</kbd>+click on a Mac) on a name goes to its definition: a label from a call or SIGNAL in the same code body, a <code>::ROUTINE</code>, a <code>::CLASS</code> from <code>.Name</code>, a <code>::METHOD</code> or <code>::ATTRIBUTE</code> from <code>~name</code> (each in turn when there are several), or one of your files from <code>::REQUIRES</code>; on a definition it goes to the next use. <kbd>Alt</kbd>+<kbd>&larr;</kbd> goes back. <b>go to&hellip;</b> lists the labels, routines, classes and methods. <kbd>Tab</kbd> inserts two spaces. Edits to a sample are kept while the page is open.</p>
+    <p>The <a href="https://rexx.epbcn.com/rexx-parser/" target="_blank" rel="noopener">Rexx Parser</a> highlights the program and checks its syntax as you type: an error is shown under the editor and its line is underlined. <b>style</b> picks one of the Parser's highlighting styles (<i>auto</i> follows the page theme); <b>highlight</b> turns it all off. <kbd>F12</kbd> (or <kbd>Ctrl</kbd>+click, <kbd>Cmd</kbd>+click on a Mac) on a name goes to its definition: a label from a call or SIGNAL in the same code body, a <code>::ROUTINE</code>, a <code>::CLASS</code> from <code>.Name</code>, a <code>::METHOD</code> or <code>::ATTRIBUTE</code> from <code>~name</code> (each in turn when there are several), or one of your files from <code>::REQUIRES</code>; on a definition it goes to the next use. <kbd>Alt</kbd>+<kbd>&larr;</kbd> goes back. <b>go to&hellip;</b> lists the labels, routines, classes and methods. <b>find</b> (<kbd>Ctrl</kbd>+<kbd>F</kbd> in the editor) opens a small find bar: what you type is marked everywhere in the program (whatever its case), <kbd>Enter</kbd> and <kbd>Shift</kbd>+<kbd>Enter</kbd> go to the next and previous match, <kbd>Esc</kbd> closes it and leaves the match selected; <code>:120</code> there (or <kbd>Ctrl</kbd>+<kbd>G</kbd>) goes to line 120. <b>lines</b> shows the line numbers: by default they are shown for programs of more than 20 lines; what you choose is remembered (&#9881; Settings can make it automatic again). <kbd>Tab</kbd> inserts two spaces. Edits to a sample are kept while the page is open.</p>
     <h3>Your files</h3>
     <ul>
       <li>Every run has <code>/home/rexx</code> as its current directory. Your files live there, and what a program writes there stays for the next runs. Click a file to edit it (Run then runs it); &darr; downloads it, &times; deletes it.</li>
@@ -377,6 +422,7 @@ footer a { color: var(--accent); }
     <h3>Keys</h3>
     <ul>
       <li><kbd>Ctrl</kbd>+<kbd>Enter</kbd> run &middot; <kbd>Esc</kbd> stop &middot; <kbd>F1</kbd> this help</li>
+      <li>In the editor: <kbd>Ctrl</kbd>+<kbd>F</kbd> find &middot; <kbd>Ctrl</kbd>+<kbd>G</kbd> go to a line &middot; <kbd>F12</kbd> go to a definition &middot; <kbd>Alt</kbd>+<kbd>&larr;</kbd> back</li>
       <li>In the console: <kbd>Enter</kbd> send a line &middot; <kbd>Ctrl</kbd>+<kbd>D</kbd> end of file &middot; <kbd>&uarr;</kbd>/<kbd>&darr;</kbd> history</li>
     </ul>
   </div>
@@ -603,6 +649,8 @@ footer a { color: var(--accent); }
   // always shows the textarea's exact text: lines unchanged since the last answer keep
   // their colors, the others are plain until the next answer.
   const editor = $("editor"), hlEl = $("hl"), lint = $("lint"), hlon = $("hlon");
+  const gutter = $("gutter"), marksEl = $("marks"), numson = $("numson");
+  const findbar = $("findbar"), findq = $("findq"), findn = $("findn");
   const H = { run: null, buf: "", id: 0, sent: null, busy: false, timer: 0, restarts: 0,
               base: { lines: [], html: [] }, err: null, on: recall("orx-pg-hl") !== "off" };
   hlon.checked = H.on;
@@ -653,7 +701,11 @@ footer a { color: var(--accent); }
     } catch {}
     hlTheme();
   });
-  function hlScroll() { hlEl.scrollTop = src.scrollTop; hlEl.scrollLeft = src.scrollLeft; }
+  function hlScroll() {
+    hlEl.scrollTop = src.scrollTop; hlEl.scrollLeft = src.scrollLeft;
+    gutter.scrollTop = src.scrollTop;
+    marksEl.scrollTop = src.scrollTop; marksEl.scrollLeft = src.scrollLeft;
+  }
   function hlRender() {
     editor.classList.toggle("lit", H.on);
     chooser.disabled = !H.on;
@@ -679,6 +731,7 @@ footer a { color: var(--accent); }
     lint.textContent = e ? (e.line ? `line ${e.line}: ` : "") + `Error ${e.code}: ${e.text}` : "";
   }
   function hlChanged(delay) {
+    gutRender(); findRefresh();
     hlRender(); hlLint();
     clearTimeout(H.timer);
     if (H.on) H.timer = setTimeout(hlSend, delay);
@@ -914,6 +967,144 @@ footer a { color: var(--accent); }
     if (d && navReady()) navGo(d);
   });
   src.addEventListener("click", (e) => { if ((e.ctrlKey || e.metaKey) && src.selectionStart === src.selectionEnd) navAt(src.selectionStart); });
+
+  // ---- line numbers and find ------------------------------------------------------
+  // Line numbers: automatic (shown when the program has more than 20 lines) unless the
+  // user chose; the choice is remembered. Find: a bar over the editor; the matches are
+  // marked in a translucent layer of their own, so they show with or without highlighting.
+  const LINES_KEY = "orx-pg-lines", AUTO_LINES = 20;
+  let gutN = -1;
+  function numsWanted(n) {
+    const pref = recall(LINES_KEY);
+    if (pref === "on") return true;
+    if (pref === "off") return false;
+    return n - (src.value.endsWith("\n") ? 1 : 0) > AUTO_LINES;
+  }
+  function gutRender() {
+    const n = src.value.split("\n").length, on = numsWanted(n);
+    editor.classList.toggle("nums", on);
+    numson.checked = on;
+    if (!on) { gutN = -1; gutter.textContent = ""; return; }
+    if (n !== gutN) {
+      gutN = n;
+      const a = new Array(n);
+      for (let i = 0; i < n; i++) a[i] = i + 1;
+      gutter.textContent = a.join("\n") + "\n\n ";
+      editor.style.setProperty("--gw", String(Math.max(2, String(n).length)));
+    }
+    hlScroll();
+  }
+  numson.addEventListener("change", () => { remember(LINES_KEY, numson.checked ? "on" : "off"); gutRender(); });
+
+  const F = { q: "", hits: [], len: 0, cur: -1, anchor: 0 };
+  let charW = 0;
+  function lineOf(off) { let n = 0; for (let i = src.value.indexOf("\n"); i >= 0 && i < off; i = src.value.indexOf("\n", i + 1)) n++; return n; }
+  function scrollToOffset(off) {        // bring a textarea offset into view, both ways
+    const cs = getComputedStyle(src), lh = parseFloat(cs.lineHeight) || 19.5;
+    const line = lineOf(off), col = off - (src.value.lastIndexOf("\n", off - 1) + 1);
+    const top = line * lh;
+    if (top < src.scrollTop || top + 2 * lh > src.scrollTop + src.clientHeight)
+      src.scrollTop = Math.max(0, top - src.clientHeight / 3);
+    if (!charW) { const c = document.createElement("canvas").getContext("2d"); c.font = cs.font; charW = c.measureText("0").width || 8; }
+    const pl = parseFloat(cs.paddingLeft) || 14, x = col * charW;
+    const view = src.clientWidth - pl - 2 * charW;
+    if (x < src.scrollLeft || x > src.scrollLeft + view) src.scrollLeft = Math.max(0, x - view / 2);
+    hlScroll();
+  }
+  function findHits() {
+    F.hits = []; F.len = 0;
+    if (!F.q || F.q.startsWith(":")) return;
+    const re = new RegExp(F.q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi");
+    let m;
+    while ((m = re.exec(src.value)) && F.hits.length < 5000) { F.hits.push(m.index); F.len = m[0].length; if (!m[0].length) re.lastIndex++; }
+  }
+  function marksRender() {
+    if (findbar.hidden || !F.hits.length) { marksEl.textContent = ""; return; }
+    const v = src.value;
+    let h = "", p = 0;
+    F.hits.forEach((st, i) => {
+      h += esc(v.slice(p, st)) + (i === F.cur ? '<mark class="cur">' : "<mark>") + esc(v.slice(st, st + F.len)) + "</mark>";
+      p = st + F.len;
+    });
+    marksEl.innerHTML = h + esc(v.slice(p)) + "\n\n ";
+    hlScroll();
+  }
+  function findSay() {
+    const q = F.q, goto = /^:\s*(\d*)\s*$/.exec(q);
+    findq.classList.toggle("none", !!q && !goto && !F.hits.length);
+    const lines = src.value.split("\n").length;
+    findn.textContent = !q ? "" : goto ? `of ${lines}` : !F.hits.length ? "no match" :
+      F.cur < 0 ? `${F.hits.length} found` : `${F.cur + 1} of ${F.hits.length}`;
+  }
+  function findShow() {                  // select the current match and scroll to it
+    if (F.cur < 0) { marksRender(); findSay(); return; }
+    const st = F.hits[F.cur];
+    src.setSelectionRange(st, st + F.len);
+    scrollToOffset(st);
+    marksRender(); findSay();
+  }
+  function findGo(dir) {
+    const goto = /^:\s*(\d+)\s*$/.exec(F.q);
+    if (goto) { gotoLine(+goto[1]); return; }
+    if (!F.hits.length) return;
+    if (F.cur < 0) {
+      const at = dir > 0 ? F.hits.findIndex((x) => x >= F.anchor) : F.hits.findLastIndex((x) => x < F.anchor);
+      F.cur = at >= 0 ? at : dir > 0 ? 0 : F.hits.length - 1;
+    } else F.cur = (F.cur + dir + F.hits.length) % F.hits.length;
+    findShow();
+  }
+  function gotoLine(n) {
+    const lines = src.value.split("\n");
+    n = Math.max(1, Math.min(n || 1, lines.length));
+    let off = 0;
+    for (let i = 0; i < n - 1; i++) off += lines[i].length + 1;
+    src.setSelectionRange(off, off);
+    src.scrollLeft = 0;
+    scrollToOffset(off);
+  }
+  function findInput() {
+    F.q = findq.value; F.cur = -1;
+    findHits();
+    const goto = /^:\s*(\d+)\s*$/.exec(F.q);
+    if (goto) gotoLine(+goto[1]);
+    else if (F.hits.length) { findGo(1); return; }
+    marksRender(); findSay();
+  }
+  function findRefresh() {               // the text changed: the matches again, near the old one
+    if (findbar.hidden || !F.q) return;
+    const was = F.cur >= 0 ? F.hits[F.cur] : -1;
+    findHits();
+    F.cur = was < 0 || !F.hits.length ? -1 : Math.max(0, F.hits.findIndex((x) => x >= was));
+    if (F.cur >= F.hits.length) F.cur = F.hits.length - 1;
+    marksRender(); findSay();
+  }
+  function findOpen(initial) {
+    const sel = src.value.slice(src.selectionStart, src.selectionEnd);
+    F.anchor = src.selectionStart;
+    findbar.hidden = false;
+    if (initial !== undefined) findq.value = initial;
+    else if (sel && !sel.includes("\n") && sel.length < 200) findq.value = sel;
+    findq.focus(); findq.select();
+    if (initial === ":") findq.setSelectionRange(1, 1);
+    F.q = ""; F.cur = -1;
+    if (findq.value && findq.value !== ":") findInput(); else { F.q = findq.value; findHits(); marksRender(); findSay(); }
+  }
+  function findClose() {
+    findbar.hidden = true;
+    marksRender();
+    src.focus({ preventScroll: true });
+  }
+  findq.addEventListener("input", findInput);
+  findq.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" || e.key === "F3") { e.preventDefault(); findGo(e.shiftKey ? -1 : 1); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); findClose(); }
+    else if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "f" || e.key === "F")) { e.preventDefault(); findq.select(); }
+    else if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "g" || e.key === "G")) { e.preventDefault(); findq.value = ":"; findq.setSelectionRange(1, 1); findInput(); }
+  });
+  $("findprev").addEventListener("click", () => findGo(-1));
+  $("findnext").addEventListener("click", () => findGo(1));
+  $("findclose").addEventListener("click", findClose);
+  $("findbtn").addEventListener("click", () => findOpen());
 
   // ---- samples ------------------------------------------------------------------
   function saveCurrent() {
@@ -1661,7 +1852,8 @@ footer a { color: var(--accent); }
     const all = colorPrefs(); delete all[themeNow()];
     remember(COLORS_KEY, Object.keys(all).length ? JSON.stringify(all) : null); applyColors(); renderColors();
   });
-  $("settingsbtn").addEventListener("click", () => { renderColors(); toggleDialog($("settings")); });
+  $("settingsbtn").addEventListener("click", () => { renderColors(); $("numsmode").value = recall(LINES_KEY) || ""; toggleDialog($("settings")); });
+  $("numsmode").addEventListener("change", (e) => { remember(LINES_KEY, e.target.value || null); gutRender(); });
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => { applyColors(); if ($("settings").open) renderColors(); });
   applyColors();
 
@@ -1677,6 +1869,9 @@ footer a { color: var(--accent); }
   src.addEventListener("keydown", (e) => {
     if (e.key === "F12" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); navAt(src.selectionStart); return; }
     if (e.key === "ArrowLeft" && e.altKey && !e.shiftKey && !e.ctrlKey && !e.metaKey) { e.preventDefault(); navBack(); return; }
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "f" || e.key === "F")) { e.preventDefault(); findOpen(); return; }
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === "g" || e.key === "G")) { e.preventDefault(); findOpen(":"); return; }
+    if (e.key === "F3" && !findbar.hidden) { e.preventDefault(); findGo(e.shiftKey ? -1 : 1); return; }
     if (e.key === "Tab" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
       e.preventDefault();
       src.setRangeText("  ", src.selectionStart, src.selectionEnd, "end");
