@@ -12,6 +12,7 @@
 /* Date     Version Details                                                   */
 /* -------- ------- --------------------------------------------------------- */
 /* 20261013    0.1  First version, from grok.rex 0.4                          */
+/* 20261014    0.2  JDOR commands unquoted, as Rexx commands are written      */
 /*                                                                            */
 /******************************************************************************/
 
@@ -900,95 +901,95 @@ Exit
   pl~lastEp = ""                     -- the previous point, to draw segments
   pl~lastSpecX = pl~x0
 
-  "newImage" pl~W pl~H
-  "winTitle grok.rex: a network learns (a + b) mod" p
-  "color cGrid 228 228 228"
-  "color cAxis 150 150 150"
-  "color cText 40 40 40"
-  "color cSoft 110 110 110"
-  "color cTrain 31 119 180"
-  "color cTest 230 110 20"
-  "color cGrok 200 30 60"
-  "color okTrain 188 224 188"
-  "color badTrain 244 196 196"
-  "color okTest 40 160 70"
-  "color badTest 214 48 48"
-  "color cFrame 25 25 25"
-  "color cBar 8 48 107"
-  "font fTitle SansSerif bold 18"
-  "font fBold SansSerif bold 13"
-  "font fText SansSerif plain 12"
-  "font fSmall SansSerif plain 10"
-  "stroke thin 1"
-  "stroke thick 2"
+  newImage pl~W pl~H
+  winTitle "grok.rex: a network learns (a + b) mod" p
+  color cGrid 228 228 228
+  color cAxis 150 150 150
+  color cText 40 40 40
+  color cSoft 110 110 110
+  color cTrain 31 119 180
+  color cTest 230 110 20
+  color cGrok 200 30 60
+  color okTrain 188 224 188
+  color badTrain 244 196 196
+  color okTest 40 160 70
+  color badTest 214 48 48
+  color cFrame 25 25 25
+  color cBar 8 48 107
+  font fTitle SansSerif bold 18
+  font fBold SansSerif bold 13
+  font fText SansSerif plain 12
+  font fSmall SansSerif plain 10
+  stroke thin 1
+  stroke thick 2
 
-  "color white"; "moveTo 0 0"; "fillRect" pl~W pl~H
-  "color cText"; "font fTitle"; "moveTo 20 30"
-  "drawString A network learns (a + b) mod" p "- grok.rex, in ooRexx, in the browser"
-  "color cSoft"; "font fText"; "moveTo 20 50"
-  "drawString" nTrain "train pairs,"  nTest "test pairs (never trained on)  ·  embeddings" -
+  color white; moveTo 0 0; fillRect pl~W pl~H
+  color cText; font fTitle; moveTo 20 30
+  drawString "A network learns (a + b) mod" p "- grok.rex, in ooRexx, in the browser"
+  color cSoft; font fText; moveTo 20 50
+  drawString nTrain "train pairs,"  nTest "test pairs (never trained on)  ·  embeddings" -
     de", hidden" dh"  ·  AdamW lr="lr "wd="wd"  ·  full batch, one step per epoch"
 
   x0 = pl~x0; x1 = x0 + pl~pw
   -- vertical grid lines: every quarter of the run, in all three panels
-  "stroke thin"
+  stroke thin
   Loop q = 0 To 4
     x = PlotX(pl, epochs * q / 4)
-    "color cGrid"
-    "moveTo" x pl~lossY; "drawLine" x pl~lossY + pl~lossH
-    "moveTo" x pl~accY;  "drawLine" x pl~accY + pl~accH
-    "color cSoft"; "font fSmall"
+    color cGrid
+    moveTo x pl~lossY; drawLine x pl~lossY + pl~lossH
+    moveTo x pl~accY;  drawLine x pl~accY + pl~accH
+    color cSoft; font fSmall
     lab = Format(epochs * q / 4,,0)
-    "moveTo" x - 3 * Length(lab) pl~specY + pl~specH + 16
-    "drawString" lab
+    moveTo x - 3 * Length(lab) pl~specY + pl~specH + 16
+    drawString lab
   End
-  "moveTo" x1 - 30 pl~specY + pl~specH + 30; "drawString epoch"
+  moveTo x1 - 30 pl~specY + pl~specH + 30; drawString "epoch"
 
   -- losses
-  "color cText"; "font fBold"; "moveTo" x0 pl~lossY - 8; "drawString loss (log scale)"
+  color cText; font fBold; moveTo x0 pl~lossY - 8; drawString "loss (log scale)"
   labs = .Array~of("10", "1", "0.1", "0.01", "1e-3", "1e-4", "1e-5", "1e-6")
   Loop i = 1 To 8
     y = PlotLossY(pl, 10 ** (2 - i))
-    "color cGrid"; "moveTo" x0 y; "drawLine" x1 y
-    "color cSoft"; "font fSmall"; "moveTo" x0 - 8 - 5 * Length(labs[i]) y + 4
-    "drawString" labs[i]
+    color cGrid; moveTo x0 y; drawLine x1 y
+    color cSoft; font fSmall; moveTo x0 - 8 - 5 * Length(labs[i]) y + 4
+    drawString labs[i]
   End
   Call PlotLegend pl, x1 - 140, pl~lossY - 8
 
   -- accuracies
-  "color cText"; "font fBold"; "moveTo" x0 pl~accY - 8; "drawString accuracy"
+  color cText; font fBold; moveTo x0 pl~accY - 8; drawString "accuracy"
   Loop v Over .Array~of(0, 50, 100)
     y = PlotAccY(pl, v / 100)
-    "color cGrid"; "moveTo" x0 y; "drawLine" x1 y
-    "color cSoft"; "font fSmall"; "moveTo" x0 - 12 - 5 * Length(v) y + 4
-    "drawString" v"%"
+    color cGrid; moveTo x0 y; drawLine x1 y
+    color cSoft; font fSmall; moveTo x0 - 12 - 5 * Length(v) y + 4
+    drawString v"%"
   End
   Call PlotLegend pl, x1 - 140, pl~accY - 8
 
   -- spectrogram
-  "color cText"; "font fBold"; "moveTo" x0 pl~specY - 8
-  "drawString energy of E by Fourier frequency, over time (darker = more)"
-  "font fSmall"; "color cSoft"
+  color cText; font fBold; moveTo x0 pl~specY - 8
+  drawString "energy of E by Fourier frequency, over time (darker = more)"
+  font fSmall; color cSoft
   Loop k = 1 To pl~half
-    "moveTo" x0 - 32 pl~specY + (k-1) * pl~rowH + pl~rowH % 2 + 4
-    "drawString k="k
+    moveTo x0 - 32 pl~specY + (k-1) * pl~rowH + pl~rowH % 2 + 4
+    drawString "k="k
   End
-  "color cAxis"; "stroke thin"
-  "moveTo" x0 pl~specY; "drawRect" pl~pw pl~specH
+  color cAxis; stroke thin
+  moveTo x0 pl~specY; drawRect pl~pw pl~specH
 
   -- the table
   gx0 = pl~gx0; gy0 = pl~gy0; c = pl~cell
-  "color cText"; "font fBold"; "moveTo" gx0 - 30 gy0 - 8
-  "drawString the network's table of (a + b) mod" p", now"
-  "font fSmall"; "color cSoft"
+  color cText; font fBold; moveTo gx0 - 30 gy0 - 8
+  drawString "the network's table of (a + b) mod" p", now"
+  font fSmall; color cSoft
   Loop n = 0 To p-1
-    "moveTo" gx0 + n * c + c % 2 - 3 * Length(n) gy0 + p * c + 12
-    "drawString" n
-    "moveTo" gx0 - 6 - 6 * Length(n) gy0 + n * c + c % 2 + 4
-    "drawString" n
+    moveTo gx0 + n * c + c % 2 - 3 * Length(n) gy0 + p * c + 12
+    drawString n
+    moveTo gx0 - 6 - 6 * Length(n) gy0 + n * c + c % 2 + 4
+    drawString n
   End
-  "moveTo" gx0 + p * c + 6 gy0 + p * c + 12; "drawString b"
-  "moveTo" gx0 - 20 gy0 + p * c + 12; "drawString a"
+  moveTo gx0 + p * c + 6 gy0 + p * c + 12; drawString "b"
+  moveTo gx0 - 20 gy0 + p * c + 12; drawString "a"
   ly = gy0 + p * c + 30
   items = .Array~of("okTrain train, right", "badTrain train, wrong", -
                     "okTest test, right", "badTest test, wrong")
@@ -996,18 +997,18 @@ Exit
     Parse Value items[i] With col text
     lx = gx0 - 20 + ((i-1) // 2) * 140
     yy = ly + ((i-1) % 2) * 18
-    "color" col; "moveTo" lx yy; "fillRect 12 12"
+    color col; moveTo lx yy; fillRect 12 12
     If col~pos("Test") > 0 Then Do
-      "color cFrame"; "stroke thin"; "drawRect 11 11"
+      color cFrame; stroke thin; drawRect 11 11
     End
-    "color cText"; "font fText"; "moveTo" lx + 18 yy + 11; "drawString" text
+    color cText; font fText; moveTo lx + 18 yy + 11; drawString text
   End
 
   -- the bars
-  "color cText"; "font fBold"; "moveTo" pl~bx0 - 20 pl~specY - 8
-  "drawString energy of E by frequency, now"
+  color cText; font fBold; moveTo pl~bx0 - 20 pl~specY - 8
+  drawString "energy of E by frequency, now"
 
-  "winShow"
+  winShow
   Return pl
 
 -- The legend of the train and test lines.
@@ -1015,11 +1016,11 @@ Exit
 ::Routine PlotLegend
   Use Strict Arg pl, x, y
   Address jdor
-  "stroke thick"
-  "color cTrain"; "moveTo" x y - 4; "drawLine" x + 18 y - 4
-  "color cText"; "font fText"; "moveTo" x + 22 y; "drawString train"
-  "color cTest"; "moveTo" x + 70 y - 4; "drawLine" x + 88 y - 4
-  "color cText"; "moveTo" x + 92 y; "drawString test"
+  stroke thick
+  color cTrain; moveTo x y - 4; drawLine x + 18 y - 4
+  color cText; font fText; moveTo x + 22 y; drawString "train"
+  color cTest; moveTo x + 70 y - 4; drawLine x + 88 y - 4
+  color cText; moveTo x + 92 y; drawString "test"
 
 -- Pixel coordinates.
 
@@ -1047,13 +1048,13 @@ Exit
   y3 = PlotAccY(pl, trAcc);   y4 = PlotAccY(pl, teAcc)
   If pl~lastEp \== "" Then Do
     Parse Value pl~last With px py1 py2 py3 py4
-    "stroke thick"
-    "color cTest"
-    "moveTo" px py2; "drawLine" x y2
-    "moveTo" px py4; "drawLine" x y4
-    "color cTrain"
-    "moveTo" px py1; "drawLine" x y1
-    "moveTo" px py3; "drawLine" x y3
+    stroke thick
+    color cTest
+    moveTo px py2; drawLine x y2
+    moveTo px py4; drawLine x y4
+    color cTrain
+    moveTo px py1; drawLine x y1
+    moveTo px py3; drawLine x y3
   End
   pl~lastEp = ep
   pl~last = x y1 y2 y3 y4
@@ -1064,37 +1065,37 @@ Exit
   Use Strict Arg pl, ep
   Address jdor
   x = PlotX(pl, ep)
-  "color cGrok"; "stroke thin"
-  "moveTo" x pl~lossY; "drawLine" x pl~specY + pl~specH
-  "font fBold"; "moveTo" x + 5 pl~accY + pl~accH - 8
-  "drawString grokked: epoch" ep
+  color cGrok; stroke thin
+  moveTo x pl~lossY; drawLine x pl~specY + pl~specH
+  font fBold; moveTo x + 5 pl~accY + pl~accH - 8
+  drawString "grokked: epoch" ep
 
 -- The status line under the title.
 
 ::Routine PlotStatus
   Use Strict Arg pl, ep, trAcc, teAcc, wn, secs, grokEp
   Address jdor
-  "color white"; "moveTo 0 56"; "fillRect" pl~W 22
+  color white; moveTo 0 56; fillRect pl~W 22
   txt = "epoch" ep "/" pl~epochs "     train" Format(trAcc*100,,1)"%" -
         "    test" Format(teAcc*100,,1)"%     |W|" Format(wn,,2)       -
         "    " Format(secs,,0) "s"
-  "color cText"; "font fBold"; "moveTo 20 72"; "drawString" txt
+  color cText; font fBold; moveTo 20 72; drawString txt
   If grokEp > 0 Then Do
-    "color cGrok"; "moveTo 560 72"; "drawString grokked at epoch" grokEp
+    color cGrok; moveTo 560 72; drawString "grokked at epoch" grokEp
   End
 
 ::Routine PlotDone
   Use Strict Arg pl, grokEp, secs
   Address jdor
-  "color white"; "moveTo 540 56"; "fillRect" pl~W - 540 22
-  "font fBold"; "moveTo 560 72"
+  color white; moveTo 540 56; fillRect pl~W - 540 22
+  font fBold; moveTo 560 72
   If grokEp > 0 Then Do
-    "color cGrok"
-    "drawString grokked at epoch" grokEp" · done in" Format(secs,,0) "s"
+    color cGrok
+    drawString "grokked at epoch" grokEp" · done in" Format(secs,,0) "s"
   End
   Else Do
-    "color cText"
-    "drawString did not grok in" pl~epochs "epochs"
+    color cText
+    drawString "did not grok in" pl~epochs "epochs"
   End
 
 -- One column of the spectrogram (since the previous one) and the bars.
@@ -1110,25 +1111,25 @@ Exit
     r = Format(247 + t * (8 - 247),,0)
     g = Format(251 + t * (48 - 251),,0)
     b = Format(255 + t * (107 - 255),,0)
-    "color sp" r g b
-    "moveTo" pl~lastSpecX pl~specY + (k-1) * pl~rowH; "fillRect" w pl~rowH
+    color sp r g b
+    moveTo pl~lastSpecX pl~specY + (k-1) * pl~rowH; fillRect w pl~rowH
   End
   pl~lastSpecX = x
 
   -- the bars: clear their area, then one bar per frequency
   y0 = pl~specY; h = pl~specH
-  "color white"; "moveTo" pl~bx0 - 20 y0; "fillRect" pl~bw + 20 h + 20
-  "color cGrid"; "stroke thin"
-  "moveTo" pl~bx0 y0 + h; "drawLine" pl~bx0 + pl~bw y0 + h
+  color white; moveTo pl~bx0 - 20 y0; fillRect pl~bw + 20 h + 20
+  color cGrid; stroke thin
+  moveTo pl~bx0 y0 + h; drawLine pl~bx0 + pl~bw y0 + h
   slot = pl~bw % pl~half
   Loop k = 1 To pl~half
     bh = Format(Min(1, shares[k]) * h,,0)
     bx = pl~bx0 + (k-1) * slot + 6
-    "color cBar"; "moveTo" bx y0 + h - bh; "fillRect" slot - 12 bh
-    "color cSoft"; "font fSmall"
-    "moveTo" bx + 2 y0 + h + 14; "drawString k="k
-    "color cText"; "moveTo" bx y0 + h - bh - 4
-    "drawString" Format(shares[k] * 100,,0)"%"
+    color cBar; moveTo bx y0 + h - bh; fillRect slot - 12 bh
+    color cSoft; font fSmall
+    moveTo bx + 2 y0 + h + 14; drawString "k="k
+    color cText; moveTo bx y0 + h - bh - 4
+    drawString Format(shares[k] * 100,,0)"%"
   End
 
 -- The table as the network answers it now. Test cells are framed.
@@ -1137,29 +1138,29 @@ Exit
   Use Strict Arg pl, net, act, isTest
   Address jdor
   p = pl~p; c = pl~cell
-  "winUpdate" .false                             -- show the table when complete
+  winUpdate .false                               -- show the table when complete
   Loop a = 0 To p-1
     Loop b = 0 To p-1
       ok = (Predict(net, a, b, act) = (a + b) // p)
       test = isTest[a*p + b + 1]
       Select
-        When  test &  ok Then "color okTest"
-        When  test        Then "color badTest"
-        When  ok          Then "color okTrain"
-        Otherwise              "color badTrain"
+        When  test &  ok Then color okTest
+        When  test        Then color badTest
+        When  ok          Then color okTrain
+        Otherwise              color badTrain
       End
-      "moveTo" pl~gx0 + b * c pl~gy0 + a * c; "fillRect" c - 1 c - 1
+      moveTo pl~gx0 + b * c pl~gy0 + a * c; fillRect c - 1 c - 1
     End
   End
-  "color cFrame"; "stroke thick"
+  color cFrame; stroke thick
   Loop a = 0 To p-1
     Loop b = 0 To p-1
       If isTest[a*p + b + 1] Then Do
-        "moveTo" pl~gx0 + b * c pl~gy0 + a * c; "drawRect" c - 2 c - 2
+        moveTo pl~gx0 + b * c pl~gy0 + a * c; drawRect c - 2 c - 2
       End
     End
   End
-  "winUpdate" .true
+  winUpdate .true
 
 -- The share of the energy of E in each frequency pair (k, p-k), k = 1..half,
 -- as in FourierEnergy (whose result is a string for the trace).
