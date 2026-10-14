@@ -1,8 +1,10 @@
 # ooRexx/WASM and JavaScript
 
-Working draft · Josep Maria Blasco
+October 14, 2026
 
-*This is the living version of the specification: it follows the implementation and changes with it. The version posted to the ooRexx developers' list on October 8, 2026 is kept as it was sent in [`posted/2026-10-08`](posted/2026-10-08/ooRexx-WASM-and-JavaScript.md); [Changes since the posted version](#changes-since-the-posted-version) lists what differs.*
+*Version 2. [Version 1](posted/2026-10-08/ooRexx-WASM-and-JavaScript.md) was posted to the ooRexx developers' list on October 8, 2026; [Changes since version 1](#changes-since-version-1) lists what differs.*
+
+**What is new.** Version 1 described one direction, Rexx using JavaScript, and asked three questions. Version 2 answers them (see [Questions decided](#questions-decided)) and adds the other direction: Rexx objects reach JavaScript, which sends them messages; a page runs Rexx as it runs JavaScript; and a Rexx class can extend a JavaScript class. Readers of version 1 may go straight to the sections that are new, [Waiting](#waiting), [Rexx objects in JavaScript](#rexx-objects-in-javascript), [Rexx from the page](#rexx-from-the-page) and [Classes](#classes), and to the summary of changes at the end. Names changed too: the bridge's own methods now start with `js.`, and arrays count from 1.
 
 ## What this is
 
@@ -28,7 +30,7 @@ doc~body~appendChild(p)
 
 ## Realms
 
-JavaScript always runs in a "realm", a world with its own global objects. In the browser, ooRexx does not run in the page itself but in a background thread (a Web Worker), so that a long Rexx program never freezes the page. That thread is one realm, `.js`: it has the network (`fetch`), the browser's local database and WebSockets, but cannot touch what is on the screen. What the user sees, the DOM, belongs to another realm, the page's realm, `.js~page`. A JavaScript object of one realm cannot be given to the other (as an argument, or assigned to a property): strings, numbers and booleans travel as values, objects only within their realm.
+JavaScript always runs in a "realm", a world with its own global objects. In the browser, ooRexx does not run in the page itself but in a background thread (a Web Worker), so that a long-running Rexx program can never freeze the page. That thread is one realm, `.js`: it has the network (`fetch`), the browser's local database and WebSockets, but cannot touch what is on the screen. What the user sees, the DOM, belongs to another realm, the page's realm, `.js~page`. A JavaScript object of one realm cannot be given to the other (as an argument, or assigned to a property): strings, numbers and booleans travel as values, objects only within their realm.
 
 Under Node there is a single realm, `.js`, which also gives Node's modules (`.js~require("node:fs")`).
 
@@ -61,7 +63,11 @@ JavaScript strings, numbers, booleans (1/0) and bigints come back as Rexx string
 
 ## Errors
 
-A JavaScript exception is SYNTAX 98.900, "JavaScript error: TypeError: …", with what was thrown in `condition("O")~additional[2]`.
+Errors cross the bridge both ways, and what was thrown is kept.
+
+- **JavaScript to Rexx.** A JavaScript exception is SYNTAX 98.900, "JavaScript error: TypeError: …", with what was thrown in `condition("O")~additional[2]`. So is a rejected Promise under `~await`.
+- **Rexx to JavaScript.** A condition in Rexx code that JavaScript called (a synchronous handler, a message to a `RexxProxy`, an override of a class made by `.js~extend`) is thrown to JavaScript as a `RexxError`, whose message is Rexx's ("Error 41.1: …"). In the page, where a call gives a Promise, the Promise is rejected with it. `RexxError` is a global of the realm, for `instanceof`.
+- **Nobody to tell.** When JavaScript calls Rexx on its own (a timer, a Node server) it does not wait for the answer, so a condition there is written on the standard error, and so is a `RexxError` an event listener does not pass on.
 
 ## Events
 
@@ -254,7 +260,7 @@ The design follows Rony Flatscher's BSF4ooRexx, moved from Java to JavaScript: `
 
 ## Questions decided
 
-The posted version asked three questions. The answers adopted:
+Version 1 asked three questions. The answers adopted:
 
 1. **Names.** Case-insensitive resolution stays, with an exact form for every operation where it is not enough: `js.getStrict`, `js.setStrict`, `js.invokeStrict`.
 2. **Values.** Rexx strings always go as strings, since a Rexx string that looks like a number need not be one; `.js~box` and `.js~unbox` (and `.js~num` and the like) say what is meant.
@@ -262,28 +268,17 @@ The posted version asked three questions. The answers adopted:
 
 Further replies on the list are very welcome.
 
-## Changes since the posted version
+## Changes since version 1
 
 | Change | Where |
 | --- | --- |
-| undefined comes back as `.js~undefined`, no longer `.nil`; a missing property reads as it | Values |
-| Handler option `max n` | Events |
-| Arrays and typed arrays count from 1 with `o[i]` and `DO WITH`; lists keep 0 | Messages |
-| `.js~box(type, x)` with BSF4ooRexx's type indicators, and `.js~unbox(o)` | Values |
-| What the implementation guarantees, stated | Guarantees |
-| `~at(i)` and `~put(v, i)` are `o[i]` and `o[i] = v`, as in Rexx's collections (JavaScript's `at` is `o~js.invokeStrict("at", i)`) | Messages, Pitfalls |
-| Why JavaScript cannot wait for Rexx in the page, and what to do instead | Waiting |
-| Handlers are synchronous in the worker's realm and under Node, as `.net~handler` (a comparator for `sort` works); option `queued` (implied by `latest` and `max`), and the page, keep them queued; a condition is a `RexxError` | Events, Waiting |
-| Any other Rexx object goes to JavaScript as a `RexxProxy` (it went as its string): messages, BSF4ooRexx's `sendMessage` names, identity both ways | Values, Rexx objects in JavaScript |
-| Rexx classes extending JavaScript classes: `.js~extend(class, base [, names...])`, as `.net~extend` | Classes |
-| Calls from the page to a Rexx object give a Promise of the result, queued as events (they were rejected) | Rexx objects in JavaScript, Rexx from the page |
-| Sessions, `rexx.start()`: `eval`, `routine`, `loadPackage`; and `<script type="text/rexx">` | What this is, Events, Rexx from the page, Guarantees |
-| `.js~eventLoop` is `.js~runEventLoop`; the event queue explained | Events, Rexx from the page |
-| The bridge's own methods start with `js.` (`js.typeOf`, `js.className`, `js.instanceOf`, `js.hasProperty`, `js.propertyNames`, `js.byteString`), as BSF4ooRexx's with `bsf.`; exact names with `js.getStrict`, `js.setStrict`, `js.invokeStrict` (was `invoke`); a function is called with JavaScript's `f~call(this, args...)` | Messages, Pitfalls |
-| `.js~newObject(name, value, ...)`, with exact names | Values, Pitfalls |
-| A handler is released when JavaScript collects its function (`handler~release` is optional) | Events |
-| The pairs of `.js~extend` are released by the collectors, as everything else: no `.js~detach` (it was needed for them) | Classes |
-| `ooRexx.js`'s global is `ooRexx` (was `OoRexx`) | Rexx from the page |
-| Questions to decide: answered | Questions decided |
-| The class's `UNINIT` of a `.js~extend` pair runs in the scope of its class, with the object's variables (it ran without them) | Classes |
-| A synchronous handler under Node may use the RexxAPI (queues, external functions) while JavaScript waits for it, and so may other Rexx threads meanwhile (it could hang) | Waiting |
+| **Names.** The bridge's own methods start with `js.` (`js.typeOf`, `js.className`, `js.instanceOf`, `js.hasProperty`, `js.propertyNames`, `js.byteString`), as BSF4ooRexx's with `bsf.`; exact names with `js.getStrict`, `js.setStrict`, `js.invokeStrict` (was `invoke`); a function is called with JavaScript's `f~call(this, args...)`; `ooRexx.js`'s global is `ooRexx` (was `OoRexx`) | Messages, Pitfalls, Rexx from the page |
+| **Arrays.** Arrays and typed arrays count from 1 with `o[i]`, `~at(i)`, `~put(v, i)` and `DO WITH`; lists keep 0; JavaScript's `at` is `o~js.invokeStrict("at", i)` | Messages, Pitfalls |
+| **Values.** undefined comes back as `.js~undefined` (was `.nil`), and a missing property reads as it; `.js~box(type, x)` with BSF4ooRexx's type indicators, and `.js~unbox(o)`; `.js~newObject(name, value, ...)`, with exact names | Values, Pitfalls |
+| **Errors.** Gathered in one section; a condition in Rexx called by JavaScript is a `RexxError` | Errors |
+| **Handlers.** Synchronous in the worker's realm and under Node, as `.net~handler` (a comparator for `sort` works), and may use the RexxAPI there; queued in the page and with option `queued`, `latest` or `max n` (new); released when JavaScript collects their function; `.js~eventLoop` is `.js~runEventLoop`, and the event queue is explained | Events, Waiting |
+| **Waiting.** Why JavaScript cannot wait for Rexx in the page, and what to do instead | Waiting |
+| **Rexx objects in JavaScript.** Any other Rexx object goes as a `RexxProxy` (it went as its string): messages, BSF4ooRexx's `sendMessage` names, identity both ways; from the page, a call gives a Promise of the result | Values, Rexx objects in JavaScript, Rexx from the page |
+| **Rexx from the page.** Sessions, `rexx.start()`: `eval`, `routine`, `loadPackage`; and `<script type="text/rexx">` | What this is, Rexx from the page |
+| **Classes.** A Rexx class extends a JavaScript class with `.js~extend(class, base [, names...])`, as `.net~extend`; the pairs are released by the collectors, and the class's `UNINIT` runs in its scope | Classes |
+| **Guarantees** stated, and the three questions of version 1 answered | Guarantees, Questions decided |
