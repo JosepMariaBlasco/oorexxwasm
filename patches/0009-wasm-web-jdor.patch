@@ -16,7 +16,8 @@ the HTML canvas, no Java involved.
   (100.20230718) to Canvas 2D, on the main runtime thread (the worker that
   hosts the run, which never blocks): commands, aliases, results,
   canonical output (ADDRESS ... WITH OUTPUT), command input (WITH INPUT),
-  ERROR/FAILURE conditions and return codes as in Java.  The objects
+  ERROR/FAILURE conditions and return codes as in Java (r1125, with the
+  corrections its author accepted in October 2026).  The objects
   commands return say what they are, JDOR objects of the browser build
   ("JDOR Image #99: 500x500, ..."), and where Java throws an exception the
   condition's description reads "JDOR (web): ...".  Images are
@@ -46,22 +47,22 @@ the HTML canvas, no Java involved.
   few .java.lang.System properties), so they also run unchanged.
 - wasm/web/ooRexx.js: run({onJdor, screen}) and run.jdorEvent(); the page
   decides how to show the windows (ooRexx-worker.js relays the messages).
-- wasm/tests/web-api.py: 12 JDOR cases.
+- wasm/tests/web-api.py: 13 JDOR cases.
 ---
  interpreter/package/PackageManager.cpp |    4 +-
- wasm/README.md                         |   67 +-
+ wasm/README.md                         |   73 +-
  wasm/build-web.sh                      |   22 +-
  wasm/extra-packages.cpp                |    9 +-
  wasm/tests/web-api.html                |   21 +-
- wasm/tests/web-api.py                  |   75 +-
+ wasm/tests/web-api.py                  |   84 +-
  wasm/web-jdor.cpp                      |  467 +++++
- wasm/web-jdor.js                       | 2204 ++++++++++++++++++++++++
+ wasm/web-jdor.js                       | 2218 ++++++++++++++++++++++++
  wasm/web/BSF.CLS                       |  110 ++
  wasm/web/jdor.cls                      |  124 ++
  wasm/web/ooRexx-worker.js              |   14 +-
  wasm/web/ooRexx.js                     |   19 +-
  wasm/web/polygon-clipping.umd.min.js   |   39 +
- 13 files changed, 3153 insertions(+), 22 deletions(-)
+ 13 files changed, 3182 insertions(+), 22 deletions(-)
  create mode 100644 wasm/web-jdor.cpp
  create mode 100644 wasm/web-jdor.js
  create mode 100644 wasm/web/BSF.CLS
@@ -84,10 +85,10 @@ index 786af1f..e949832 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index f6bf132..f772dd2 100644
+index f6bf132..1ffd9af 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -227,7 +227,69 @@ off, or changes the strings.
+@@ -227,7 +227,75 @@ off, or changes the strings.
  isolated (see above).  `wasm/tests/web-api.py BIN_WEB` runs assertions over the
  API in headless Chromium (Python Playwright): output, interactive and fixed
  stdin, EOF, stop, threads, files in and out, extension classes, rexxtry,
@@ -112,8 +113,14 @@ index f6bf132..f772dd2 100644
 +  up another one (its own image and window), or gives JDOR a fresh one.
 +* The commands, aliases, results (RC), canonical output (`ADDRESS ... WITH
 +  OUTPUT`), command input (`WITH INPUT`), error/failure conditions and return
-+  codes follow the Java handler (`JavaDrawingHandler.java`, 100.20230718);
-+  JDOR's documentation (`jdor_doc.html` in BSF4ooRexx) applies.  Objects
++  codes follow the Java handler (`JavaDrawingHandler.java`, 100.20230718,
++  BSF4ooRexx850 r1125) with the corrections its author accepted in October
++  2026: `shape NAME arc x y width height` (as `Arc2D.setArc`), an unknown
++  font is ERROR -13 and a failing `saveImage` ERROR -16, `clip` and
++  `pathWindingRule` return the previous value, only `transform RESET` in
++  full resets, and a shape or transform argument may be a Rexx variable
++  wherever a name is taken, with the same messages.  JDOR's documentation
++  (`jdor_doc.html` in BSF4ooRexx) applies.  Objects
 +  that commands return (colors, fonts, images, shapes...) are `JdorObject`s
 +  that say what they are, not Java objects: `a JDOR Image (#99)`, `toString`
 +  `JDOR Image #99: 500x500, type 2 (ARGB), an OffscreenCanvas`, `kind`
@@ -158,7 +165,7 @@ index f6bf132..f772dd2 100644
  
  ## The test suite's API groups (`wasm/build-test.sh`)
  
-@@ -439,7 +501,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -439,7 +507,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
@@ -313,7 +320,7 @@ index b13d517..cb5c6fa 100644
  };
  </script>
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 808926a..90d9bae 100755
+index 808926a..d607486 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -42,7 +42,7 @@ Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP
@@ -325,7 +332,7 @@ index 808926a..90d9bae 100755
  from playwright.sync_api import sync_playwright
  
  if len(sys.argv) != 2:
-@@ -137,6 +137,79 @@ CASES = [
+@@ -137,6 +137,88 @@ CASES = [
                         '::options trace r', {},
       lambda r: r["out"].count("  worker") == 12 and "total 4\n" in r["out"] and "*-*" in r["err"]
                 and r["err"] == r["trace"] and r["errmsg"] == ""),
@@ -402,6 +409,15 @@ index 808926a..90d9bae 100755
 +                           'say e[1]~substr(e[1]~pos("cause: [") + 8)\n::requires "jdor.cls"', {},
 +     lambda r: r["out"] == "-102\n-102\n-102\nJDOR (web): this command needs exactly 1 or 2 arguments (the name of the shape and "
 +                           "optionally the new winding rule argument), received 0 instead]\n"),
++  # as the Java handler with the corrections of October 2026: arc x y width height, clip and
++  # pathWindingRule return the previous value, only RESET resets a transform, an unknown
++  # font is -13, a failing saveImage -16, shapeBounds takes a Rexx variable
++  ("jdor corrections", 'trace off; address jdor\nnewImage 40 40\nshape a arc 0 0 50 100 0 360 open; shapeBounds a; say rc\n'
++                       'clip 10 10 20 20; say (rc == .nil); clip 20 20 20 20; say rc\n'
++                       'shape p path; pathWindingRule p 0; say rc; pathWindingRule p 1; say rc\n'
++                       '\'transform r\'; say rc; \'font f NoSuchFontAtAll\'; say rc; \'saveImage /nonexistent/dir/x.png\'; say rc\n'
++                       '\'shape r rect 1 2 3 4\'; sh = rc; \'shapeBounds sh\'; say rc\n::requires "jdor.cls"', {},
++     lambda r: r["out"] == "0.0 0.0 50.0 100.0\n1\n10 10 20 20\n1\n0\n-102\n-13\n-16\n1.0 2.0 3.0 4.0\n"),
    # .JSObject: JavaScript objects as Rexx objects (wasm/web-js.cpp, wasm/js-bridge.js, wasm/web/js.cls)
    ("js not granted", 'say .js~Math~max(1, 2)\n::requires "js.cls"', {},
       lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
@@ -880,10 +896,10 @@ index 0000000..7c5a58b
 +}
 diff --git a/wasm/web-jdor.js b/wasm/web-jdor.js
 new file mode 100644
-index 0000000..9467c84
+index 0000000..f7e8979
 --- /dev/null
 +++ b/wasm/web-jdor.js
-@@ -0,0 +1,2204 @@
+@@ -0,0 +1,2218 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -1382,6 +1398,24 @@ index 0000000..9467c84
 +    }
 +    const family = LOGICAL[name.toUpperCase().replace(/\s/g, '')] || name;
 +    return font(name, family, style, size);
++  }
++  // Java's replacement for a font it cannot find: Font.decode(spec), family Dialog
++  function replacementFont(spec) {
++    const m = /^(.*?)(?:[- ](plain|bold|italic|bolditalic))?(?:[- ](\d+))?$/i.exec(spec.trim());
++    return font(m[1], 'Dialog', m[2] ? FONT_STYLES[m[2].toUpperCase()] : 0, m[3] ? parseInt(m[3], 10) : 12);
++  }
++  // whether the browser has a font family: text measured with it differs from the
++  // generic fallbacks (the logical fonts always exist)
++  function fontAvailable(f) {
++    if (Object.values(LOGICAL).includes(f.family)) return true;
++    const ctx = new OffscreenCanvas(1, 1).getContext('2d'), t = 'mmmmmmmmmmlli1WQ@#';
++    const fam = '"' + f.family.replace(/"/g, '') + '"';
++    for (const g of ['monospace', 'serif', 'sans-serif']) {
++      ctx.font = '72px ' + g; const w = ctx.measureText(t).width;
++      ctx.font = '72px ' + fam + ', ' + g;
++      if (ctx.measureText(t).width !== w) return true;
++    }
++    return false;
 +  }
 +
 +  function newGC() {
@@ -1990,7 +2024,10 @@ index 0000000..9467c84
 +    let ext = 'png';
 +    const dot = fileName.lastIndexOf('.');
 +    if (dot > 1 && dot < fileName.length && fileName.length > dot + 1) ext = fileName.substring(dot + 1);
-+    c.write(c.canonical + ' ' + fileName);
++    // a failure is ERROR -16, and the canonical form is written on success only
++    const fail = (why) => err('-16', '"' + c.canonical + '": fileName=[' + fileName + '] ' + why, 'saveImage');
++    const at = FS.analyzePath(fileName);
++    if (!at.parentExists || !FS.isDir(at.parentObject.mode) || (at.exists && FS.isDir(at.object.mode))) throw fail('cannot be written');
 +    const mime = { png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp' }[ext.toLowerCase()];
 +    const src = c.h.image.canvas;
 +    let blobP;
@@ -2003,10 +2040,11 @@ index 0000000..9467c84
 +      }
 +      blobP = canvas.convertToBlob({ type: mime, quality: 0.9 });
 +    } else {
-+      throw new JdorError('"' + c.canonical + '": fileName=[' + fileName + '] hence extension=[' + ext + '] failed, try extension "png" instead');
++      throw fail('hence extension=[' + ext + '] failed, try extension "png" instead');
 +    }
 +    c.async = blobP.then((b) => b.arrayBuffer()).then((ab) => {
-+      FS.writeFile(fileName, new Uint8Array(ab));
++      try { FS.writeFile(fileName, new Uint8Array(ab)); } catch (e) { throw fail('could not be written: ' + e); }
++      c.write(c.canonical + ' ' + fileName);
 +      c.result = '1';
 +    });
 +  });
@@ -2257,8 +2295,7 @@ index 0000000..9467c84
 +    c.result = r ? r.join(' ') : null;
 +    if (c.n > 1) {
 +      const v = [1, 2, 3, 4].map((i) => string2int(c.arg(i)));
-+      c.result = v.join(' ');
-+      c.canon(c.result);
++      c.canon(v.join(' '));            // c.result keeps the previous clip (or .nil)
 +      g.clips = g.clips.concat([{ m: g.m.slice(), path: rectPath(v[0], v[1], v[2], v[3]) }]);
 +    }
 +    c.write(c.canonical);
@@ -2332,6 +2369,10 @@ index 0000000..9467c84
 +    }
 +    const spec = c.rest(2);
 +    const f = makeFont(spec, h.currFontStyle, h.currFontSize);
++    if (!fontAvailable(f)) {           // as Java: its replacement font becomes the current one
++      g.font = replacementFont(spec);
++      throw err('-13', 'font "' + spec + '" could not be found, using Java\'s replacement font', 'fontname argument');
++    }
 +    c.canon(spec);
 +    h.fonts.set(nick.toUpperCase(), f);
 +    g.font = f;
@@ -2536,7 +2577,7 @@ index 0000000..9467c84
 +    if (n === 1) { c.write(c.canonical); return; }
 +    const nick = c.arg(1), u = nick.toUpperCase();
 +    if (n === 2) {
-+      if (u === 'RESET' || u === 'R') { g.m = [1, 0, 0, 1, 0, 0]; c.canon('RESET'); c.write(c.canonical); return; }
++      if (u === 'RESET') { g.m = [1, 0, 0, 1, 0, 0]; c.canon('RESET'); c.write(c.canonical); return; }
 +      c.canon(nick);
 +      let t = h.transforms.get(u);
 +      if (!t && isVarName(u)) { t = c.lookup(new Map(), nick, ['AffineTransform']); }
@@ -2617,11 +2658,8 @@ index 0000000..9467c84
 +          [x, y, w, ht] = r.bounds;
 +          start = parseDoubleJ(c.arg(4)); extent = parseDoubleJ(c.arg(5)); tstr = c.arg(6);
 +        } else {
-+          // as Java: the third and fourth numbers are taken as height and width
-+          let hh, ww;
-+          [x, y, hh, ww] = nums(3, 4);
-+          w = ww; ht = hh;
-+          c.canon(jd(x) + ' ' + jd(y) + ' ' + jd(hh) + ' ' + jd(ww));
++          [x, y, w, ht] = nums(3, 4);    // x y width height, as Arc2D.setArc
++          c.canon(jd(x) + ' ' + jd(y) + ' ' + jd(w) + ' ' + jd(ht));
 +          start = parseDoubleJ(c.arg(7)); extent = parseDoubleJ(c.arg(8)); tstr = c.arg(9);
 +        }
 +        const at = constant(ARC_TYPES, tstr, 'type');
@@ -2679,19 +2717,22 @@ index 0000000..9467c84
 +    c.write(c.canonical);
 +    c.result = s;
 +  });
++  // Java's getShapeArgument / getTransformArgument: the registry, then a Rexx variable
 +  function shapeArg(c, i) {
 +    const name = c.arg(i);
-+    let s = c.h.shapes.get(name.toUpperCase());
-+    if (!s && isVarName(name)) {
-+      s = c.lookup(new Map(), name, ['Shape']);
-+      if (!s) iae('no shape with name "' + name + '" stored, nor a Rexx variable that refers to a Shape object');
-+    }
-+    if (!s) iae('no shape with name "' + name + '" stored');
++    const s = c.lookup(c.h.shapes, name, ['Shape']);
++    if (!s) iae('no shape with name "' + name + '" stored, nor a Rexx variable that refers to a Shape object');
 +    return s;
++  }
++  function transformArg(c, i) {
++    const name = c.arg(i);
++    const t = c.lookup(c.h.transforms, name, ['AffineTransform']);
++    if (!t) iae('no transform with name "' + name + '" stored, nor a Rexx variable that refers to an AffineTransform object');
++    return t;
 +  }
 +  function shapeCmd(c, cmd) {
 +    const h = c.h;
-+    if (c.n !== 2) iae('this command needs no or exactly 1 argument, received ' + (c.n - 1) + ' instead');
++    if (c.n !== 2) iae('this command needs exactly 1 argument (the name of the shape), received ' + (c.n - 1) + ' instead');
 +    const s = shapeArg(c, 1);
 +    if (cmd === 'DRAWSHAPE') h.drawPath(shapePath(s));
 +    else if (cmd === 'FILLSHAPE') h.fillShape(s);
@@ -2701,8 +2742,7 @@ index 0000000..9467c84
 +  for (const n of ['drawShape', 'fillShape', 'clipShape']) def(n, (c) => shapeCmd(c, n.toUpperCase()));
 +  def('shapeBounds', (c) => {
 +    if (c.n !== 2) iae('this command needs exactly 1 argument (the name of the shape), received ' + (c.n - 1) + ' instead');
-+    const s = c.h.shapes.get(c.arg(1).toUpperCase());
-+    if (!s) iae('no shape with name "' + c.arg(1) + '" stored');
++    const s = shapeArg(c, 1);
 +    c.write(c.canonical + ' ' + c.arg(1));
 +    c.result = shapeBounds(s).map(jd).join(' ');
 +  });
@@ -2716,15 +2756,10 @@ index 0000000..9467c84
 +    if (!a || a.type !== 'Area') iae('no Area shape with name "' + c.arg(1) + '" stored');
 +    c.canon(c.arg(1) + ' ' + c.arg(2));
 +    if (cmd === 'AREATRANSFORM') {
-+      let t = h.transforms.get(c.arg(2).toUpperCase());
-+      if (!t && isVarName(c.arg(2))) t = c.lookup(new Map(), c.arg(2), ['AffineTransform']);
-+      if (!t) iae('no transform with name "' + c.arg(2) + '" stored, nor a Rexx variable that refers to a transform object');
-+      const m = t.m;
++      const m = transformArg(c, 2).m;
 +      a.mp = a.mp.map((poly) => poly.map((ring) => ring.map(([x, y]) => [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]])));
 +    } else {
-+      let s = h.shapes.get(c.arg(2).toUpperCase());
-+      if (!s && isVarName(c.arg(2))) s = c.lookup(new Map(), c.arg(2), ['Shape']);
-+      if (!s) iae('no Area or Shape with name "' + c.arg(2) + '" stored, nor a Rexx variable that refers to a shape object');
++      const s = shapeArg(c, 2);
 +      const pc = polyClip(), rhs = areaOf(s);
 +      const op = { AREAADD: 'union', AREAEXCLUSIVEOR: 'xor', AREAINTERSECT: 'intersection', AREASUBTRACT: 'difference' }[cmd];
 +      a.mp = pc[op](a.mp, rhs);
@@ -2743,7 +2778,7 @@ index 0000000..9467c84
 +    return null;
 +  }
 +  def('pathAppend', (c) => {
-+    if (c.n < 3 || c.n > 4) iae('this command needs exactly 2 or 3 arguments (the name of the shape and optionally the boolean connect argument), received ' + (c.n - 1) + ' instead');
++    if (c.n < 3 || c.n > 4) iae('this command needs exactly 2 or 3 arguments (the name of the Path2D shape, the name of the shape or path iterator to append, and optionally the boolean connect argument), received ' + (c.n - 1) + ' instead');
 +    const p = pathArg(c, 1);
 +    let src = c.h.shapes.get(c.arg(2).toUpperCase());
 +    if (!src) {
@@ -2801,7 +2836,7 @@ index 0000000..9467c84
 +  }
 +  for (const n of ['pathLineTo', 'pathMoveTo', 'pathQuadTo', 'pathCurveTo']) def(n, (c) => pathTo(c, n.toUpperCase()));
 +  def('pathTransform', (c) => {
-+    if (c.n !== 3) iae('this command needs exactly 2 arguments (the name of the shape and optionally the new winding rule argument), received ' + (c.n - 1) + ' instead');
++    if (c.n !== 3) iae('this command needs exactly 2 arguments (the name of the Path2D shape and the name of the transform), received ' + (c.n - 1) + ' instead');
 +    const p = pathArg(c, 1);
 +    let t = c.h.transforms.get(c.arg(2).toUpperCase());
 +    if (!t) t = c.lookup(new Map(), c.arg(2), ['AffineTransform']);
@@ -2813,25 +2848,19 @@ index 0000000..9467c84
 +    if (c.n < 2 || c.n > 3) iae('this command needs exactly 1 or 2 arguments (the name of the shape and optionally the new winding rule argument), received ' + (c.n - 1) + ' instead');
 +    const p = pathArg(c, 1);
 +    c.canon(c.arg(1));
-+    if (c.n === 2) c.result = '' + p.wind;
-+    else { const w = constant(WINDING, c.arg(2), 'windingRule'); c.canon(nameOf(WINDING, w)); p.wind = w; }
++    c.result = '' + p.wind;          // also when a new rule is set: the previous one
++    if (c.n === 3) { const w = constant(WINDING, c.arg(2), 'windingRule'); c.canon(nameOf(WINDING, w)); p.wind = w; }
 +    c.write(c.canonical);
 +  });
 +  def('pathIterator', (c) => {
-+    if (c.n < 2 || c.n > 4) iae('this command needs exactly 1, 2 or 3 arguments (the name of the shape and optionally the new winding rule argument), received ' + (c.n - 1) + ' instead');
-+    let s = c.h.shapes.get(c.arg(1).toUpperCase());
-+    if (!s) {
-+      s = c.lookup(new Map(), c.arg(1), ['Shape', 'PathIterator']);
-+      if (!s) iae('no shape with name "' + c.arg(1) + '" stored, nor a Rexx variable pointing to a Shape');
-+    }
++    if (c.n < 2 || c.n > 4) iae('this command needs exactly 1, 2 or 3 arguments (the name of the shape, optionally the name of a transform and the flatness), received ' + (c.n - 1) + ' instead');
++    const s = shapeArg(c, 1);
 +    c.canon(c.arg(1));
-+    let path = s.kind === 'PathIterator' ? s.path : shapePath(s);
++    let path = shapePath(s);
 +    if (c.n > 2) {
-+      let t = c.h.transforms.get(c.arg(2).toUpperCase());
-+      if (!t && isVarName(c.arg(2))) t = c.lookup(new Map(), c.arg(2), ['AffineTransform']);
-+      if (!t) iae('no transform with name "' + c.arg(2) + '" stored, nor a Rexx variable that refers to an AffineTransform object');
++      const t = c.arg(2).toUpperCase() === '.NIL' ? null : transformArg(c, 2);   // .nil: no transform (the flatness only)
 +      c.canon(c.arg(2));
-+      path = transformPath(path, t.m);
++      if (t) path = transformPath(path, t.m);
 +      if (c.n === 4) {               // flattened
 +        const f = parseDoubleJ(c.arg(3));
 +        c.canon(jd(f));
@@ -3053,6 +3082,7 @@ index 0000000..9467c84
 +    if (!c.async) return replyFor(c, h);
 +    return c.async.then(() => replyFor(c, h), (e) => {
 +      c.out = c.out.filter((l) => !l.startsWith(c.canonical));
++      if (e instanceof Cond) { c.cond = e; if (e.label) c.write('-- ERROR (' + e.label + '): [' + command + ']'); return replyFor(c, h); }
 +      c.write('-- ERROR (argument): [' + command + ']');
 +      c.cond = new Cond('ERROR', '-102', e instanceof JdorError ? e.toString() : 'JDOR (web): ' + e);
 +      return replyFor(c, h);

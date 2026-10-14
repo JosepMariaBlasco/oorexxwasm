@@ -1108,7 +1108,7 @@ index 276b01e..ac71775 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 90d9bae..d9e50b0 100755
+index d607486..3f53a9f 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -94,6 +94,9 @@ CASES = [

@@ -6,6 +6,8 @@
 # Usage: compare.sh [BIN_WEB=$ORX_WASM_WORK/build-wasm/bin-web] [ENGINE=chromium]
 # Work dir: $WORK (default $ORX_WASM_WORK/jdor-work); report: $WORK/cmp/*/side.png
 # Needs: svn, a JDK (apt install openjdk-21-jdk-headless), Python Playwright.
+# JAVA_SRC=file: compile that JavaDrawingHandler.java (ISO-8859-1, as in SVN) instead
+# of r1125's; use a fresh $WORK when changing it (the compiled classes are kept).
 ORX_WASM_WORK=${ORX_WASM_WORK:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../../.." && pwd)}   # where oorexx/, build-wasm/ ... live
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -15,7 +17,8 @@ REV=1125; SVN=https://svn.code.sf.net/p/bsf4oorexx/code
 mkdir -p "$WORK"/{java/src,samples,cmds}
 if [ ! -f "$WORK/java/classes/org/oorexx/handlers/jdor/JavaDrawingHandler.class" ]; then
   mkdir -p "$WORK/java/src/org/oorexx/handlers/jdor"
-  svn cat -r $REV "$SVN/branches/850/bsf4oorexx.dev/source_java/JavaDrawingHandler.java" |
+  if [ -n "${JAVA_SRC:-}" ]; then cat "$JAVA_SRC"
+  else svn cat -r $REV "$SVN/branches/850/bsf4oorexx.dev/source_java/JavaDrawingHandler.java"; fi |
     iconv -f latin1 -t utf-8 > "$WORK/java/src/org/oorexx/handlers/jdor/JavaDrawingHandler.java"
   cp -r "$HERE/harness/org" "$WORK/java/src/"
   (cd "$WORK/java/src" && javac -nowarn -d ../classes $(find . -name '*.java') 2>&1 | grep -v '^Note:\|JAVA_TOOL' || true)
