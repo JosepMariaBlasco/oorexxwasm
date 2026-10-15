@@ -1108,10 +1108,10 @@ index 276b01e..ac71775 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index d607486..3f53a9f 100755
+index 326c4f9..1735e39 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
-@@ -94,6 +94,9 @@ CASES = [
+@@ -96,6 +96,9 @@ CASES = [
       lambda r: "[1,2]" in r["out"].replace(" ", "")),
    ("requires rxregexp", 'm = .RegularExpression~new("a+b"); say m~match("aaab")\n::requires "rxregexp.cls"',
       {}, lambda r: r["out"] == "1\n"),

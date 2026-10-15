@@ -110,7 +110,7 @@ copied as arrays and plain objects.
   iteration, options latest and max, release).  Documented in wasm/README.md.
 ---
  interpreter/package/PackageManager.cpp |   16 +
- wasm/README.md                         |  182 +++
+ wasm/README.md                         |  186 +++
  wasm/build-node.sh                     |   17 +-
  wasm/build-web.sh                      |   17 +-
  wasm/extra-packages.cpp                |   66 +
@@ -121,20 +121,22 @@ copied as arrays and plain objects.
  wasm/tests/js-proxy.rex                |  127 ++
  wasm/tests/qualify-node-cli.sh         |  198 +++
  wasm/tests/web-api.html                |    4 +-
- wasm/tests/web-api.py                  |  191 ++-
+ wasm/tests/web-api.py                  |  216 +++-
+ wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
  wasm/web-js.cpp                        | 1527 ++++++++++++++++++++++++
  wasm/web/js.cls                        |  675 +++++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
- wasm/web/ooRexx.js                     |  181 +++
- 19 files changed, 4600 insertions(+), 12 deletions(-)
+ wasm/web/ooRexx.js                     |  217 ++++
+ 20 files changed, 4719 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
  create mode 100644 wasm/tests/js-extend-gc.rex
  create mode 100644 wasm/tests/js-extend.rex
  create mode 100644 wasm/tests/js-proxy.rex
+ create mode 100644 wasm/tests/web-debugger.js
  create mode 100644 wasm/tests/web-scripts.html
  create mode 100644 wasm/tests/web-scripts.rex
  create mode 100644 wasm/web-js.cpp
@@ -175,10 +177,10 @@ index 9324d0b..786af1f 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index d6f2caf..ca8d696 100644
+index d6f2caf..9640bb2 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -239,6 +239,186 @@ from the test suite's directory:
+@@ -239,6 +239,190 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -342,8 +344,12 @@ index d6f2caf..ca8d696 100644
 +  package they are added to).  `<script type="text/rexx">` (inline or
 +  `src`): `ooRexx.js` starts a session for the page's scripts (both realms
 +  granted, output to the console) and runs them in order, each as a
-+  routine; `ooRexx.scripts` is a Promise of it.  Tests: `tests/web-api.py`
-+  (session eval, session page, rexx scripts with `tests/web-scripts.html`).
++  routine; `ooRexx.scripts` is a Promise of it.  With `rexx-debug=1` in the
++  page's address, `ooRexx.js` first loads `ooRexx-debugger.js` from its own
++  directory, a debugger that is not part of ooRexx (`ooRexx.debugger`:
++  `prepare`, `attach`, `instrument`; see `web/ooRexx.js`).  Tests:
++  `tests/web-api.py` (session eval, session page, rexx scripts with
++  `tests/web-scripts.html`, the debugger hook with `tests/web-debugger.js`).
 +* Implementation: `web-js.cpp` is the package `js` (`.JSObject`'s methods
 +  are native, so errors point at the caller's line); each operation is
 +  passed synchronously to the main runtime thread, where `js-bridge.js` (a
@@ -365,7 +371,7 @@ index d6f2caf..ca8d696 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -247,6 +427,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -247,6 +431,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).
@@ -2259,20 +2265,22 @@ index d544388..b13d517 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..808926a 100755
+index 3940711..053192c 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
-@@ -49,7 +49,8 @@ if len(sys.argv) != 2:
+@@ -49,7 +49,10 @@ if len(sys.argv) != 2:
      sys.exit("usage: web-api.py BIN_WEB")
  BIN = sys.argv[1]
  SRC = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 -shutil.copy(f"{SRC}/wasm/tests/web-api.html", BIN)
 +for f in ("web-api.html", "web-scripts.html", "web-scripts.rex"):
 +    shutil.copy(f"{SRC}/wasm/tests/{f}", BIN)
++# a stand-in debugger for ?rexx-debug=1 (the hook in ooRexx.js)
++shutil.copy(f"{SRC}/wasm/tests/web-debugger.js", f"{BIN}/ooRexx-debugger.js")
  srv = subprocess.Popen([sys.executable, "-c", f"""
  import os, sys
  from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
-@@ -136,6 +137,164 @@ CASES = [
+@@ -136,6 +139,164 @@ CASES = [
                         '::options trace r', {},
       lambda r: r["out"].count("  worker") == 12 and "total 4\n" in r["out"] and "*-*" in r["err"]
                 and r["err"] == r["trace"] and r["errmsg"] == ""),
@@ -2437,7 +2445,7 @@ index 3940711..808926a 100755
  ]
  
  fails = 0; ran = 0
-@@ -157,6 +316,36 @@ with sync_playwright() as p:
+@@ -157,6 +318,59 @@ with sync_playwright() as p:
          except Exception: ok = False
          fails += not ok; ran += 1
          print(("ok  " if ok else "FAIL"), f"{name:20}", json.dumps(r, ensure_ascii=False)[:300] if not ok or os.environ.get("SHOW") else f"{r.get('ms')} ms")
@@ -2471,9 +2479,92 @@ index 3940711..808926a 100755
 +        fails += not ok; ran += 1
 +        print(("ok  " if ok else "FAIL"), f"{'rexx scripts':20}", json.dumps(v, ensure_ascii=False)[:600] if not ok or os.environ.get("SHOW") else "")
 +        sp.close()
++    # ?rexx-debug=1: ooRexx.js loads ooRexx-debugger.js (here a stand-in) first
++    if not only or only in "rexx scripts debug":
++        logs = []
++        sp = b.new_page()
++        sp.on("console", lambda m: logs.append(m.text))
++        sp.goto("http://127.0.0.1:8001/web-scripts.html?rexx-debug=1")
++        try:
++            v = sp.evaluate("async () => { const s = await ooRexx.scripts; "
++                            "for (let i = 0; i < 100 && document.getElementById('out').textContent.split('|').length < 4; i++) "
++                            "await new Promise((r) => setTimeout(r, 20)); "
++                            "return {text: document.getElementById('out').textContent, calls: ooRexx.debugger.calls, "
++                            "file: await s.eval('return linein(\"/tmp/debugger.txt\")'), "
++                            "seen: await s.eval('return .local~debugger.seen')}; }")
++        except Exception as e:
++            v = {"exception": str(e)}
++        v["logs"] = logs
++        ok = (v.get("text") == "Hello, page|from src 3|Hello, second|later"
++              and v.get("calls") == ["prepare", "attach", "instrument script 1", "instrument http://127.0.0.1:8001/web-scripts.rex",
++                                     "instrument script 3", "instrument script 4"]
++              and v.get("file") == "prepared" and v.get("seen") == "3")
++        fails += not ok; ran += 1
++        print(("ok  " if ok else "FAIL"), f"{'rexx scripts debug':20}", json.dumps(v, ensure_ascii=False)[:600] if not ok or os.environ.get("SHOW") else "")
++        sp.close()
      b.close()
  srv.terminate()
  print(f"== {ran - fails} passed, {fails} failed")
+diff --git a/wasm/tests/web-debugger.js b/wasm/tests/web-debugger.js
+new file mode 100644
+index 0000000..a7f763b
+--- /dev/null
++++ b/wasm/tests/web-debugger.js
+@@ -0,0 +1,54 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++// A stand-in for ooRexx-debugger.js (tests/web-api.py, "rexx scripts debug"):
++// it records what ooRexx.js calls, adds a file to the session, and counts the
++// scripts that run instrumented (on line 1, so that no line moves).
++ooRexx.debugger = {
++  calls: [],
++  prepare(options) {
++    this.calls.push('prepare');
++    options.files = Object.assign({}, options.files, { '/tmp/debugger.txt': 'prepared' });
++  },
++  async attach(session) {
++    this.calls.push('attach');
++    await session.eval('.local~debugger.seen = 0');
++  },
++  instrument(name, source) {
++    this.calls.push('instrument ' + name);
++    return '.local~debugger.seen = .local~debugger.seen + 1;' + source;
++  },
++};
 diff --git a/wasm/tests/web-scripts.html b/wasm/tests/web-scripts.html
 new file mode 100644
 index 0000000..4cf6bec
@@ -4822,7 +4913,7 @@ index c87af29..71cd58a 100644
      printErr: (s) => post({ type: 'err', bytes: textBytes(s) }),
      orxReady: () => {
 diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
-index 70031fb..ed61b4c 100644
+index 70031fb..b580a5a 100644
 --- a/wasm/web/ooRexx.js
 +++ b/wasm/web/ooRexx.js
 @@ -47,6 +47,17 @@
@@ -4843,7 +4934,7 @@ index 70031fb..ed61b4c 100644
   * Each run gets a fresh interpreter in its own Web Worker (ooRexx-worker.js),
   * so runs are isolated and stop() always works, even in an endless loop.
   * The wasm module is compiled once and the preloaded file package (rexx.img
-@@ -84,6 +95,48 @@
+@@ -84,6 +95,59 @@
   *                  trace, input, debugInput} (a missing one: the default, ''
   *                  or null: none).  Default: on for a stream that goes to
   *                  the console, off for one the page receives (onOut, onErr)
@@ -4889,10 +4980,21 @@ index 70031fb..ed61b4c 100644
 + * (the session takes events).  ooRexx.scripts is a Promise of that session
 + * (null when the page has no Rexx scripts); a script's error is logged and
 + * the next one runs.
++ *
++ * Debugging: with rexx-debug=1 in the page's address (page.html?rexx-debug=1),
++ * ooRexx.js first loads ooRexx-debugger.js from its own directory, a debugger
++ * that is not part of ooRexx (without it, a warning, and the scripts run as
++ * usual).  That file sets ooRexx.debugger, an object with
++ *   prepare(options)           before the session starts: may add to its
++ *                              options (e.g. files)
++ *   attach(session)            once it has started
++ *   instrument(name, source)   the source to run for each script
++ * (each may return a Promise; if prepare or attach fails, the scripts run
++ * without it).
   */
  (function (global) {
    'use strict';
-@@ -129,6 +182,33 @@
+@@ -129,6 +193,33 @@
      };
    }
  
@@ -4926,7 +5028,7 @@ index 70031fb..ed61b4c 100644
    class ooRexx {
      static async load(base) {
        base = new URL(base || here.slice(0, here.lastIndexOf('/') + 1) || './', global.location.href).href;
-@@ -152,6 +232,25 @@
+@@ -152,6 +243,25 @@
      }
  
      run(opts = {}) {
@@ -4952,7 +5054,7 @@ index 70031fb..ed61b4c 100644
        const enc = new TextEncoder();
        const bytes = (v) => (typeof v === 'string' ? enc.encode(v) : v);
        const cwd = opts.cwd || '/home/rexx';
-@@ -165,12 +264,56 @@
+@@ -165,12 +275,56 @@
        const t0 = performance.now();
        let settle, finished = false;
        const done = new Promise((resolve) => { settle = resolve; });
@@ -5009,7 +5111,7 @@ index 70031fb..ed61b4c 100644
          result.ms = performance.now() - t0;
          settle(result);
        };
-@@ -183,6 +326,7 @@
+@@ -183,6 +337,7 @@
              if (prompts) out.prompt(m.debug ? prompts.debugInput : prompts.input);
              if (opts.onInput) opts.onInput({ debug: !!m.debug });
              break;
@@ -5017,7 +5119,7 @@ index 70031fb..ed61b4c 100644
            case 'exit': end({ rc: m.rc, files: m.files, stopped: false }); break;
            case 'error': end({ rc: null, files: {}, stopped: false, error: m.message }); break;
          }
-@@ -192,6 +336,7 @@
+@@ -192,6 +347,7 @@
          type: 'run', scriptUrl: this.base + 'rexx.js', wasmModule: this.wasmModule,
          data: this.data.slice(0), args: opts.args || [], files, cwd, env: opts.env || {},
          stdin: opts.stdin === undefined || opts.stdin === null ? null : bytes(opts.stdin),
@@ -5025,7 +5127,7 @@ index 70031fb..ed61b4c 100644
        });
        return {
          done,
-@@ -204,4 +349,40 @@
+@@ -204,4 +360,65 @@
    }
  
    global.ooRexx = ooRexx;
@@ -5043,9 +5145,33 @@ index 70031fb..ed61b4c 100644
 +    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', go);
 +    else go();
 +  }
++  // ?rexx-debug=1: the debugger, ooRexx-debugger.js next to this file (or null)
++  function debugRequested() {
++    try { return new URLSearchParams(global.location.search).get('rexx-debug') === '1'; }
++    catch (e) { return false; }
++  }
++  function loadDebugger(base) {
++    if (ooRexx.debugger) return Promise.resolve(ooRexx.debugger);
++    return new Promise((resolve) => {
++      const s = document.createElement('script');
++      s.src = base + 'ooRexx-debugger.js';
++      s.onload = () => resolve(ooRexx.debugger || null);
++      s.onerror = () => {
++        console.warn('ooRexx: rexx-debug=1, but there is no debugger (' + s.src + ')');
++        resolve(null);
++      };
++      document.head.appendChild(s);
++    });
++  }
 +  async function runScripts(base, scripts) {
 +    const rexx = await ooRexx.load(base);
-+    const session = await rexx.start({ js: { worker: true, page: true } });
++    let debug = debugRequested() ? await loadDebugger(base) : null;
++    const options = { js: { worker: true, page: true } };
++    try { if (debug) await debug.prepare(options); }
++    catch (e) { console.error('ooRexx: the debugger: ' + (e && e.message || e)); debug = null; }
++    const session = await rexx.start(options);
++    try { if (debug) await debug.attach(session); }
++    catch (e) { console.error('ooRexx: the debugger: ' + (e && e.message || e)); debug = null; }
 +    let n = 0;
 +    for (const el of scripts) {
 +      n++;
@@ -5057,6 +5183,7 @@ index 70031fb..ed61b4c 100644
 +          if (!r.ok) throw new Error(el.src + ': HTTP ' + r.status);
 +          source = await r.text();
 +        }
++        if (debug) source = await debug.instrument(name, source);
 +        const routine = await session.routine(name, source);
 +        await routine.call();
 +      } catch (e) {

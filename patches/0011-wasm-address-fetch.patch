@@ -265,10 +265,10 @@ index ac71775..d9ef340 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3f53a9f..43e1e7a 100755
+index 1735e39..dfd16fe 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
-@@ -65,6 +65,9 @@ class H(SimpleHTTPRequestHandler):
+@@ -67,6 +67,9 @@ class H(SimpleHTTPRequestHandler):
  ThreadingHTTPServer(('127.0.0.1',8001),H).serve_forever()
  """])
  import atexit; atexit.register(srv.terminate)
@@ -278,7 +278,7 @@ index 3f53a9f..43e1e7a 100755
  time.sleep(0.7)
  
  CASES = [
-@@ -222,6 +225,9 @@ CASES = [
+@@ -224,6 +227,9 @@ CASES = [
                         '\'transform r\'; say rc; \'font f NoSuchFontAtAll\'; say rc; \'saveImage /nonexistent/dir/x.png\'; say rc\n'
                         '\'shape r rect 1 2 3 4\'; sh = rc; \'shapeBounds sh\'; say rc\n::requires "jdor.cls"', {},
       lambda r: r["out"] == "0.0 0.0 50.0 100.0\n1\n10 10 20 20\n1\n0\n-102\n-13\n-16\n1.0 2.0 3.0 4.0\n"),

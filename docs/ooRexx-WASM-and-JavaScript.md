@@ -207,6 +207,8 @@ A session is a run whose program, `.js~session`, hands the page a `.JSSession` a
 
 When the page has any, `ooRexx.js` starts a session once the document is parsed, with both realms granted (they are the page's own scripts), and runs them in order, each as a routine named after its `src`. A script sees what the scripts before it defined, its handlers run once the scripts are done, its output goes to the console, and an error is logged and does not stop the next script. `ooRexx.scripts` is a Promise of that session. [*ooRexx in a web page*](https://rexx.epbcn.com/oorexx-wasm/example/) is such a page.
 
+**Debugging the scripts.** With `rexx-debug=1` in the page's address (`page.html?rexx-debug=1`), `ooRexx.js` first loads `ooRexx-debugger.js` from its own directory. That file is a debugger, and it is not part of ooRexx: without it, a warning goes to the console and the scripts run as usual. It sets `ooRexx.debugger`, an object with three methods, each of which may return a Promise: `prepare(options)`, before the session starts, may add to the session's options (files, for instance); `attach(session)` is called once the session has started; and `instrument(name, source)` gives the source to run for each script. The browser distribution of ooRexx/WASM has one, a panel at the foot of the page built on Dom Wise's ooRexx debugger: breakpoints in the scripts and in their handlers, step, the stack and the variables.
+
 ## Classes
 
 A Rexx class can extend a JavaScript class, so that JavaScript calls the Rexx methods where it would call the class's own, as `.net~extend` does in ooRexx/.NET:
@@ -279,6 +281,6 @@ Further replies on the list are very welcome.
 | **Handlers.** Synchronous in the worker's realm and under Node, as `.net~handler` (a comparator for `sort` works), and may use the RexxAPI there; queued in the page and with option `queued`, `latest` or `max n` (new); released when JavaScript collects their function; `.js~eventLoop` is `.js~runEventLoop`, and the event queue is explained | Events, Waiting |
 | **Waiting.** Why JavaScript cannot wait for Rexx in the page, and what to do instead | Waiting |
 | **Rexx objects in JavaScript.** Any other Rexx object goes as a `RexxProxy` (it went as its string): messages, BSF4ooRexx's `sendMessage` names, identity both ways; from the page, a call gives a Promise of the result | Values, Rexx objects in JavaScript, Rexx from the page |
-| **Rexx from the page.** Sessions, `rexx.start()`: `eval`, `routine`, `loadPackage`; and `<script type="text/rexx">` | What this is, Rexx from the page |
+| **Rexx from the page.** Sessions, `rexx.start()`: `eval`, `routine`, `loadPackage`; and `<script type="text/rexx">`, which `?rexx-debug=1` runs under a debugger (`ooRexx-debugger.js`, `ooRexx.debugger`) | What this is, Rexx from the page |
 | **Classes.** A Rexx class extends a JavaScript class with `.js~extend(class, base [, names...])`, as `.net~extend`; the pairs are released by the collectors, and the class's `UNINIT` runs in its scope | Classes |
 | **Guarantees** stated, and the three questions of version 1 answered | Guarantees, Questions decided |

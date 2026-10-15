@@ -328,10 +328,10 @@ index cb5c6fa..f56ea5d 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); }, onJdor,
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 43e1e7a..1e8da67 100755
+index dfd16fe..4dca34e 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
-@@ -228,6 +228,17 @@ CASES = [
+@@ -230,6 +230,17 @@ CASES = [
    # ADDRESS FETCH (wasm/web/fetch.cls over cmdhandler.cls and js.cls): the portable test
    ("fetch", open(f"{SRC}/wasm/tests/fetch.rex").read(), {"js": {"worker": True}, "args": ["http://127.0.0.1:8124"]},
       lambda r: "44 passed, 0 failed" in r["out"] and r["rc"] == 0),
@@ -1402,7 +1402,7 @@ index 0000000..e7341a3
 +  use arg v
 +  return v == .nil | v == .js~undefined
 diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
-index f40497f..aadc16b 100644
+index 1bd93d8..d04bc82 100644
 --- a/wasm/web/ooRexx.js
 +++ b/wasm/web/ooRexx.js
 @@ -122,6 +122,11 @@
@@ -1417,7 +1417,7 @@ index f40497f..aadc16b 100644
   *
   * Calling Rexx: a Rexx object that comes to the page (an argument of a
   * handler, a result) is a RexxProxy (js-realm.js; o.name(args), sendMessage,
-@@ -218,6 +223,13 @@
+@@ -229,6 +234,13 @@
      return e.encode('E' + m.length + ':' + msg + 'N0:');
    }
  
@@ -1431,7 +1431,7 @@ index f40497f..aadc16b 100644
    // a session's program (start): .js~session takes events for good
    const SESSION_PATH = '/tmp/ooRexx-session.rex';
    const SESSION_SOURCE = '.js~session\n::requires "js.cls"\n';
-@@ -349,7 +361,7 @@
+@@ -360,7 +372,7 @@
        worker.onerror = (e) => end({ rc: null, files: {}, stopped: false, error: e.message || 'worker error' });
        worker.postMessage({
          type: 'run', scriptUrl: this.base + 'rexx.js', wasmModule: this.wasmModule,
