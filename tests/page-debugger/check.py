@@ -109,10 +109,16 @@ with sync_playwright() as p:
     page.locator("#ooRexx-debugger .exec").press("Enter")
     check(until(lambda: "count is 1" in page.locator("#ooRexx-debugger .out").text_content()), "say in the panel shows there", page.locator("#ooRexx-debugger .out").text_content())
     ex = page.locator("#ooRexx-debugger .exec")
+    out = lambda: page.locator("#ooRexx-debugger .out").text_content()
+    # while the debugger runs a command the field is disabled and Enter is
+    # ignored (the text stays there): type the next one only after the last
+    # one is done, as a user would
     ex.fill("result = 1024"); ex.press("Enter")
-    for _ in range(2):
+    until(lambda: "1024" in text("#ooRexx-debugger .vars") and ex.is_enabled())
+    for i in range(2):
         ex.fill("say 'R=' result"); ex.press("Enter")
-    check(until(lambda: page.locator("#ooRexx-debugger .out").text_content().count("R= 1024") == 2),
+        until(lambda: out().count("R= 1024") >= i + 1 and ex.is_enabled())
+    check(until(lambda: out().count("R= 1024") == 2),
           "  say leaves RESULT alone (twice: R= 1024)", page.locator("#ooRexx-debugger .out").text_content()[-200:])
     ex.press("ArrowUp"); up1 = ex.input_value()
     ex.press("ArrowUp"); up2 = ex.input_value()
