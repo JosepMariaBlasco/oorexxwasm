@@ -514,7 +514,7 @@ footer a { color: var(--accent); }
   let rexx = null, current = null, run = null;   // current: a sample, or {file, user: true} for a file of yours
   // the debugger (see "the debugger" below): declared here, the editor's gutter uses them
   let debugFiles = null, debugNext = false, debugging = false, dbgLine = 0;
-  const dbg = { h: null, waiting: false, name: "" };
+  const dbg = { h: null, waiting: false, name: "", queue: [], waiter: null };
   const bps = new Map();                // file -> Set of lines with a breakpoint
   function bpSet() { const k = current ? current.file : ""; if (!bps.has(k)) bps.set(k, new Set()); return bps.get(k); }
   const edits = new Map();          // sample file -> edited source
@@ -1867,7 +1867,7 @@ footer a { color: var(--accent); }
   // ---- the debugger (Debug) --------------------------------------------------------
   // Dom Wise's ooRexx debugger (debugger/RexxDebugger.rex, MIT) runs the program; its
   // front end, debugger/RexxDebuggerWebUI.rex, draws through window.orxDebugger below
-  // and reports what the user does through a queued handler.
+  // and asks it for what the user does (next(), a Promise).
   const DBG = "/usr/lib/rexxdebugger/", DBG_FILES = ["RexxDebugger.rex", "RexxDebuggerWebUI.rex"];
   const debugBtn = $("debug"), dbgPanel = $("dbgpanel"), dbgExec = $("dbgexec");
   function debugLoad() {
@@ -1895,7 +1895,7 @@ footer a { color: var(--accent); }
     const s = bpSet(), on = !s.has(ln);
     if (on) s.add(ln); else s.delete(ln);
     gutRender();
-    if (debugging && dbg.h) dbg.h("bp", ln + (on ? " on" : " off"));
+    if (debugging && dbg.h) dbg.h("bp", dbg.name + "|" + ln + (on ? " on" : " off"));
   });
   function dbgControls() {
     const w = debugging && dbg.waiting;
@@ -1916,11 +1916,18 @@ footer a { color: var(--accent); }
     dbgExec.value = "";
     if (t === "") dbgSend("step"); else { emit("> " + t + "\n", "in"); dbgSend("exec", t); }
   });
-  // what RexxDebuggerWebUI.rex calls (in the page's realm)
+  // what RexxDebuggerWebUI.rex calls (in the page's realm); the user's actions wait
+  // in dbg.queue until its thread asks for the next one (next(), a Promise)
+  function dbgPush(action) {
+    if (dbg.waiter) { const w = dbg.waiter; dbg.waiter = null; w(action); } else dbg.queue.push(action);
+  }
   window.orxDebugger = {
-    begin(h) { dbg.h = h; dbgControls(); },
+    mode: "program",
+    begin() { dbg.queue = []; dbg.waiter = null; dbg.h = (kind, data) => dbgPush(kind + (data ? " " + data : "")); dbgControls(); },
+    next() { return dbg.queue.length ? Promise.resolve(dbg.queue.shift()) : new Promise((r) => { dbg.waiter = r; }); },
+    wake() { dbgPush("end"); },
     setSource(name) { dbg.name = String(name); },
-    getBreakpoints() { return [...bpSet()].sort((a, b) => a - b); },
+    getBreakpoints() { return [...bpSet()].sort((a, b) => a - b).map((n) => dbg.name + "|" + n); },
     stopAt(name, line, stack, index) {
       name = String(name);
       const here = name === current.file || name.endsWith("/" + current.file);

@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Page debugger test</title></head>
+<body>
+<h1>Rexx scripts under the debugger</h1>
+<p><button id="btn">Count</button> <span id="out"></span></p>
+<p id="sum"></p>
+<script src="ooRexx.js"></script>
+<script type="text/rexx">
+total = 0
+do i = 1 to 3
+  total = total + i
+end
+.js~page~document~getElementById("sum")~textContent = "sum" total
+say "script 1 done"
+</script>
+<script type="text/rexx" src="handlers.rex"></script>
+</body></html>

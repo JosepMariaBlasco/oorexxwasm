@@ -19,8 +19,11 @@ cp "$HERE"/fonts/*.woff2 "$HERE"/fonts/OFL-IBM-Plex.txt "$OUT/fonts/"
 cp "$HERE/htaccess" "$OUT/.htaccess"
 # a diagnostic page for WebAssembly memory limits (iOS), not linked from the Playground
 cp "$HERE/memtest.html" "$OUT/"
-mkdir -p "$OUT/debugger"     # Dom Wise's ooRexx debugger (MIT) and its web front end
-cp "$HERE"/debugger/RexxDebugger.rex "$HERE"/debugger/RexxDebuggerWebUI.rex "$HERE"/debugger/LICENSE "$OUT/debugger/"
+# Dom Wise's ooRexx debugger (MIT) and its web front end (../debugger): Debug, and
+# ooRexx-debugger.js next to ooRexx.js for pages opened with ?rexx-debug=1
+mkdir -p "$OUT/debugger"
+cp "$HERE"/../debugger/RexxDebugger.rex "$HERE"/../debugger/RexxDebuggerWebUI.rex "$HERE"/../debugger/LICENSE "$OUT/debugger/"
+cp "$HERE"/../debugger/ooRexx-debugger.js "$OUT/"
 # "Grokking in Rexx" (grok/README.md): a page of its own that uses this site's runtime
 mkdir -p "$OUT/grok"
 cp "$HERE"/grok/index.html "$HERE"/grok/grok-live.rex "$HERE"/grok/oryx.svg "$OUT/grok/"

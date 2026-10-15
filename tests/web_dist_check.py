@@ -28,7 +28,8 @@ def check(name, cond, detail=''):
 
 for f in ('ooRexx.js', 'ooRexx-worker.js', 'rexx.js', 'rexx.wasm', 'rexx.data', 'js-realm.js',
           'polygon-clipping.umd.min.js', 'index.html', 'app.rex', 'serve.mjs', '.htaccess',
-          'README.md', 'CPLv1.0.txt', 'LICENSE-Apache-2.0.txt'):
+          'README.md', 'CPLv1.0.txt', 'LICENSE-Apache-2.0.txt', 'ooRexx-debugger.js',
+          'debugger/RexxDebugger.rex', 'debugger/RexxDebuggerWebUI.rex', 'debugger/LICENSE'):
     check(f'file {f}', os.path.isfile(os.path.join(root, f)))
 
 # serve.mjs is started from another directory: it must serve its own by default
@@ -94,6 +95,24 @@ try:
         check('SAY goes to the console', any('The first script ran.' in t for t in console)
               and any('app.rex ran.' in t for t in console), console)
         check('no errors in the console', not errors, errors)
+        # ?rexx-debug=1: the debugger's panel, a tab per script, the page as usual
+        pg = b.new_page()
+        pg.on('pageerror', lambda e: errors.append(str(e)))
+        pg.goto(base + '?rexx-debug=1')
+        try:
+            pg.wait_for_function("document.getElementById('greeting').textContent.startsWith('Hello from REXX-ooRexx')", timeout=60000)
+            pg.locator('#ooRexx-debugger .status', has_text='Running').wait_for(timeout=10000)
+            tabs = pg.locator('#ooRexx-debugger .tab').count()
+            check('?rexx-debug=1: the debugger, a tab per script', tabs >= 2, tabs)
+        except Exception as e:
+            check('?rexx-debug=1: the debugger, a tab per script', False, e)
+        pg.click('#clicker')
+        try:
+            pg.wait_for_function("document.getElementById('clicks').textContent === 'Rexx counted 1 click.'", timeout=10000)
+            check('?rexx-debug=1: the page works as usual', True)
+        except Exception:
+            check('?rexx-debug=1: the page works as usual', False, pg.locator('#clicks').inner_text())
+        check('?rexx-debug=1: no errors', not errors, errors)
         b.close()
 finally:
     srv.terminate()

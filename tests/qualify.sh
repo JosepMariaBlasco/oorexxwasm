@@ -266,6 +266,9 @@ else
   WEBOUT=$(mktemp -d)
   check "browser distribution: zip, serve.mjs, example page with text/rexx" '^== 0 failed$' -- \
     "'$HERE/../scripts/web-package.sh' 0.0.0-qualify '$BUILD/bin-web' '$WEBOUT' >/dev/null && timeout 300 python3 '$HERE/web_dist_check.py' '$WEBOUT/oorexxwasm-web-0.0.0-qualify.zip'"
+  # the debugger for pages (debugger/ooRexx-debugger.js, ?rexx-debug=1)
+  check "page debugger: breakpoints in scripts and handlers, step, Break, a reload" '^== chromium: 0 failed$' -- \
+    "timeout 300 python3 '$HERE/page-debugger/check.py' '$BUILD/bin-web' chromium"
 fi
 
 # ---------------------------------------------------------------------------

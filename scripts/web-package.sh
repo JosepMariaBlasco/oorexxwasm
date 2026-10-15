@@ -29,6 +29,10 @@ cp "$HERE"/web/index.html "$HERE"/web/app.rex "$HERE"/web/serve.mjs "$HERE"/web/
 cp "$HERE/web/htaccess" "$D/.htaccess"
 cp "$OOREXX/CPLv1.0.txt" "$D/"
 cp "$HERE/LICENSE" "$D/LICENSE-Apache-2.0.txt"
+# the debugger for ?rexx-debug=1 (Dom Wise's ooRexx debugger, MIT, + its web front end)
+cp "$HERE/debugger/ooRexx-debugger.js" "$D/"
+mkdir -p "$D/debugger"
+cp "$HERE"/debugger/RexxDebugger.rex "$HERE"/debugger/RexxDebuggerWebUI.rex "$HERE"/debugger/LICENSE "$D/debugger/"
 (cd "$OUT" && zip -qr "$NAME.zip" "$NAME")
 
 # the playground site

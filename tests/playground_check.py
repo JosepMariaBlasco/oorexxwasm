@@ -2,6 +2,8 @@
 
 Usage: python3 playground_check.py [SITE=$ORX_WASM_WORK/site] [SHOTS_DIR]
 Serves SITE with COOP/COEP on :8003; exit status 1 on any failure.
+ENGINE=firefox or webkit (environment) drives that engine instead of Chromium:
+everything but Link folder (Chromium's) applies, the Debug checks included.
 """
 import os, subprocess, sys, time
 from playwright.sync_api import sync_playwright
@@ -44,7 +46,8 @@ def out(pg): return pg.locator("#out").inner_text()
 def pick(pg, title): pg.locator("nav.programs button", has_text=title).first.click()
 
 with sync_playwright() as p:
-    b = p.chromium.launch(args=["--no-sandbox"])
+    engine = os.environ.get("ENGINE", "chromium")       # or firefox, webkit (Playwright's)
+    b = getattr(p, engine).launch(**({"args": ["--no-sandbox"]} if engine == "chromium" else {}))
     errors = []
     pg = b.new_page(viewport={"width": 1280, "height": 900})
     pg.on("pageerror", lambda e: errors.append(str(e)))

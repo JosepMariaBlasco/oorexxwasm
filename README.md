@@ -151,6 +151,10 @@ run's summary puts all platforms side by side.
   official suite runners, and the JDOR comparison with the Java handler.
 - `playground/`: the ooRexx Playground page and its samples. See
   [`playground/README.md`](playground/README.md).
+- `debugger/`: Dom Wise's ooRexx debugger with a front end for web pages: the
+  playground's Debug, and `ooRexx-debugger.js`, which debugs the Rexx scripts
+  of any page opened with `?rexx-debug=1`. See
+  [`debugger/README.md`](debugger/README.md).
 - `web/`: the browser distribution's own files (example page with
   `<script type="text/rexx">`, `serve.mjs`, `.htaccess`, README), packed with
   the web build by `scripts/web-package.sh`.
@@ -175,7 +179,8 @@ The port started from Tom Dyer's "dev1" patch, contributed under the CPL 1.0
 (see [`notes/provenance.md`](notes/provenance.md)). JDOR is
 Rony G. Flatscher's (BSF4ooRexx). The playground uses the
 [Rexx Parser](https://github.com/JosepMariaBlasco/rexx-parser) and includes
-JDOR samples from BSF4ooRexx (Apache 2.0, see their `NOTICE`).
+JDOR samples from BSF4ooRexx (Apache 2.0, see their `NOTICE`). The debugger
+is Dom Wise's [ooRexx debugger](https://sourceforge.net/p/oorexxdebugger/).
 
 **License.** Two licenses, by directory:
 
@@ -186,4 +191,6 @@ JDOR samples from BSF4ooRexx (Apache 2.0, see their `NOTICE`).
 - Everything else (scripts, tests, the playground, notes, docs) is under the
   **Apache License 2.0** ([`LICENSE`](LICENSE)). Third-party parts keep their
   own licenses: the JDOR samples from BSF4ooRexx (Apache 2.0, `NOTICE`), the
-  Rexx Parser (Apache 2.0), the IBM Plex fonts (SIL Open Font License).
+  Rexx Parser (Apache 2.0), the IBM Plex fonts (SIL Open Font License), and
+  `debugger/`, Dom Wise's ooRexx debugger and its web front end (MIT,
+  `debugger/LICENSE`).
