@@ -10,6 +10,7 @@ the test results and a link to the patches at the commit they describe.
 
 | Date | Update |
 |---|---|
+| 2026-10-15 | [The page's Rexx scripts under a debugger](2026-10-15/update.md) |
 | 2026-10-13 (4) | [The UNINIT of a `.js~extend` pair sees its variables](2026-10-13-4/update.md) |
 | 2026-10-13 (3) | [The RexxAPI no longer needs the JavaScript main thread](2026-10-13-3/update.md) |
 | 2026-10-13 (2) | [No `.js~detach`: the collectors release everything](2026-10-13-2/update.md) |
