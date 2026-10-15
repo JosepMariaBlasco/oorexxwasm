@@ -28,6 +28,14 @@ Workbench, a separate page.
   playground uses, vendored by `import-rexx-parser.sh RELEASE.zip` (see the
   script for how the set was chosen). `VERSION` says which release.
 - `rexx-parser-support/hlserver.rex` — the editor's highlighting server.
+- `debugger/` — Debug: `RexxDebugger.rex`, the core of Dom Wise's ooRexx
+  debugger (https://sourceforge.net/p/oorexxdebugger/, MIT, `LICENSE`),
+  vendored from its git repository at v1.45 (d51f1ee) with one addition in
+  `findandloadui` (marked "ooRexx/WASM"): under Emscripten it loads
+  `RexxDebuggerWebUI.rex` from its own directory; and `RexxDebuggerWebUI.rex`,
+  the web front end (class `DebuggerUI`, as the debugger's ooDialog and Swing
+  ones), which draws through a JavaScript object of the page,
+  `window.orxDebugger` (its interface is described at the top of the file).
 - `htaccess` — Apache config, installed as `.htaccess`.
 - `memtest.html` — a diagnostic page, copied to the site but not linked from
   the playground: how many shared WebAssembly memories the browser lets a page
@@ -122,6 +130,21 @@ in headless Chromium.
   clears the console; every other sequence is dropped. One style state for
   both streams, as in a terminal; a sequence split across output chunks is
   held back until complete. Sample: `samples/colors.rex`.
+- Debug: the page fetches `debugger/*.rex` on the first Debug, writes them
+  into the run under `/usr/lib/rexxdebugger/` and runs
+  `RexxDebugger.rex '"prog.rex" args'` instead of the program, which is the
+  debugger's own command line (`rexxdebugger prog.rex args`): it reads the
+  program, appends `::OPTIONS TRACE ?A` and runs it on the main thread, and
+  answers its interactive trace through `.DEBUGINPUT`. The front end runs on
+  a thread of its own, in `.js~runEventLoop`: `window.orxDebugger.begin`
+  receives a queued handler, through which the page reports Step, Run,
+  Break, Exit, the Rexx to run and breakpoint changes; `GetUINextResponse`
+  waits for them with `GUARD WHEN` (the guarded `Respond` wakes it). The
+  page shows the current line in the editor (read-only meanwhile), the
+  stack, the variables and the console; a click on a line number sets a
+  breakpoint (also before Debug; kept per file for the page's life). The
+  session ends, and the run with it, when the debugger says it could open
+  another program (`canopensource`), i.e. after the program ends or Exit.
 - Rexx Parser: `build-site.sh` writes `rexx-parser.json` ({path:
   text}, ~3.9 MB, ~0.55 MB deflated) which the page fetches once and writes into
   every run under `/usr/lib/rexx-parser/` with `REXX_PATH=/usr/lib/ooRexx:

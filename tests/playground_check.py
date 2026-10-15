@@ -390,6 +390,48 @@ with sync_playwright() as p:
     pg.keyboard.press("Escape")
     check("find: Esc in the bar does not touch the run state", pg.locator("#run").inner_text().strip().upper() == "RUN")
 
+    # the debugger (Debug): Dom Wise's ooRexx debugger, the page as its front end
+    DBGPROG = 'x = 1\ny = x + 1\ncall sub y\nsay "end" y\nexit\nsub: procedure\n  use arg z\n  w = z * 10\n  return\n'
+    pg.click("#newfile"); pg.fill("#newname", "dbg.rex"); pg.press("#newname", "Enter")
+    pg.fill("#src", DBGPROG); pg.dispatch_event("#src", "input")
+    def gclick(ln):
+        jsv(f"""(() => {{ const g = document.getElementById('gutter'), s = document.getElementById('src');
+          const lh = parseFloat(getComputedStyle(s).lineHeight), pt = parseFloat(getComputedStyle(g).paddingTop), r = g.getBoundingClientRect();
+          g.dispatchEvent(new MouseEvent('click', {{bubbles: true, clientX: r.left + 5, clientY: r.top + pt + ({ln} - 1) * lh + lh / 2}})); }})()""")
+    gclick(8)
+    g = jsv("document.getElementById('gutter').textContent").split("\n")
+    check("debug: a click on a line number sets a breakpoint", nums() and g[7].startswith("\u25CF") and g[0] == "1", g[:9])
+    def dstate(): return jsv("""[document.getElementById('dbgwhere').textContent, !document.getElementById('dbgstep').disabled,
+        [...document.querySelectorAll('#dbgvars tr')].map(r => [...r.cells].map(c => c.textContent).join('=')).join(' '),
+        [...document.querySelectorAll('#dbgstack li')].length, !document.getElementById('dbgpanel').hidden,
+        document.getElementById('src').readOnly, getComputedStyle(document.getElementById('dbgline')).display]""")
+    def dwait(t=30):
+        t0 = time.time()
+        while time.time() - t0 < t:
+            st = dstate()
+            if (st[1] and st[4]) or (pg.locator("#run").inner_text().strip().upper() == "RUN" and not st[4]): return st
+            time.sleep(0.15)
+        return dstate()
+    pg.click("#debug")
+    st = dwait(60)
+    check("debug: stops at the first clause, current line shown", st[:2] == ["line 1", True] and st[4] and st[5] and st[6] == "block", st)
+    pg.click("#dbgstep"); time.sleep(0.2); st = dwait()
+    check("debug: Step", st[0] == "line 2" and "X=1" in st[2] and "Y=2" in st[2], st)
+    pg.fill("#dbgexec", 'say "y is" y'); pg.press("#dbgexec", "Enter"); time.sleep(0.3); st = dwait()
+    check("debug: instructions run in the program's context", "y is 2" in out(pg), out(pg)[-200:])
+    pg.click("#dbgrun"); time.sleep(0.3); st = dwait()
+    if st[0] != "line 8": pg.click("#dbgrun"); time.sleep(0.3); st = dwait()
+    check("debug: Run stops at the breakpoint, with the stack and the routine's variables",
+          st[0] == "line 8" and st[3] == 2 and "Z=2" in st[2] and "W=20" in st[2], st)
+    gclick(8)
+    pg.click("#dbgrun"); wait_idle(pg, 30)
+    st = dstate()
+    check("debug: the run ends, the editor is back", "end 2" in out(pg) and "exit 0" in pg.locator("#status").inner_text()
+          and not st[4] and not st[5] and st[6] == "none", (st, out(pg)[-200:]))
+    pg.click("#debug"); st = dwait(60); pg.click("#dbgexit"); wait_idle(pg, 30)
+    check("debug: Exit ends the program", "end 2" not in out(pg) and not dstate()[4], out(pg)[-200:])
+    pg.locator('.f[data-path="/home/rexx/dbg.rex"] .del').click()
+
     # linked folders (File System Access API), driven with OPFS directories (same API, no picker)
     OPFS = """async (op) => {
       const root = await navigator.storage.getDirectory();

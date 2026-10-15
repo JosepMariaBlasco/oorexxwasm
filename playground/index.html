@@ -281,6 +281,33 @@ footer a { color: var(--accent); }
   border-radius: 4px; cursor: pointer; }
 .jdorwin .jt button:hover { background: var(--accent); color: var(--accent-ink); }
 .jdorwin canvas { display: block; max-width: calc(100vw - 18px); height: auto; touch-action: none; }
+/* the debugger (Debug): Dom Wise's ooRexx debugger, with the page as its front end */
+.run.dbgbtn { background: none; color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); margin-left: 8px; }
+.run.dbgbtn:disabled { opacity: 0.45; }
+.editor.nums .gutter { pointer-events: auto; cursor: pointer; }
+.editor .gutter .bp { color: var(--err); }
+.dbgline { position: absolute; left: 0; right: 0; height: 19.5px; display: none; pointer-events: none;
+  background: color-mix(in srgb, #3fa9f5 24%, transparent); box-shadow: inset 3px 0 0 #3fa9f5; }
+.editor.debugging #src { cursor: default; }
+.dbgpanel { border-bottom: 1px solid var(--line); background: var(--panel); }
+.dbgpanel .bar { gap: 6px; }
+.dbgpanel .dbgbtns { display: flex; gap: 6px; flex-wrap: wrap; }
+.dbgpanel .small:disabled { opacity: .45; cursor: default; }
+#dbgexec { display: block; box-sizing: border-box; width: 100%; font: 13px var(--mono); color: var(--ink); background: var(--code-bg);
+  border: 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 6px 12px; outline: none; }
+#dbgexec:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+.dbgcols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 0; font: 12px/1.45 var(--mono); }
+.dbgcols > div { max-height: 190px; overflow: auto; padding: 4px 12px 8px; }
+.dbgcols > div + div { border-left: 1px solid var(--line); }
+.dbgcols .label { display: block; margin: 2px 0 4px; }
+#dbgstack { margin: 0; padding: 0; list-style: none; }
+#dbgstack li { white-space: pre; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+#dbgstack li.cur { color: var(--ink); font-weight: 600; }
+#dbgvars { border-collapse: collapse; }
+#dbgvars td { padding: 0 10px 0 0; vertical-align: top; white-space: pre-wrap; word-break: break-all; }
+#dbgvars td:first-child { color: var(--muted); white-space: nowrap; word-break: normal; }
+#dbgwhere { font: 12px var(--mono); color: var(--muted); }
+@media (max-width: 640px) { .dbgcols { grid-template-columns: 1fr; } .dbgcols > div + div { border-left: 0; border-top: 1px solid var(--line); } }
 </style>
 </head>
 <body>
@@ -306,7 +333,7 @@ footer a { color: var(--accent); }
         <label class="args"><span class="label">Arguments</span>
           <input id="args" spellcheck="false" autocapitalize="off" autocomplete="off" placeholder="(none)"></label>
       </div>
-      <div class="editor" id="editor"><div class="hl" id="hl" aria-hidden="true"></div><div class="marks" id="marks" aria-hidden="true"></div><textarea id="src"
+      <div class="editor" id="editor"><div class="dbgline" id="dbgline" aria-hidden="true"></div><div class="hl" id="hl" aria-hidden="true"></div><div class="marks" id="marks" aria-hidden="true"></div><textarea id="src"
         spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Rexx source"></textarea><pre class="gutter" id="gutter" aria-hidden="true"></pre>
         <div class="findbar" id="findbar" role="search" hidden><input id="findq" spellcheck="false" autocapitalize="off" autocomplete="off"
           placeholder="find, or :line" aria-label="Find in the program (Enter: next, Shift+Enter: previous, Esc: close; :N goes to line N)"><span
@@ -346,10 +373,24 @@ footer a { color: var(--accent); }
     <section class="pane" aria-label="Run">
       <div class="bar">
         <span class="label">Standard input</span>
-        <button class="run" id="run" disabled>Run</button>
+        <span><button class="run" id="run" disabled>Run</button><button class="run dbgbtn" id="debug" disabled
+          title="Run the program in Dom Wise's ooRexx debugger: step through it, watch its variables, stop at breakpoints (click a line number to set one)">Debug</button></span>
       </div>
       <textarea id="stdin" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Standard input"
         placeholder="Empty: the program asks for input in the console. Lines here: they are the whole input."></textarea>
+      <div class="dbgpanel" id="dbgpanel" hidden>
+        <div class="bar">
+          <span class="label">Debugger</span><span id="dbgwhere"></span>
+          <span class="dbgbtns"><button class="small" type="button" id="dbgstep" title="Run the next clause (F10, or Enter in the field below)">Step</button><button
+            class="small" type="button" id="dbgrun" title="Run to the next breakpoint (F8)">Run</button><button
+            class="small" type="button" id="dbgbreak" title="Stop at the next clause">Break</button><button
+            class="small" type="button" id="dbgexit" title="End the program">Exit</button></span>
+        </div>
+        <input id="dbgexec" spellcheck="false" autocapitalize="off" autocomplete="off"
+          placeholder="Rexx to run here, in the program's context (Enter; empty: Step)" aria-label="Rexx instructions to run at this point">
+        <div class="dbgcols"><div><span class="label">Stack</span><ol id="dbgstack"></ol></div><div><span
+          class="label">Variables</span><table id="dbgvars"></table></div></div>
+      </div>
       <div class="bar">
         <span class="label">Console</span>
         <span class="legend"><i class="o">stdout</i><i class="e">stderr</i><i class="t">trace</i><i class="u">you</i>
@@ -367,7 +408,7 @@ footer a { color: var(--accent); }
     <p>New here? Press <kbd>F1</kbd> or <b>? Help</b> for how the playground works.</p>
     <p>Each run starts a fresh interpreter in its own Web Worker, and every ooRexx thread (<code>START</code>, early <code>REPLY</code>, <code>.Alarm</code>) is a further worker sharing its memory, so the page stays responsive and Stop always works. When a program reads standard input, its thread waits on shared memory until you send a line: <code>PULL</code>, <code>LINEIN</code>, <code>CHARIN</code>, <code>TRACE ?</code> and <code>rexxtry</code> work as in a terminal. Ctrl+D sends end of file.</p>
     <p>Your files live in <code>/home/rexx</code>, the current directory of every run: what you upload or create there, and what a program writes there, is kept in this browser, on this device, until you delete it. Folders keep their structure (Folder, a dropped folder, or an uploaded .zip), so relative <code>::requires</code> work; Download all gives everything back as a .zip. In Chrome and Edge, Link folder mounts a folder of your computer as <code>/home/rexx/NAME/</code>, read &amp; write or read only: edit there with your own tools, run here. Click a file to edit it and Run to run it; any program can <code>::requires</code> it or read it. In the console, &uarr; and &darr; recall earlier lines. The console understands ANSI escape sequences for colors and styles (<code>'1b'x || '[31m'</code>…; see the ANSI colors sample). Sockets reach only WebSocket servers, and there is no shell, so <code>ADDRESS</code> commands for one fail (<code>ADDRESS DOM</code>, <code>FETCH</code> and <code>JDOR</code> work).</p>
-    <p>WebAssembly port started by Tom Dyer; threads, RexxAPI, browser runtime and playground by Josep Maria Blasco. The <a href="https://rexx.epbcn.com/rexx-parser/" target="_blank" rel="noopener">Rexx Parser</a> and its Highlighter are by Josep Maria Blasco (Apache 2.0): <code>::requires "Rexx.Parser.cls"</code>, <code>"parser/Highlighter.cls"</code>, or <code>call highlight "-a prog.rex"</code>.</p>
+    <p>WebAssembly port started by Tom Dyer; threads, RexxAPI, browser runtime and playground by Josep Maria Blasco. The <a href="https://rexx.epbcn.com/rexx-parser/" target="_blank" rel="noopener">Rexx Parser</a> and its Highlighter are by Josep Maria Blasco (Apache 2.0): <code>::requires "Rexx.Parser.cls"</code>, <code>"parser/Highlighter.cls"</code>, or <code>call highlight "-a prog.rex"</code>. Debug is <a href="https://sourceforge.net/p/oorexxdebugger/" target="_blank" rel="noopener">Dom Wise's ooRexx debugger</a> (MIT), with a front end for the page.</p>
     <p>ooRexx is developed by the <a href="https://www.rexxla.org/" target="_blank" rel="noopener">Rexx Language Association</a>; see <a href="https://www.oorexx.org/" target="_blank" rel="noopener">oorexx.org</a>. <span id="build"></span></p>
   </footer>
 </div>
@@ -391,6 +432,14 @@ footer a { color: var(--accent); }
   <div class="dbody">
     <h3>Running</h3>
     <p>Pick a sample or write your own program, then <kbd>Run</kbd> (<kbd>Ctrl</kbd>+<kbd>Enter</kbd>). <kbd>Stop</kbd> (<kbd>Esc</kbd>) ends it at once, endless loops included. <b>Arguments</b> is what <code>PARSE ARG</code> gets. Every run starts a fresh ooRexx interpreter (5.3.0, the real C++ code compiled to WebAssembly) in its own worker; ooRexx threads (<code>START</code>, early <code>REPLY</code>, <code>.Alarm</code>) are real threads too.</p>
+    <h3>Debugging</h3>
+    <p><kbd>Debug</kbd> runs the program in <a href="https://sourceforge.net/p/oorexxdebugger/" target="_blank" rel="noopener">Dom Wise's ooRexx debugger</a>, with this page as its window. The program stops at its first clause; the highlighted line is the one it has just run.</p>
+    <ul>
+      <li><b>Step</b> (<kbd>F10</kbd>, or <kbd>Enter</kbd> in the empty field) runs the next clause; <b>Run</b> (<kbd>F8</kbd>) goes on to the next breakpoint (the first Run in a program stops at once, as in the debugger's own windows); <b>Break</b> stops a running program; <b>Exit</b> ends it.</li>
+      <li>Click a line number to set or clear a breakpoint, before or while debugging.</li>
+      <li>The field under the buttons runs Rexx in the program's context: <code>say x</code>, <code>x = 5</code>, <code>call someRoutine</code>.</li>
+      <li>The stack and the variables are shown at each stop; what the program writes goes to the console, as usual. Tracing every clause is slow: a loop can take a while under Run.</li>
+    </ul>
     <h3>Standard input and the console</h3>
     <ul>
       <li>If the <b>Standard input</b> box is empty, input is interactive: when the program reads (<code>PULL</code>, <code>LINEIN</code>, <code>CHARIN</code>, <code>TRACE ?</code>, <code>rexxtry</code>), type in the console and press <kbd>Enter</kbd>. <kbd>Ctrl</kbd>+<kbd>D</kbd> sends end of file. <kbd>&uarr;</kbd> and <kbd>&darr;</kbd> recall earlier lines.</li>
@@ -422,6 +471,7 @@ footer a { color: var(--accent); }
     <h3>Keys</h3>
     <ul>
       <li><kbd>Ctrl</kbd>+<kbd>Enter</kbd> run &middot; <kbd>Esc</kbd> stop &middot; <kbd>F1</kbd> this help</li>
+      <li>Debugging: <kbd>F10</kbd> step &middot; <kbd>F8</kbd> run to a breakpoint</li>
       <li>In the editor: <kbd>Ctrl</kbd>+<kbd>F</kbd> find &middot; <kbd>Ctrl</kbd>+<kbd>G</kbd> go to a line &middot; <kbd>F12</kbd> go to a definition &middot; <kbd>Alt</kbd>+<kbd>&larr;</kbd> back</li>
       <li>In the console: <kbd>Enter</kbd> send a line &middot; <kbd>Ctrl</kbd>+<kbd>D</kbd> end of file &middot; <kbd>&uarr;</kbd>/<kbd>&darr;</kbd> history</li>
     </ul>
@@ -462,6 +512,11 @@ footer a { color: var(--accent); }
   let hpos = 0, hdraft = "";
 
   let rexx = null, current = null, run = null;   // current: a sample, or {file, user: true} for a file of yours
+  // the debugger (see "the debugger" below): declared here, the editor's gutter uses them
+  let debugFiles = null, debugNext = false, debugging = false, dbgLine = 0;
+  const dbg = { h: null, waiting: false, name: "" };
+  const bps = new Map();                // file -> Set of lines with a breakpoint
+  function bpSet() { const k = current ? current.file : ""; if (!bps.has(k)) bps.set(k, new Set()); return bps.get(k); }
   const edits = new Map();          // sample file -> edited source
   let workspace = new Map();        // path -> Uint8Array, written by earlier runs
 
@@ -706,6 +761,7 @@ footer a { color: var(--accent); }
   function hlScroll() {
     hlEl.scrollTop = src.scrollTop; hlEl.scrollLeft = src.scrollLeft;
     gutter.scrollTop = src.scrollTop;
+    dbgPaint();
     marksEl.scrollTop = src.scrollTop; marksEl.scrollLeft = src.scrollLeft;
   }
   function hlRender() {
@@ -977,6 +1033,7 @@ footer a { color: var(--accent); }
   const LINES_KEY = "orx-pg-lines", AUTO_LINES = 20;
   let gutN = -1;
   function numsWanted(n) {
+    if (debugging || bpSet().size) return true;     // the debugger and breakpoints need them
     const pref = recall(LINES_KEY);
     if (pref === "on") return true;
     if (pref === "off") return false;
@@ -987,11 +1044,12 @@ footer a { color: var(--accent); }
     editor.classList.toggle("nums", on);
     numson.checked = on;
     if (!on) { gutN = -1; gutter.textContent = ""; return; }
-    if (n !== gutN) {
-      gutN = n;
+    const bs = bpSet(), key = n + ":" + [...bs].join(",");
+    if (key !== gutN) {
+      gutN = key;
       const a = new Array(n);
-      for (let i = 0; i < n; i++) a[i] = i + 1;
-      gutter.textContent = a.join("\n") + "\n\n ";
+      for (let i = 0; i < n; i++) a[i] = bs.has(i + 1) ? '<span class="bp" title="breakpoint">\u25CF</span>' + (i + 1) : i + 1;
+      gutter.innerHTML = a.join("\n") + "\n\n ";
       editor.style.setProperty("--gw", String(Math.max(2, String(n).length)));
     }
     hlScroll();
@@ -1544,6 +1602,7 @@ footer a { color: var(--accent); }
   // ---- run ------------------------------------------------------------------------
   function setRunning(on) {
     runBtn.textContent = on ? "Stop" : "Run";
+    $("debug").disabled = on || !rexx;
     runBtn.classList.toggle("stop", on);
     for (const b of nav.querySelectorAll("button")) b.disabled = on;
     for (const b of $("files").querySelectorAll("button")) b.disabled = on;
@@ -1588,6 +1647,15 @@ footer a { color: var(--accent); }
       try { await diskPull(); } finally { starting = false; }
       if (run) return;
     }
+    if (debugNext && !debugFiles) {
+      starting = true;
+      statusEl.innerHTML = "<span>loading the debugger…</span>";
+      setRunning(true);
+      try { await debugLoad(); }
+      catch (e) { debugNext = false; setRunning(false); emit("Could not load the debugger: " + e.message + "\n", "x"); return; }
+      finally { starting = false; }
+      if (run) return;
+    }
     startNow();
   }
   function startNow() {
@@ -1613,13 +1681,19 @@ footer a { color: var(--accent); }
     line.value = "";
     hpos = history.length; hdraft = "";
 
+    const debug = debugNext && !!debugFiles;
+    debugNext = false;
     const args = [current.file];
     if (argsEl.value.trim() !== "") args.push(argsEl.value.trim());
+    if (debug) {                       // RexxDebugger.rex "prog" args: it runs the program, traced
+      args.splice(0, args.length, DBG + "RexxDebugger.rex", '"' + current.file + '"' + (argsEl.value.trim() !== "" ? " " + argsEl.value.trim() : ""));
+      debugMode(true);
+    }
     jdorClear();
     for (const p of document.querySelectorAll(".orx-dom-panel")) p.remove();   // ADDRESS DOM's panels
     const thisRunRef = {};
     run = thisRunRef.run = rexx.run({
-      args, files: Object.assign({}, parserFiles || {}, Object.fromEntries(injected)), cwd: HOME,
+      args, files: Object.assign({}, parserFiles || {}, debug ? debugFiles : {}, Object.fromEntries(injected)), cwd: HOME,
       env: rexxPath(),
       stdin: interactive ? undefined : (fixed.endsWith("\n") ? fixed : fixed + "\n"),
       onOut: (t, kind) => term(t, "", kind),
@@ -1642,6 +1716,7 @@ footer a { color: var(--accent); }
     run.done.then((r) => {
       if (run !== thisRun) return;
       run = null;
+      if (debugging) debugMode(false);
       termFlush(); sgr = {};
       setRunning(false);
       prompt.hidden = true;
@@ -1789,6 +1864,108 @@ footer a { color: var(--accent); }
 
   function stop() { if (run) run.stop(); }
 
+  // ---- the debugger (Debug) --------------------------------------------------------
+  // Dom Wise's ooRexx debugger (debugger/RexxDebugger.rex, MIT) runs the program; its
+  // front end, debugger/RexxDebuggerWebUI.rex, draws through window.orxDebugger below
+  // and reports what the user does through a queued handler.
+  const DBG = "/usr/lib/rexxdebugger/", DBG_FILES = ["RexxDebugger.rex", "RexxDebuggerWebUI.rex"];
+  const debugBtn = $("debug"), dbgPanel = $("dbgpanel"), dbgExec = $("dbgexec");
+  function debugLoad() {
+    return Promise.all(DBG_FILES.map((n) => fetch("debugger/" + n).then((r) => r.ok ? r.arrayBuffer() : Promise.reject(new Error(n + ": HTTP " + r.status)))))
+      .then((bs) => { const f = {}; DBG_FILES.forEach((n, i) => { f[DBG + n] = new Uint8Array(bs[i]); }); debugFiles = f; });
+  }
+  function lineMetrics() { const cs = getComputedStyle(src); return { lh: parseFloat(cs.lineHeight), pt: parseFloat(cs.paddingTop) }; }
+  function dbgPaint() {               // (hoisted: hlScroll calls it from the start)
+    const dbgLineEl = $("dbgline");
+    if (!dbgLine) { dbgLineEl.style.display = "none"; return; }
+    const { lh, pt } = lineMetrics();
+    dbgLineEl.style.display = "block";
+    dbgLineEl.style.height = lh + "px";
+    dbgLineEl.style.top = (pt + (dbgLine - 1) * lh - src.scrollTop) + "px";
+  }
+  function dbgReveal() {                 // scroll the current line into view
+    const { lh, pt } = lineMetrics(), y = pt + (dbgLine - 1) * lh;
+    if (y < src.scrollTop + lh || y > src.scrollTop + src.clientHeight - 2 * lh) src.scrollTop = Math.max(0, y - src.clientHeight / 3);
+    dbgPaint();
+  }
+  gutter.addEventListener("click", (e) => {
+    const { lh } = lineMetrics(), pt = parseFloat(getComputedStyle(gutter).paddingTop);
+    const n = src.value.split("\n").length, ln = Math.floor((e.clientY - gutter.getBoundingClientRect().top + gutter.scrollTop - pt) / lh) + 1;
+    if (ln < 1 || ln > n) return;
+    const s = bpSet(), on = !s.has(ln);
+    if (on) s.add(ln); else s.delete(ln);
+    gutRender();
+    if (debugging && dbg.h) dbg.h("bp", ln + (on ? " on" : " off"));
+  });
+  function dbgControls() {
+    const w = debugging && dbg.waiting;
+    for (const id of ["dbgstep", "dbgrun"]) $(id).disabled = !w;
+    dbgExec.disabled = !w;
+    $("dbgbreak").disabled = !debugging || w || !dbg.h;
+    $("dbgexit").disabled = !debugging || !dbg.h;
+  }
+  function dbgSend(kind, data) { if (dbg.h) dbg.h(kind, data === undefined ? "" : data); }
+  $("dbgstep").addEventListener("click", () => dbgSend("step"));
+  $("dbgrun").addEventListener("click", () => dbgSend("run"));
+  $("dbgbreak").addEventListener("click", () => dbgSend("break"));
+  $("dbgexit").addEventListener("click", () => dbgSend("exit"));
+  dbgExec.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || !dbg.waiting) return;
+    e.preventDefault();
+    const t = dbgExec.value.trim();
+    dbgExec.value = "";
+    if (t === "") dbgSend("step"); else { emit("> " + t + "\n", "in"); dbgSend("exec", t); }
+  });
+  // what RexxDebuggerWebUI.rex calls (in the page's realm)
+  window.orxDebugger = {
+    begin(h) { dbg.h = h; dbgControls(); },
+    setSource(name) { dbg.name = String(name); },
+    getBreakpoints() { return [...bpSet()].sort((a, b) => a - b); },
+    stopAt(name, line, stack, index) {
+      name = String(name);
+      const here = name === current.file || name.endsWith("/" + current.file);
+      dbgLine = here ? +line : 0;
+      $("dbgwhere").textContent = here ? "line " + line : (name.split("/").pop() + " line " + line);
+      if (here) dbgReveal(); else dbgPaint();
+      const ol = $("dbgstack"); ol.textContent = "";
+      Array.from(stack || []).forEach((t, i) => {
+        const li = document.createElement("li"); li.textContent = String(t);
+        if (i + 1 === +index) li.className = "cur";
+        ol.appendChild(li);
+      });
+    },
+    setVars(rows) {
+      const tb = $("dbgvars"); tb.textContent = "";
+      for (const r of Array.from(rows || [])) {
+        const tr = document.createElement("tr");
+        for (const c of [r[0], r[1]]) { const td = document.createElement("td"); td.textContent = String(c); tr.appendChild(td); }
+        tb.appendChild(tr);
+      }
+    },
+    setWaiting(w) {
+      dbg.waiting = w === true || w === "1"; dbgControls();
+      if (w && document.activeElement !== src && document.activeElement !== argsEl) dbgExec.focus({ preventScroll: true });
+    },
+    write(t, nl) { emit(String(t) + (nl === true || nl === "1" ? "\n" : ""), ""); },
+    clearConsole() { out.textContent = ""; },
+    end() { dbg.h = null; dbg.waiting = false; dbgControls(); },
+  };
+  function debugMode(on) {
+    debugging = on;
+    editor.classList.toggle("debugging", on);
+    dbgPanel.hidden = !on;
+    if (on) {
+      src.readOnly = true;
+      dbgLine = 0; dbg.h = null; dbg.waiting = false;
+      $("dbgwhere").textContent = ""; $("dbgstack").textContent = ""; $("dbgvars").textContent = "";
+    } else {
+      src.readOnly = !!(current && current.ro);
+      dbgLine = 0; dbg.h = null; dbg.waiting = false;
+    }
+    dbgControls(); dbgPaint(); gutRender();
+  }
+  debugBtn.addEventListener("click", () => { if (!run) { debugNext = true; start(); } });
+
   line.addEventListener("keydown", (e) => {
     if (!run) return;
     if (e.key === "ArrowUp" || e.key === "ArrowDown") {   // recall earlier lines, like a shell
@@ -1823,6 +2000,7 @@ footer a { color: var(--accent); }
     if (e.key === "F1") { e.preventDefault(); toggleDialog($("help")); return; }
     if (document.querySelector("dialog[open]")) return;     // Esc closes the dialog
     if (e.key === "Escape" && run) { e.preventDefault(); stop(); }
+    else if (debugging && dbg.waiting && (e.key === "F10" || e.key === "F8")) { e.preventDefault(); dbgSend(e.key === "F10" ? "step" : "run"); }
     else if (e.key === "Enter" && (e.ctrlKey || e.metaKey) && !run) { e.preventDefault(); start(); }
   });
   // ---- dialogs: help (F1) and settings (console colors) -----------------------------
@@ -1914,6 +2092,7 @@ footer a { color: var(--accent); }
     rstate.dataset.state = "ready";
     rstate.textContent = "runtime: ready (" + fmtMs(performance.now() - t0) + ")";
     runBtn.disabled = false;
+    debugBtn.disabled = false;
   }, (e) => {
     rstate.dataset.state = "failed";
     rstate.textContent = "runtime: failed";
