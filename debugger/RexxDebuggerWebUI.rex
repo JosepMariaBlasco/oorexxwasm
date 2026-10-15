@@ -168,6 +168,15 @@ if text~string~pos("Automatic breakpoint hit") > 0 then manual = .true    -- a B
 front~write(text~string, .js~bool(newline))
 
 ------------------------------------------------------
+::method ShowText unguarded
+------------------------------------------------------
+-- "say" in a page's panel: the text to the debugger's console.  It answers 1,
+-- so that the panel can call it in an IF, which leaves RESULT alone.
+use strict arg text
+self~AppendUIConsoleText(text)
+return 1
+
+------------------------------------------------------
 ::method ClearUIConsole unguarded
 ------------------------------------------------------
 expose front

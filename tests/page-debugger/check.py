@@ -108,6 +108,16 @@ with sync_playwright() as p:
     page.locator("#ooRexx-debugger .exec").fill("say 'count is' count")
     page.locator("#ooRexx-debugger .exec").press("Enter")
     check(until(lambda: "count is 1" in page.locator("#ooRexx-debugger .out").text_content()), "say in the panel shows there", page.locator("#ooRexx-debugger .out").text_content())
+    ex = page.locator("#ooRexx-debugger .exec")
+    ex.fill("result = 1024"); ex.press("Enter")
+    for _ in range(2):
+        ex.fill("say 'R=' result"); ex.press("Enter")
+    check(until(lambda: page.locator("#ooRexx-debugger .out").text_content().count("R= 1024") == 2),
+          "  say leaves RESULT alone (twice: R= 1024)", page.locator("#ooRexx-debugger .out").text_content()[-200:])
+    ex.press("ArrowUp"); up1 = ex.input_value()
+    ex.press("ArrowUp"); up2 = ex.input_value()
+    ex.press("ArrowDown"); ex.press("ArrowDown"); down = ex.input_value()
+    check(up1 == "say 'R=' result" and up2 == "result = 1024" and down == "", "  Up and Down recall what was run", (up1, up2, down))
     page.keyboard.press("F8")
     check(until(lambda: text("#out") == "clicked 1"), "F8 runs on: the handler finishes")
     check(until(lambda: status().startswith("Running")), "  Running again", status())

@@ -95,9 +95,9 @@ button:disabled { opacity: .45; cursor: default; }
 .t { padding-right: 16px; }
 .side { display: flex; flex-direction: column; min-height: 0; }
 .sec { display: flex; flex-direction: column; min-height: 0; border-bottom: 1px solid var(--line); }
-.sec.stack { flex: 0 1 auto; max-height: 32%; }
-.sec.vars { flex: 1 1 0; }
-.sec.dbg { flex: 0 0 auto; height: 36%; border-bottom: none; }
+.sec.s-stack { flex: 0 1 auto; max-height: 32%; }
+.sec.s-vars { flex: 1 1 0; }
+.sec.s-dbg { flex: 0 0 auto; height: 36%; border-bottom: none; }
 .scroll { flex: 1; min-height: 0; overflow: auto; }
 h3 { margin: 0; padding: 4px 8px; font-size: 11px; font-weight: 600; color: var(--mute); text-transform: uppercase; letter-spacing: .04em; flex: none; }
 ol, table { margin: 0; font: 12px/1.45 ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
@@ -151,19 +151,34 @@ li.cur { font-weight: 600; }
     execEl = el('input', 'exec');
     execEl.placeholder = 'Rexx, run where the program is paused';
     execEl.spellcheck = false;
+    const history = [];                 // what was run here; Up and Down recall it
+    let hpos = 0, hdraft = '';
     execEl.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        if (hpos === history.length) hdraft = execEl.value;
+        hpos = Math.max(0, Math.min(history.length, hpos + (e.key === 'ArrowUp' ? -1 : 1)));
+        execEl.value = hpos === history.length ? hdraft : history[hpos];
+        execEl.setSelectionRange(execEl.value.length, execEl.value.length);
+        return;
+      }
       if (e.key !== 'Enter' || !waiting) return;
       e.preventDefault();
       const t = execEl.value.trim();
       execEl.value = '';
       if (t === '') { act('step'); return; }
+      if (history[history.length - 1] !== t) history.push(t);
+      if (history.length > 200) history.shift();
+      hpos = history.length; hdraft = '';
       write('> ' + t + '\n');
       // "say" here shows in the panel (the debugger's console), not in the page's
+      // console; written as an IF, which leaves RESULT alone (a message
+      // instruction would set it, or drop it)
       const say = /^say(\s+(.*))?$/is.exec(t);
-      send('exec ' + (say ? '.rexxdebugger.debugger~SendDebugMessage((' + (say[2] || "''") + ')~string)' : t));
+      send('exec ' + (say ? 'if .rexxdebugger.debugger~debuggerui~ShowText((' + (say[2] || "''") + ')~string) then nop' : t));
     });
     const sec = (cls, title, ...content) => {
-      const d = el('div', 'sec ' + cls), sc = el('div', 'scroll');
+      const d = el('div', 'sec s-' + cls), sc = el('div', 'scroll');
       sc.append(...content); d.append(el('h3', '', title), sc);
       return d;
     };

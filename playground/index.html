@@ -1909,12 +1909,26 @@ footer a { color: var(--accent); }
   $("dbgrun").addEventListener("click", () => dbgSend("run"));
   $("dbgbreak").addEventListener("click", () => dbgSend("break"));
   $("dbgexit").addEventListener("click", () => dbgSend("exit"));
+  const dbgHistory = [];                   // what was run there; Up and Down recall it
+  let dbgHpos = 0, dbgHdraft = "";
   dbgExec.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault();
+      if (dbgHpos === dbgHistory.length) dbgHdraft = dbgExec.value;
+      dbgHpos = Math.max(0, Math.min(dbgHistory.length, dbgHpos + (e.key === "ArrowUp" ? -1 : 1)));
+      dbgExec.value = dbgHpos === dbgHistory.length ? dbgHdraft : dbgHistory[dbgHpos];
+      dbgExec.setSelectionRange(dbgExec.value.length, dbgExec.value.length);
+      return;
+    }
     if (e.key !== "Enter" || !dbg.waiting) return;
     e.preventDefault();
     const t = dbgExec.value.trim();
     dbgExec.value = "";
-    if (t === "") dbgSend("step"); else { emit("> " + t + "\n", "in"); dbgSend("exec", t); }
+    if (t === "") { dbgSend("step"); return; }
+    if (dbgHistory[dbgHistory.length - 1] !== t) dbgHistory.push(t);
+    if (dbgHistory.length > 200) dbgHistory.shift();
+    dbgHpos = dbgHistory.length; dbgHdraft = "";
+    emit("> " + t + "\n", "in"); dbgSend("exec", t);
   });
   // what RexxDebuggerWebUI.rex calls (in the page's realm); the user's actions wait
   // in dbg.queue until its thread asks for the next one (next(), a Promise)

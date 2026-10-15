@@ -422,6 +422,9 @@ with sync_playwright() as p:
     check("debug: Step", st[0] == "line 2" and "X=1" in st[2] and "Y=2" in st[2], st)
     pg.fill("#dbgexec", 'say "y is" y'); pg.press("#dbgexec", "Enter"); time.sleep(0.3); st = dwait()
     check("debug: instructions run in the program's context", "y is 2" in out(pg), out(pg)[-200:])
+    pg.press("#dbgexec", "ArrowUp")
+    check("debug: Up recalls what was run", pg.input_value("#dbgexec") == 'say "y is" y', pg.input_value("#dbgexec"))
+    pg.fill("#dbgexec", "")
     pg.click("#dbgrun"); time.sleep(0.3); st = dwait()
     if st[0] != "line 8": pg.click("#dbgrun"); time.sleep(0.3); st = dwait()
     check("debug: Run stops at the breakpoint, with the stack and the routine's variables",
