@@ -1,6 +1,6 @@
 # ooRexx/WASM and JavaScript
 
-October 14, 2026
+October 16, 2026
 
 *Version 2. [Version 1](posted/2026-10-08/ooRexx-WASM-and-JavaScript.md) was posted to the ooRexx developers' list on October 8, 2026; [Changes since version 1](#changes-since-version-1) lists what differs.*
 
@@ -59,14 +59,17 @@ On an array or a typed array, `o[i]` and `o[i] = v` (the messages `[]` and `[]=`
 
 JavaScript strings, numbers, booleans (1/0) and bigints come back as Rexx strings; null as `.nil`, and undefined as `.js~undefined`, a single object, so `x == .js~undefined` tests for it. A property that does not exist reads as `.js~undefined`; `~js.hasProperty` tells the two apart. Rexx strings always go as strings, so "007" stays "007": `.js~num(x)`, `.js~bool(x)`, `.js~bigint(x)` and `.js~bytes(x)` (a Uint8Array) force a type, and `.js~true`, `.js~false` and `.js~undefined` are those values. `.nil` goes as null. An Array goes as an array and a Directory or StringTable as a plain object, both as copies; `.js~newArray(items...)` and `.js~newObject(directory)` make them in JavaScript instead, held by reference. `.js~newObject(name, value, ...)` makes a plain object from names and values, the names exactly as written: `.js~newObject("method", "POST", "cache", "no-store")`. Any other Rexx object goes by reference, as a `RexxProxy`: see [Rexx objects in JavaScript](#rexx-objects-in-javascript).
 
+Strings are text. A Rexx string goes to JavaScript read as UTF-8, and a JavaScript string comes to Rexx as UTF-8. A string that is not text is an error, not a guess: a Rexx string that is not valid UTF-8 (`'ff'x`) and a JavaScript string that is not well-formed (a lone surrogate, as when `"😀"` is cut in half) are SYNTAX 98.900, naming the value ("argument 2 is not valid UTF-8 (byte 1 is 'FF'x)"); nothing is replaced by U+FFFD. Binary data goes as `.js~bytes(x)`, a Uint8Array, and comes back with `~js.byteString`.
+
 `.js~box(type, x)` forces a type with the type indicators of BSF4ooRexx's `box()`: `BOolean`, `BYte`, `Char`, `Double`, `Float`, `Int`, `Long`, `Object`, `SHort` and `STring`, and JavaScript's own `Number` and `BIgint`. Case does not matter, and an indicator may be shortened down to its capitals, so `.js~box("bo", 1)` is `.js~box("Boolean", 1)`. The whole-number types check Java's ranges (`.js~box("BYte", 300)` is an error), `Long` within the integers JavaScript holds exactly; `BIgint` takes any whole number. `.js~unbox(o)` gives back the Rexx value of a box, or of a JavaScript `Number`, `String`, `Boolean` or `BigInt` object.
 
 ## Errors
 
 Errors cross the bridge both ways, and what was thrown is kept.
 
-- **JavaScript to Rexx.** A JavaScript exception is SYNTAX 98.900, "JavaScript error: TypeError: …", with what was thrown in `condition("O")~additional[2]`. So is a rejected Promise under `~await`.
-- **Rexx to JavaScript.** A condition in Rexx code that JavaScript called (a synchronous handler, a message to a `RexxProxy`, an override of a class made by `.js~extend`) is thrown to JavaScript as a `RexxError`, whose message is Rexx's ("Error 41.1: …"). In the page, where a call gives a Promise, the Promise is rejected with it. `RexxError` is a global of the realm, for `instanceof`.
+- **JavaScript to Rexx.** A JavaScript exception is SYNTAX 98.900, "JavaScript error: TypeError: …". So is a rejected Promise under `~await`. `condition("O")~additional` holds `[1]` that message, `[2]` what was thrown, and `[3]` its stack, as text, when it has one (an `Error` has; `throw 42` has not).
+- **Rexx to JavaScript.** A condition in Rexx code that JavaScript called (a synchronous handler, a message to a `RexxProxy`, an override of a class made by `.js~extend`) is thrown to JavaScript as a `RexxError`, an `Error` whose message is Rexx's ("Error 41.1: …") and whose properties are the condition's, as far as it has them: `condition` ("SYNTAX"), `code` ("41.1", a string), `rc` and `line` (numbers), `errorText`, `program`, and `traceback`, the lines Rexx shows, joined by "\n". In the page, where a call gives a Promise, the Promise is rejected with it. `RexxError` is a global of the realm, for `instanceof`. (A HALT nobody traps reaches JavaScript as SYNTAX 4.1, as it reaches any caller of Rexx.)
+- **Through Rexx and back.** A JavaScript exception that goes through Rexx untrapped (JavaScript calls Rexx, which calls JavaScript, which throws) comes back to JavaScript as a `RexxError` whose `cause` is the very object thrown, so `e.cause instanceof TypeError` holds; a thrown primitive comes back as its string. A condition of Rexx's own has no `cause`.
 - **Nobody to tell.** When JavaScript calls Rexx on its own (a timer, a Node server) it does not wait for the answer, so a condition there is written on the standard error, and so is a `RexxError` an event listener does not pass on.
 
 ## Events
@@ -245,6 +248,7 @@ Each of these has a way out, as in BSF4ooRexx:
 
 - **Case-insensitive names can pick the wrong property.** `.js~page~Event` finds `window.event`, the current event, before `window.Event`, the constructor. Use the exact name: `w~js.getStrict("Event")~new("input")`.
 - **Rexx's own methods win.** Those of Rexx's Object (`send`, `start`, `copy`, `run`, …) and the few the bridge leaves without `js.` (`at`, `put`, `new`, `makeArray`, `supplier`, `await`) are not passed on to JavaScript. Use the exact form for JavaScript's: `o~js.invokeStrict("send", x)`, and JavaScript's own `at` is `a~js.invokeStrict("at", 0)`.
+- **Binary strings are not text.** A Rexx string of bytes (an image, a file read with `charin`) is not UTF-8, and passing it as a string is an error: pass `.js~bytes(s)`, and come back with `~js.byteString`.
 - **Directory keys are upper case.** `d~method = "POST"` stores `METHOD`, which a JavaScript options object does not know: use `.js~newObject("method", "POST")`, or `d["method"] = "POST"`.
 
 ## Guarantees
@@ -253,7 +257,8 @@ Each of these has a way out, as in BSF4ooRexx:
 - Each operation runs on the thread of its realm, so any Rexx thread may use any `.JSObject`.
 - `~await` blocks only the Rexx thread that waits; meanwhile that thread runs the page's calls of Rexx, if any come.
 - Names are looked up when the message arrives, so a property added later is found.
-- What a JavaScript exception threw is kept, in `condition("O")~additional[2]`.
+- What a JavaScript exception threw is kept, in `condition("O")~additional[2]`, and comes back to JavaScript as the `cause` of the `RexxError` if Rexx does not trap it.
+- No string is changed on its way: what is not text is an error.
 - A `.JSObject` keeps its JavaScript object alive while Rexx holds it, and no longer.
 
 ## Relation to BSF4ooRexx and OLEObject
@@ -276,8 +281,8 @@ Further replies on the list are very welcome.
 | --- | --- |
 | **Names.** The bridge's own methods start with `js.` (`js.typeOf`, `js.className`, `js.instanceOf`, `js.hasProperty`, `js.propertyNames`, `js.byteString`), as BSF4ooRexx's with `bsf.`; exact names with `js.getStrict`, `js.setStrict`, `js.invokeStrict` (was `invoke`); a function is called with JavaScript's `f~call(this, args...)`; `ooRexx.js`'s global is `ooRexx` (was `OoRexx`) | Messages, Pitfalls, Rexx from the page |
 | **Arrays.** Arrays and typed arrays count from 1 with `o[i]`, `~at(i)`, `~put(v, i)` and `DO WITH`; lists keep 0; JavaScript's `at` is `o~js.invokeStrict("at", i)` | Messages, Pitfalls |
-| **Values.** undefined comes back as `.js~undefined` (was `.nil`), and a missing property reads as it; `.js~box(type, x)` with BSF4ooRexx's type indicators, and `.js~unbox(o)`; `.js~newObject(name, value, ...)`, with exact names | Values, Pitfalls |
-| **Errors.** Gathered in one section; a condition in Rexx called by JavaScript is a `RexxError` | Errors |
+| **Values.** undefined comes back as `.js~undefined` (was `.nil`), and a missing property reads as it; `.js~box(type, x)` with BSF4ooRexx's type indicators, and `.js~unbox(o)`; `.js~newObject(name, value, ...)`, with exact names; a string that is not text (not UTF-8, a lone surrogate) is an error (it was changed to U+FFFD) | Values, Pitfalls, Guarantees |
+| **Errors.** Gathered in one section; a condition in Rexx called by JavaScript is a `RexxError` with the condition's fields (`condition`, `code`, `rc`, `errorText`, `program`, `line`, `traceback`); a JavaScript exception that goes through Rexx and back is its `cause`; `additional[3]` is a JavaScript exception's stack | Errors, Guarantees |
 | **Handlers.** Synchronous in the worker's realm and under Node, as `.net~handler` (a comparator for `sort` works), and may use the RexxAPI there; queued in the page and with option `queued`, `latest` or `max n` (new); released when JavaScript collects their function; `.js~eventLoop` is `.js~runEventLoop`, and the event queue is explained | Events, Waiting |
 | **Waiting.** Why JavaScript cannot wait for Rexx in the page, and what to do instead | Waiting |
 | **Rexx objects in JavaScript.** Any other Rexx object goes as a `RexxProxy` (it went as its string): messages, BSF4ooRexx's `sendMessage` names, identity both ways; from the page, a call gives a Promise of the result | Values, Rexx objects in JavaScript, Rexx from the page |

@@ -48,7 +48,14 @@ copied as arrays and plain objects.
   iterable's 1..n, an object's properties), ~byteString; names that do not hide common JavaScript ones (Map's
   get/set/has/keys, Response's bytes).
 - A JavaScript exception, or a rejected Promise under ~await, is SYNTAX
-  98.900 "JavaScript error: ..." with what was thrown in ADDITIONAL[2].
+  98.900 "JavaScript error: ..." with ADDITIONAL [1] that message, [2] what
+  was thrown, [3] its stack (text) when it has one.  A Rexx condition in
+  JavaScript is a RexxError (an Error) with the condition's fields:
+  condition, code ("41.1"), rc, errorText, program, line, traceback; a
+  JavaScript exception that went through Rexx and back is its cause.
+- Strings are text both ways: a Rexx string must be UTF-8 and a JavaScript
+  string well-formed (no lone surrogate), else SYNTAX 98.900 (nothing is
+  replaced by U+FFFD); binary data goes as .js~bytes(x), a Uint8Array.
 - wasm/web-js.cpp: the package "js"; .JSObject's methods are native (errors
   point at the caller's line).  Each operation goes synchronously to the
   main runtime thread (emscripten_proxy_sync_with_ctx), which may finish it
@@ -110,29 +117,31 @@ copied as arrays and plain objects.
   iteration, options latest and max, release).  Documented in wasm/README.md.
 ---
  interpreter/package/PackageManager.cpp |   16 +
- wasm/README.md                         |  186 +++
+ wasm/README.md                         |  193 +++
  wasm/build-node.sh                     |   17 +-
  wasm/build-web.sh                      |   17 +-
  wasm/extra-packages.cpp                |   66 +
  wasm/js-bridge.js                      |  241 ++++
- wasm/js-realm.js                       |  817 +++++++++++++
+ wasm/js-realm.js                       |  911 ++++++++++++++
+ wasm/tests/js-errors.rex               |  152 +++
  wasm/tests/js-extend-gc.rex            |  111 ++
  wasm/tests/js-extend.rex               |  157 +++
  wasm/tests/js-proxy.rex                |  127 ++
- wasm/tests/qualify-node-cli.sh         |  198 +++
+ wasm/tests/qualify-node-cli.sh         |  202 +++
  wasm/tests/web-api.html                |    4 +-
- wasm/tests/web-api.py                  |  216 +++-
+ wasm/tests/web-api.py                  |  219 +++-
  wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 1527 ++++++++++++++++++++++++
- wasm/web/js.cls                        |  675 +++++++++++
+ wasm/web-js.cpp                        | 1604 ++++++++++++++++++++++++
+ wasm/web/js.cls                        |  685 ++++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 ++++
- 20 files changed, 4719 insertions(+), 12 deletions(-)
+ 21 files changed, 5066 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
+ create mode 100644 wasm/tests/js-errors.rex
  create mode 100644 wasm/tests/js-extend-gc.rex
  create mode 100644 wasm/tests/js-extend.rex
  create mode 100644 wasm/tests/js-proxy.rex
@@ -177,10 +186,10 @@ index 9324d0b..786af1f 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index d6f2caf..9640bb2 100644
+index d6f2caf..0cc1a1a 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -239,6 +239,190 @@ from the test suite's directory:
+@@ -239,6 +239,197 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -243,9 +252,16 @@ index d6f2caf..9640bb2 100644
 +  (also of a JavaScript `Number`, `String`, `Boolean` or `BigInt` object).
 +  An Array goes as an array, a Directory or StringTable as a plain object
 +  (copies), .nil as null.
++* Strings are text: a Rexx string must be UTF-8 and a JavaScript string
++  well-formed (no lone surrogate), else SYNTAX 98.900 (nothing becomes
++  U+FFFD); binary data goes as `.js~bytes(x)`.
 +* A JavaScript exception (or a rejected Promise under `~await`) is SYNTAX
-+  98.900 "JavaScript error: TypeError: ..."; what was thrown is
-+  `condition("O")~additional[2]`.
++  98.900 "JavaScript error: TypeError: ..."; `condition("O")~additional` is
++  [1] that message, [2] what was thrown, [3] its stack (when it has one).
++  A Rexx condition in JavaScript is a `RexxError` with the condition's
++  fields (`condition`, `code`, `rc`, `errorText`, `program`, `line`,
++  `traceback`); a JavaScript exception that went through Rexx and back is
++  its `cause`.
 +* Several Rexx threads may use it at once; each `~await` blocks only its
 +  own thread.
 +* **Browser: off unless the page grants it**, realm by realm:
@@ -371,7 +387,7 @@ index d6f2caf..9640bb2 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -247,6 +431,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -247,6 +438,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).
@@ -799,10 +815,10 @@ index 0000000..ea8b80b
 +})();
 diff --git a/wasm/js-realm.js b/wasm/js-realm.js
 new file mode 100644
-index 0000000..e802bed
+index 0000000..37b375f
 --- /dev/null
 +++ b/wasm/js-realm.js
-@@ -0,0 +1,817 @@
+@@ -0,0 +1,911 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -889,9 +905,19 @@ index 0000000..e802bed
 +  // JavaScript can wait: the worker, Node); hooks (the page, from ooRexx.js):
 +  // call(bytes) -> a Promise of the answer, a call of Rexx queued as an event,
 +  // and session(object), ooRexx.js's start() getting its session
-+  // a Rexx condition in a synchronous handler
++  // a Rexx condition in a synchronous handler: message, the text; and, from
++  // the condition, condition (its name), code ("41.1"), rc and line
++  // (numbers), errorText, program, traceback (its lines, joined by "\n"), as
++  // far as it has them; cause, what JavaScript threw, when the condition is
++  // the SYNTAX 98.900 that a JavaScript exception became
++  const FIELDS = ['condition', 'code', 'rc', 'errorText', 'program', 'line', 'traceback'];
 +  class RexxError extends Error {
-+    constructor(message) { super(message); this.name = 'RexxError'; }
++    constructor(message, fields) {
++      const f = fields || {};
++      super(message, 'cause' in f ? { cause: f.cause } : undefined);
++      this.name = 'RexxError';
++      for (const k of FIELDS) if (f[k] !== undefined) this[k] = f[k];
++    }
 +  }
 +  // a Rexx object in JavaScript (any but strings, Arrays, Directories,
 +  // StringTables, which are copied): BSF4ooRexx's RexxProxy names, and any
@@ -924,6 +950,60 @@ index 0000000..e802bed
 +  return function makeRealm(REALM, emit, syncCall, hooks) {
 +  hooks = hooks || {};
 +  const enc = new TextEncoder(), dec = new TextDecoder('utf-8');
++
++  // ---- text ---------------------------------------------------------------
++  // A Rexx string goes to JavaScript as text: its bytes must be UTF-8 (binary
++  // data goes as .js~bytes(s), a Uint8Array); a JavaScript string comes to
++  // Rexx as UTF-8, so it must be well-formed (no lone surrogate).  Neither is
++  // replaced by U+FFFD: a TypeError instead (SYNTAX 98.900 in Rexx).
++  // (Descriptive texts, an error's message or a Rexx object's string shown by
++  // a RexxProxy, are decoded leniently.)
++  const strict = new TextDecoder('utf-8', { fatal: true });
++  const NOT_TEXT = Symbol('not text');
++  function notText(msg) { const e = new TypeError(msg); e[NOT_TEXT] = true; return e; }
++  // the index of the first byte of d that is not part of valid UTF-8
++  function badUtf8(d) {
++    for (let i = 0; i < d.length;) {
++      const b = d[i];
++      const n = b < 0x80 ? 0 : b >= 0xC2 && b <= 0xDF ? 1 : b >= 0xE0 && b <= 0xEF ? 2 : b >= 0xF0 && b <= 0xF4 ? 3 : -1;
++      if (n < 0) return i;
++      const lo = b === 0xE0 ? 0xA0 : b === 0xF0 ? 0x90 : 0x80, hi = b === 0xED ? 0x9F : b === 0xF4 ? 0x8F : 0xBF;
++      for (let k = 1; k <= n; k++) {
++        const c = d[i + k];
++        if (c === undefined || c < (k === 1 ? lo : 0x80) || c > (k === 1 ? hi : 0xBF)) return i;
++      }
++      i += n + 1;
++    }
++    return -1;
++  }
++  const hex2 = (b) => "'" + b.toString(16).toUpperCase().padStart(2, '0') + "'x";
++  // the bytes of a Rexx string (what: "argument 2", ...) as a JavaScript string
++  function text(d, what) {
++    try { return strict.decode(d); } catch (x) { /* below */ }
++    const i = badUtf8(d);
++    throw notText((what || 'a string') + ' is not valid UTF-8 (byte ' + (i + 1) + ' is ' + hex2(d[i]) +
++      '): a Rexx string goes to JavaScript as text; .js~bytes(s) passes its bytes');
++  }
++  // the index of a lone surrogate in s, or -1
++  function loneSurrogate(s) {
++    if (typeof s.isWellFormed === 'function' && s.isWellFormed()) return -1;
++    for (let i = 0; i < s.length; i++) {
++      const c = s.charCodeAt(i);
++      if (c >= 0xD800 && c <= 0xDBFF) {
++        const d = s.charCodeAt(i + 1);
++        if (d >= 0xDC00 && d <= 0xDFFF) { i++; continue; }
++        return i;
++      }
++      if (c >= 0xDC00 && c <= 0xDFFF) return i;
++    }
++    return -1;
++  }
++  function checkText(s) {
++    const i = loneSurrogate(s);
++    if (i < 0) return s;
++    throw notText('a JavaScript string that is not well-formed cannot go to Rexx (code unit ' + (i + 1) +
++      ' is a lone surrogate, U+' + s.charCodeAt(i).toString(16).toUpperCase() + ')');
++  }
 +
 +  // ---- handles ------------------------------------------------------------
 +  const objs = [globalThis], counts = [Infinity], free = [];
@@ -969,6 +1049,7 @@ index 0000000..e802bed
 +      return { tag, d };
 +    }
 +    str() { return dec.decode(this.rec().d); }
++    text(what) { return text(this.rec().d, what); }
 +  }
 +  class Writer {
 +    constructor() { this.parts = []; this.len = 0; }
@@ -985,10 +1066,12 @@ index 0000000..e802bed
 +    }
 +  }
 +
-+  // a value from Rexx
-+  function val(r) {
++  // a value from Rexx (what: how an error names it; ARGS: an Array of
++  // arguments, named "argument n")
++  const ARGS = 'the arguments';
++  function val(r, what) {
 +    const { tag, d } = r.rec();
-+    const s = () => dec.decode(d);
++    const s = () => text(d, what);
 +    switch (tag) {
 +      case 'S': return s();
 +      case 'N': return null;
@@ -1006,18 +1089,24 @@ index 0000000..e802bed
 +      }
 +      case 'I': return BigInt(s().trim());
 +      case 'Y': return d.slice();
-+      case 'O': { const [realm, id] = s().split('\t'); return deref(realm, Number(id)); }
-+      case 'H': return handlerFunction(s());
++      case 'O': { const [realm, id] = dec.decode(d).split('\t'); return deref(realm, Number(id)); }
++      case 'H': return handlerFunction(dec.decode(d));
 +      case 'V': return byName(s());
-+      case 'R': return rexxProxy(s());
++      case 'R': return rexxProxy(dec.decode(d));
 +      case 'A': {
-+        const n = Number(s()), a = new Array(n);
-+        for (let i = 0; i < n; i++) a[i] = val(r);
++        const n = Number(dec.decode(d)), a = new Array(n);
++        for (let i = 0; i < n; i++) {
++          a[i] = val(r, what === ARGS ? 'argument ' + (i + 1) : 'item ' + (i + 1) + (what ? ' of ' + what : ''));
++        }
 +        return a;
 +      }
 +      case 'T': {
-+        const n = Number(s()), o = {};
-+        for (let i = 0; i < n; i++) { const k = r.str(); o[k] = val(r); }
++        const n = Number(dec.decode(d)), o = {};
++        const of = what ? ' of ' + what : '';
++        for (let i = 0; i < n; i++) {
++          const k = r.text('an index' + of);
++          o[k] = val(r, 'the item at "' + k + '"' + of);
++        }
 +        return o;
 +      }
 +      default: throw new Error('bad value record ' + tag);
@@ -1046,7 +1135,7 @@ index 0000000..e802bed
 +  // a value for Rexx: primitives as strings, anything else by reference
 +  function put(w, v) {
 +    switch (typeof v) {
-+      case 'string': w.rec('S', v); return;
++      case 'string': w.rec('S', checkText(v)); return;
 +      case 'number': w.rec('S', number(v)); return;
 +      case 'boolean': w.rec('S', v ? '1' : '0'); return;
 +      case 'bigint': w.rec('S', v.toString()); return;
@@ -1129,7 +1218,7 @@ index 0000000..e802bed
 +  }
 +  function putArgs(w, args) {
 +    w.rec('A', String(args.length));
-+    for (const a of args) { try { put(w, a); } catch (x) { w.rec('N', ''); } }
++    for (const a of args) { try { put(w, a); } catch (x) { if (x && x[NOT_TEXT]) throw x; w.rec('N', ''); } }
 +  }
 +  // a synchronous call of Rexx: the method's result, or its condition thrown
 +  function callRexx(w) {
@@ -1212,12 +1301,29 @@ index 0000000..e802bed
 +    if (!queued) return callRexx(w);
 +    return hooks.call(w.bytes()).then(answer);
 +  }
-+  // an answer of Rexx (R + value, or E + message): the value, or a RexxError thrown
++  // an answer of Rexx (R + value, or E + message + T the condition's fields):
++  // the value, or a RexxError thrown
 +  function answer(bytes) {
 +    const r = new Reader(bytes);
 +    const first = r.rec();
-+    if (first.tag === 'R') return val(r);
-+    throw new RexxError(dec.decode(first.d));
++    if (first.tag === 'R') return val(r, 'the result');
++    throw new RexxError(dec.decode(first.d), r.more() && r.peek() === 'T' ? conditionFields(r) : undefined);
++  }
++  // T n, then n pairs: K name, and a string (decoded leniently: descriptive
++  // text) or, for cause, a value (one of another realm is left out)
++  function conditionFields(r) {
++    const n = Number(r.str()), f = {};
++    for (let i = 0; i < n; i++) {
++      const k = r.str();
++      if (k !== 'cause') {
++        const v = r.str();
++        f[k] = k === 'rc' || k === 'line' ? Number(v) : v;
++        continue;
++      }
++      const at = r.p;
++      try { f.cause = val(r, 'the cause'); } catch (x) { r.p = at; r.rec(); }
++    }
++    return f;
 +  }
 +
 +  // ---- Rexx classes extending JavaScript classes (.js~extend) -------------
@@ -1525,11 +1631,11 @@ index 0000000..e802bed
 +        if (realm === REALM) return globalThis;
 +        throw new Error('there is no JavaScript realm "' + realm + '" here (this is realm "' + REALM + '")');
 +      }
-+      case 2: { const t = val(r), name = r.str(), args = val(r); return message(t, name, args); }
-+      case 3: { const t = val(r), name = r.str(); return t[slot(t, name)]; }
-+      case 4: { const t = val(r), name = r.str(), v = val(r); t[slot(t, name)] = v; return undefined; }
++      case 2: { const t = val(r, 'the target'), name = r.text('the name'), args = val(r, ARGS); return message(t, name, args); }
++      case 3: { const t = val(r, 'the target'), name = r.text('the name'); return t[slot(t, name)]; }
++      case 4: { const t = val(r, 'the target'), name = r.text('the name'), v = val(r, 'the value'); t[slot(t, name)] = v; return undefined; }
 +      case 5: {
-+        const t = val(r), upper = r.str(), v = val(r);
++        const t = val(r, 'the target'), upper = r.text('the name'), v = val(r, 'the value');
 +        const name = resolve(t, upper);
 +        if (name === undefined) {
 +          throw new TypeError(an(className(t)) + ' has no property ' + upper +
@@ -1539,7 +1645,7 @@ index 0000000..e802bed
 +        return undefined;
 +      }
 +      case 6: {
-+        const t = val(r), name = val(r), args = val(r);
++        const t = val(r, 'the target'), name = val(r, 'the name'), args = val(r, ARGS);
 +        if (name === null) {
 +          if (typeof t !== 'function') throw new TypeError(an(className(t)) + ' is not a function');
 +          return Reflect.apply(t, undefined, args);
@@ -1548,27 +1654,27 @@ index 0000000..e802bed
 +        if (typeof f !== 'function') throw new TypeError(name + ' is not a function');
 +        return Reflect.apply(f, t, args);
 +      }
-+      case 7: { const t = val(r), args = val(r); return Reflect.construct(t, args); }
++      case 7: { const t = val(r, 'the target'), args = val(r, ARGS); return Reflect.construct(t, args); }
 +      case 8: {
 +        const t = val(r);
 +        if (t === null || (typeof t !== 'object' && typeof t !== 'function') || typeof t.then !== 'function') return t;
 +        pending = Promise.resolve(t);
 +        return PENDING;
 +      }
-+      case 9: { const t = val(r), what = r.str(), arg = val(r); return info(t, what, arg); }
++      case 9: { const t = val(r, 'the target'), what = r.str(), arg = val(r, 'the argument'); return info(t, what, arg); }
 +      case 10: {
 +        if (!isNode) throw new Error('require() is only available under Node');
-+        return requireFromCwd(r.str());
++        return requireFromCwd(r.text('the module name'));
 +      }
-+      case 11: return importModule(r.str());
-+      case 12: return val(r);
++      case 11: return importModule(r.text('the module name'));
++      case 12: return val(r, 'the value');
 +      case 13: {
-+        const base = val(r), name = r.str(), rexxNames = val(r), exact = val(r);
++        const base = val(r, 'the base'), name = r.text('the class name'), rexxNames = val(r), exact = val(r, 'the names');
 +        return extend(base, name, rexxNames, exact);
 +      }
-+      case 14: { const ext = val(r), peer = Number(r.str()), args = val(r); return construct(ext, peer, args); }
++      case 14: { const ext = val(r), peer = Number(r.str()), args = val(r, ARGS); return construct(ext, peer, args); }
 +      case 15: {
-+        const t = val(r), ext = val(r), kind = r.str(), k = r.str(), args = val(r);
++        const t = val(r), ext = val(r), kind = r.str(), k = r.str(), args = val(r, ARGS);
 +        return superMember(t, ext, kind, k, args);
 +      }
 +      case 17: {                                  // SESSION: for ooRexx.js's start()
@@ -1597,6 +1703,10 @@ index 0000000..e802bed
 +    } catch (x) { msg = 'an exception'; }
 +    w.rec('E', msg);
 +    try { put(w, e); } catch (x) { w.rec('N', ''); }
++    // and its stack, when it has one (condition("O")~additional[3])
++    let stack;
++    try { stack = e !== null && typeof e === 'object' && typeof e.stack === 'string' ? e.stack : undefined; } catch (x) { /* none */ }
++    if (stack) w.rec('S', stack);
 +    return w.bytes();
 +  }
 +
@@ -1620,6 +1730,164 @@ index 0000000..e802bed
 +  return { realm: REALM, handle: handleRequest, release, close, errorText, Reader };
 +  };
 +})();
+diff --git a/wasm/tests/js-errors.rex b/wasm/tests/js-errors.rex
+new file mode 100644
+index 0000000..9adbcb0
+--- /dev/null
++++ b/wasm/tests/js-errors.rex
+@@ -0,0 +1,152 @@
++/* js-errors.rex: tests of errors and text across the JavaScript bridge      */
++/* (wasm/js-realm.js, wasm/web-js.cpp), in the realm where Rexx runs: the    */
++/* worker's in the browser, Node's under Node.  A Rexx condition in          */
++/* JavaScript (RexxError and its fields, cause), a JavaScript exception in   */
++/* Rexx (condition("O")~additional), and strings that are not text (not      */
++/* UTF-8, lone surrogates).  Prints one line per check; exits 1 if any      */
++/* fails.                                                                    */
++.local~ok = 0; .local~bad = 0
++.local~fn = .js~Function~new("args", "body", "return new Function(...args.split(','), body)")
++o = .Thing~new
++
++-- A Rexx condition in JavaScript: a RexxError with the condition's fields
++fields = F("o", "try { o.add('lots'); return 'no error' } catch (e) {" -
++  "return [e.name, e instanceof Error, e.condition, e.code, typeof e.rc, e.rc, typeof e.line, e.line > 0," -
++  "typeof e.errorText, e.errorText.length > 0, typeof e.program, e.program.length > 0," -
++  "typeof e.traceback, e.traceback.includes('*-*'), 'cause' in e, e.message.startsWith('Error 41.1: ')].join(' ') }")
++r = fields~call(.nil, o)
++call check "a condition is a RexxError, an Error", r~word(1) == "RexxError" & r~word(2) == "true"
++call check "condition, code (a string), rc (a number)", r~subword(3, 4) == "SYNTAX 41.1 number 41"
++call check "line, a number", r~subword(7, 2) == "number true"
++call check "errorText, program: strings", r~subword(9, 4) == "string true string true"
++call check "traceback: the lines, as Rexx shows them", r~subword(13, 2) == "string true"
++call check "no cause for a condition of Rexx's own", r~word(15) == "false"
++call check "the message is as it was", r~word(16) == "true"
++r = F("o", "try { o.add('lots') } catch (e) { return e.traceback.split('\n').length + ' ' + e.line }")~call(.nil, o)
++call check "the traceback has a line per level", r~word(1) >= 1 & datatype(r~word(2), "W")
++r = F("o", "try { o.mine(); return 'no error' } catch (e) { return e.code + ' ' + ('cause' in e) }")~call(.nil, o)
++call check "a 98.900 raised by Rexx: no cause", r == "98.900 false"
++r = F("o", "try { o.halt(); return 'no error' } catch (e) { return e.name + ' ' + e.condition + ' ' + e.code }")~call(.nil, o)
++call check "a HALT nobody traps arrives as SYNTAX 4.1", r == "RexxError SYNTAX 4.1"
++
++-- Through Rexx and back: the JavaScript exception is the RexxError's cause
++r = F("o", "const err = new TypeError('from JS');" -
++  "try { o.callBack(() => { throw err; }); return 'no error' } catch (e) {" -
++  "return [e.name, e.code, e.cause === err, e.cause instanceof TypeError].join(' ') }")~call(.nil, o)
++call check "round trip: cause is the very object thrown", r == "RexxError 98.900 true true"
++r = F("o", "try { o.callBack(() => { throw 42; }) } catch (e) { return typeof e.cause + ' ' + e.cause }")~call(.nil, o)
++call check "round trip: a thrown primitive comes back as its string", r == "string 42"
++r = F("o", "const err = new RangeError('deep');" -
++  "try { o.callBack(() => o.callBack(() => { throw err; })) } catch (e) {" -
++  "return [e.cause instanceof RexxError, e.cause.cause === err].join(' ') }")~call(.nil, o)
++call check "round trip twice: a chain of causes", r == "true true"
++r = F("o", "const err = new TypeError('trapped');" -
++  "try { o.propagate(() => { throw err; }) } catch (e) { return (e.cause === err) + '' }")~call(.nil, o)
++call check "round trip through RAISE PROPAGATE", r == "true"
++
++-- A JavaScript exception in Rexx: additional [1] message, [2] what was thrown, [3] its stack
++signal on syntax name s1
++F("", "throw new TypeError('boom')")~call(.nil)
++s1:
++c = condition("O")
++call check "a JavaScript exception: SYNTAX 98.900", c~code == "98.900"
++a = c~additional
++call check "additional[1]: the message", a[1] == "JavaScript error: TypeError: boom"
++call check "additional[2]: the thrown object", a[2]~isA(.JSObject) & a[2]~message == "boom"
++call check "additional[3]: its stack, as text", a~items == 3 & a[3]~isA(.String) & a[3]~length > 0
++signal on syntax name s2
++F("", "throw 42")~call(.nil)
++s2:
++a = condition("O")~additional
++call check "a thrown primitive: no stack, two items", a~items == 2 & a[2] == 42
++signal on syntax name s3
++.js~Promise~reject(.js~Error~new("rejected"))~await
++s3:
++a = condition("O")~additional
++call check "a rejected Promise: the stack too", a~items == 3 & a[2]~message == "rejected"
++
++-- Text: a Rexx string goes to JavaScript as UTF-8 text
++call check "UTF-8 goes as text", F("s", "return s.length + ' ' + s.codePointAt(0)")~call(.nil, "c3a9"x) == "1 233"
++call check "UTF-8 comes back the same", F("s", "return s")~call(.nil, "e282ac"x) == "e282ac"x
++r = errorOf(F("s", "return s"), .array~of(.nil, "ff"x))
++call check "not UTF-8: SYNTAX 98.900, not U+FFFD", r~left(6) == "98.900" & -
++  r~pos("argument 2 is not valid UTF-8 (byte 1 is 'FF'x)") > 0 & r~pos(".js~bytes") > 0
++r = errorOf(F("s", "return s"), .array~of(.nil, "abc" || "c3"x))
++call check "a truncated sequence: the byte where it fails", r~pos("argument 2 is not valid UTF-8 (byte 4 is 'C3'x)") > 0
++r = errorOf(F("s", "return s"), .array~of(.nil, "eda080"x))
++call check "an encoded surrogate is not UTF-8", r~pos("(byte 1 is 'ED'x)") > 0
++d = .directory~new; d["k"] = "x" || "80"x
++r = errorOf(F("d", "return d"), .array~of(.nil, d))
++call check "inside a Directory: the item named", r~pos('the item at "k" of argument 2 is not valid UTF-8') > 0
++r = errorOf(F("a", "return a"), .array~of(.nil, .array~of("ok", "fe"x)))
++call check "inside an Array: the item named", r~pos("item 2 of argument 2 is not valid UTF-8") > 0
++signal on syntax name s4
++x = .js~Object~new; x["p" || "ff"x] = 1
++s4:
++call check "a property name", condition("O")~additional[1]~pos("the name is not valid UTF-8") > 0
++call check ".js~bytes passes the bytes", F("b", "return b.constructor.name + ' ' + b[0]")~call(.nil, .js~bytes("ff"x)) == "Uint8Array 255"
++call check "a Rexx object's string may be any bytes (RexxProxy)", F("o", "return typeof o")~call(.nil, .Bytes~new) == "object"
++
++-- A JavaScript string comes to Rexx as UTF-8: it must be well-formed
++call check "a surrogate pair comes as UTF-8", F("", "return '😀'")~call(.nil) == "f09f9880"x
++r = errorOf(F("", "return 'ab\uD800'"), .array~of(.nil))
++call check "a lone surrogate: SYNTAX 98.900", r~left(6) == "98.900" & r~pos("code unit 3 is a lone surrogate, U+D800") > 0
++signal on syntax name s5
++x = F("", "return ['ok', '\uDC00']")~call(.nil)~makeArray
++s5:
++call check "a lone low surrogate in an array made a Rexx Array", -
++  condition("O")~additional[1]~pos("code unit 1 is a lone surrogate, U+DC00") > 0
++r = F("o", "try { o.add('\uD800'); return 'no error' } catch (e) { return e.name + ' ' + (e instanceof RexxError) }")~call(.nil, o)
++call check "an argument for Rexx with a lone surrogate: a TypeError in JavaScript", r == "TypeError false"
++r = F("o", "try { o.binary(); return 'no error' } catch (e) { return e.name + ' ' + e.message }")~call(.nil, o)
++call check "a result for JavaScript that is not UTF-8: a TypeError", r~word(1) == "TypeError" & -
++  r~pos("the result is not valid UTF-8") > 0
++
++say
++say .ok "passed," .bad "failed"
++exit .bad > 0
++
++F: procedure                        -- F(params, body): a JavaScript function
++  return .fn~call(.nil, arg(1), arg(2))
++
++errorOf: procedure                  -- f~call(args...): "code message" of its condition
++  use arg f, args
++  signal on syntax
++  f~sendWith("CALL", args)
++  return "no error"
++syntax:
++  c = condition("O")
++  return c~code c~additional[1]
++
++check: procedure
++  parse arg what, ok
++  if ok == 1 then do; .local~ok += 1; say "ok  " what; end
++  else do; .local~bad += 1; say "FAIL" what; end
++  return
++
++::class Thing
++::method add
++  use arg n
++  return 1 + n
++::method mine
++  raise syntax 98.900 array("a Rexx error of its own")
++::method halt
++  raise halt
++::method callBack
++  use arg f
++  return f~call(.nil)
++::method propagate
++  use arg f
++  signal on syntax
++  return f~call(.nil)
++syntax: raise propagate
++::method binary
++  return "ff"x
++
++::class Bytes
++::method makeString
++  return "ab" || "ff"x
++::method string
++  return "ab" || "ff"x
++
++::requires "js.cls"
 diff --git a/wasm/tests/js-extend-gc.rex b/wasm/tests/js-extend-gc.rex
 new file mode 100644
 index 0000000..d84307a
@@ -2034,10 +2302,10 @@ index 0000000..c89f67e
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..276b01e 100755
+index e1c1cd8..4e4b300 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -200,6 +200,204 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
+@@ -200,6 +200,208 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
  check "name resolution (host resolver)" '^localhost=1 127\.0\.0\.1$' '^invalid=0$' '^reverse=1 ' "^hostname=$(hostname)\$" '^hostid=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' -- \
    "$X dns.rex"
  
@@ -2148,6 +2416,10 @@ index e1c1cd8..276b01e 100755
 +# a proxy JavaScript collects gives its Rexx object back to Rexx's collector
 +check "JavaScript objects: Rexx objects in JavaScript (RexxProxy)" '^28 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-proxy.rex'"
++# --- errors both ways (RexxError's fields and cause, additional[3]) and text
++# (no U+FFFD: a string that is not UTF-8, or not well-formed, is an error)
++check "JavaScript objects: errors both ways, and text" '^35 passed, 0 failed$' '!^FAIL ' -- \
++  "$X '$(cd "$(dirname "$0")" && pwd)/js-errors.rex'"
 +cat > "$T/jsgc.rex" <<'EOF'
 +f = .js~Function~new("o", "return 1")
 +do i = 1 to 300; x = f~call(.nil, .Gone~new); end
@@ -2265,7 +2537,7 @@ index d544388..b13d517 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..053192c 100755
+index 3940711..04785f9 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -49,7 +49,10 @@ if len(sys.argv) != 2:
@@ -2280,7 +2552,7 @@ index 3940711..053192c 100755
  srv = subprocess.Popen([sys.executable, "-c", f"""
  import os, sys
  from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
-@@ -136,6 +139,164 @@ CASES = [
+@@ -136,6 +139,167 @@ CASES = [
                         '::options trace r', {},
       lambda r: r["out"].count("  worker") == 12 and "total 4\n" in r["out"] and "*-*" in r["err"]
                 and r["err"] == r["trace"] and r["errmsg"] == ""),
@@ -2361,6 +2633,9 @@ index 3940711..053192c 100755
 +  # Rexx objects in JavaScript (RexxProxy), in the worker's realm: the portable test
 +  ("js proxy", open(f"{SRC}/wasm/tests/js-proxy.rex").read(), {"js": {"worker": True}},
 +     lambda r: "28 passed, 0 failed" in r["out"] and r["rc"] == 0),
++  # errors both ways and text, in the worker's realm: the portable test
++  ("js errors", open(f"{SRC}/wasm/tests/js-errors.rex").read(), {"js": {"worker": True}},
++     lambda r: "35 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # in the page: its string for the DOM; a call is queued and gives a Promise:
 +  # run by a thread waiting for JavaScript (here, the one in ~await) or by
 +  # the one taking events; a condition rejects it with a RexxError
@@ -2445,7 +2720,7 @@ index 3940711..053192c 100755
  ]
  
  fails = 0; ran = 0
-@@ -157,6 +318,59 @@ with sync_playwright() as p:
+@@ -157,6 +321,59 @@ with sync_playwright() as p:
          except Exception: ok = False
          fails += not ok; ran += 1
          print(("ok  " if ok else "FAIL"), f"{name:20}", json.dumps(r, ensure_ascii=False)[:300] if not ok or os.environ.get("SHOW") else f"{r.get('ms')} ms")
@@ -2645,10 +2920,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..f32ce72
+index 0000000..91d93d4
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,1527 @@
+@@ -0,0 +1,1604 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -2696,7 +2971,9 @@ index 0000000..f32ce72
 + *
 + * Request and reply are sequences of records "<tag><length>:<bytes>".
 + * Values, both ways:
-+ *   S string (UTF-8)    N null (.nil)    U undefined (.js~undefined; to
++ *   S string (UTF-8: a value must be valid UTF-8 to JavaScript, and a
++ *     well-formed string back; js-realm.js checks both)
++ *   N null (.nil)    U undefined (.js~undefined; to
 + *   JavaScript, also an omitted argument)
 + *   O "realm<tab>id"  (to JavaScript) / "realm<tab>id<tab>display" (back)
 + *   A count + values (an Array)    T count + (K key, value) (a plain object)
@@ -2712,7 +2989,9 @@ index 0000000..f32ce72
 + *   R "id"              (back) such a proxy: the Rexx object itself
 + * A request starts with any number of X "realm<tab>id..." records (handles
 + * whose .JSObject was garbage collected), then the operands of the op.
-+ * The reply is R + a value, or E + message + the thrown value.
++ * The reply is R + a value, or E + message + the thrown value (+ S its
++ * stack, when it has one).  A synchronous handler's answer is R + a value,
++ * or E + message + T the condition's fields (conditionFields()).
 + *
 + * Transport: a request goes into a queue here (queued) and the main runtime
 + * thread is told (kickMain); it takes the queue's requests in a microtask
@@ -2726,7 +3005,8 @@ index 0000000..f32ce72
 + * method at once (js_sync_call).  Called while JavaScript does a request of a
 + * Rexx thread (a comparator for sort, forEach, dispatchEvent), it runs on
 + * that thread (so its guards are its own) and JavaScript waits for its result;
-+ * a condition is thrown as a RexxError.  That thread cannot wait for
++ * a condition is thrown as a RexxError, with the condition's fields (E
++ * message + T, conditionFields()).  That thread cannot wait for
 + * JavaScript in turn while JavaScript waits for it (a Promise, the page):
 + * such a request is an error.  Called by JavaScript on its own (a timer, a
 + * Node server, a Promise settling), it runs on the server thread, attached to
@@ -3426,10 +3706,18 @@ index 0000000..f32ce72
 +    Rec r;
 +    if (!nextRec(reply, pos, r)) return c->Nil();
 +    if (r.tag == 'R') return toRexx(c, reply, pos);
-+    // E: the message, then the thrown value (a .JSObject for an Error)
++    // E: the message, then the thrown value (a .JSObject for an Error), and
++    // its stack when it has one: ADDITIONAL [1] the message, [2] the value,
++    // [3] the stack
 +    std::string msg = "JavaScript error: " + r.data;
 +    RexxObjectPtr thrown = toRexx(c, reply, pos);
-+    c->RaiseException(Rexx_Error_Execution_user_defined, c->ArrayOfTwo(c->String(msg.c_str()), thrown));
++    Rec stack;
++    if (nextRec(reply, pos, stack) && stack.tag == 'S' && !stack.data.empty())
++    {
++        c->RaiseException(Rexx_Error_Execution_user_defined, c->ArrayOfThree(c->String(msg.c_str()), thrown,
++            c->String(stack.data.data(), stack.data.size())));
++    }
++    else c->RaiseException(Rexx_Error_Execution_user_defined, c->ArrayOfTwo(c->String(msg.c_str()), thrown));
 +    return NULLOBJECT;
 +}
 +
@@ -3437,6 +3725,70 @@ index 0000000..f32ce72
 +{
 +    releaseUnpinned(c);
 +    return result(c, jsCall(c, op, data));
++}
++
++// the fields of a condition, for JavaScript's RexxError (a T record after
++// the E): K name, S value for each entry it has (CONDITION, CODE, RC,
++// ERRORTEXT, PROGRAM, POSITION as line, TRACEBACK as its lines joined by
++// "\n"), and cause, what JavaScript threw, when the condition is the SYNTAX
++// 98.900 a JavaScript exception became (see result()).  Called with the
++// condition cleared
++static void conditionFields(RexxThreadContext *c, std::string &out, RexxDirectoryObject cond, wholenumber_t code)
++{
++    std::string fields;
++    size_t n = 0;
++    static const char *const entries[][2] = {
++        {"condition", "CONDITION"}, {"code", "CODE"}, {"rc", "RC"}, {"errorText", "ERRORTEXT"},
++        {"program", "PROGRAM"}, {"line", "POSITION"},
++    };
++    for (const auto &e : entries)
++    {
++        RexxObjectPtr v = c->DirectoryAt(cond, e[1]);
++        if (v == NULLOBJECT || v == c->Nil()) continue;
++        RexxStringObject s = c->ObjectToString(v);
++        putRec(fields, 'K', e[0]);
++        putRec(fields, 'S', std::string(c->StringData(s), c->StringLength(s)));
++        n++;
++    }
++    RexxObjectPtr tb = c->DirectoryAt(cond, "TRACEBACK");
++    if (tb != NULLOBJECT && tb != c->Nil())
++    {
++        RexxObjectPtr lines = c->SendMessage0(tb, "MAKEARRAY");
++        if (lines != NULLOBJECT && c->IsArray(lines))
++        {
++            std::string t;
++            size_t items = c->ArraySize((RexxArrayObject)lines);
++            for (size_t i = 1; i <= items; i++)
++            {
++                RexxObjectPtr l = c->ArrayAt((RexxArrayObject)lines, i);
++                if (l == NULLOBJECT) continue;
++                RexxStringObject s = c->ObjectToString(l);
++                if (!t.empty()) t += '\n';
++                t.append(c->StringData(s), c->StringLength(s));
++            }
++            putRec(fields, 'K', "traceback");
++            putRec(fields, 'S', t);
++            n++;
++        }
++    }
++    if (c->CheckCondition()) c->ClearCondition();
++    RexxObjectPtr add = c->DirectoryAt(cond, "ADDITIONAL");
++    RexxObjectPtr value = add != NULLOBJECT && c->IsArray(add) && c->ArraySize((RexxArrayObject)add) >= 2
++        ? c->ArrayAt((RexxArrayObject)add, 2) : NULLOBJECT;
++    if (code == Rexx_Error_Execution_user_defined && value != NULLOBJECT)
++    {
++        RexxObjectPtr first = c->ArrayAt((RexxArrayObject)add, 1);
++        static const char prefix[] = "JavaScript error: ";
++        if (first != NULLOBJECT && c->IsString(first) &&
++            strncmp(c->StringData((RexxStringObject)first), prefix, sizeof(prefix) - 1) == 0)
++        {
++            putRec(fields, 'K', "cause");
++            fromRexx(c, fields, value);
++            n++;
++        }
++    }
++    putRec(out, 'T', std::to_string(n));
++    out += fields;
 +}
 +
 +// a synchronous handler's call, on a Rexx thread: the R/E records of its result
@@ -3515,7 +3867,7 @@ index 0000000..f32ce72
 +        else msg = "condition " + name + " raised in " + message;
 +        c->ClearCondition();
 +        putRec(out, 'E', msg);
-+        putRec(out, 'N', "");
++        conditionFields(c, out, cond, info.code);
 +        return out;
 +    }
 +    putRec(out, 'R', "");
@@ -4178,10 +4530,10 @@ index 0000000..f32ce72
 +}
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
 new file mode 100644
-index 0000000..9d1591b
+index 0000000..69d0698
 --- /dev/null
 +++ b/wasm/web/js.cls
-@@ -0,0 +1,675 @@
+@@ -0,0 +1,685 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -4282,8 +4634,18 @@ index 0000000..9d1591b
 + * Array goes as an array, a Directory or StringTable as a plain object (copies),
 + * .nil as null; .js~newArray(items...) and .js~newObject(directory) make them
 + * in JavaScript (.js~Array and .js~Object are JavaScript's own).  Any other
-+ * Rexx object goes by reference, as a RexxProxy (below).  A JavaScript exception is SYNTAX 98.900 "JavaScript error:
-+ * TypeError: ..."; condition("O")~additional[2] is what was thrown.
++ * Rexx object goes by reference, as a RexxProxy (below).  A string goes as
++ * text: a Rexx string must be UTF-8 and a JavaScript string well-formed (no
++ * lone surrogate), else it is SYNTAX 98.900 (nothing is replaced by U+FFFD);
++ * binary data goes as .js~bytes(x).  A JavaScript exception is SYNTAX 98.900
++ * "JavaScript error: TypeError: ..."; condition("O")~additional is [1] that
++ * message, [2] what was thrown, [3] its stack (text), when it has one.
++ *
++ * A Rexx condition in JavaScript is a RexxError (an Error): its message as
++ * before ("Error 41.1: ..."), and condition, code ("41.1"), rc, errorText,
++ * program, line, traceback (the lines, joined by "\n"), as far as the
++ * condition has them; a JavaScript exception that went through Rexx and back
++ * (SYNTAX 98.900) is its cause, the very object thrown.
 + *
 + * Rexx objects in JavaScript: a RexxProxy, with BSF4ooRexx's names:
 + * o.sendMessage(name, [args]), o.sendMessage0(name) ... sendMessage5(name,
