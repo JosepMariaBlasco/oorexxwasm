@@ -36,10 +36,19 @@ comes to Rexx as UTF-8. Until now a Rexx string that was not valid UTF-8
 was decoded leniently: `'ff'x` reached JavaScript as U+FFFD, and came back
 to Rexx as `'EFBFBD'x`, with no error. The same happened the other way to a
 JavaScript string that is not well-formed (a lone surrogate, as when
-`"😀"` is cut in half). Now both are SYNTAX 98.900, naming the value:
+`"😀"` is cut in half). Now both are SYNTAX 23.900, "Invalid data string",
+naming the value:
 
-    JavaScript error: TypeError: argument 2 is not valid UTF-8 (byte 1 is 'FF'x):
-    a Rexx string goes to JavaScript as text; .js~bytes(s) passes its bytes
+    Error 23.900: Invalid data string.
+    argument 2 is not valid UTF-8 (byte 1 is 'FF'x): a Rexx string goes to
+    JavaScript as text; .js~bytes(s) passes its bytes
+
+Error 23 is the one for "a data string that contains character codes that
+are not valid", which is what such a string is; ooRexx does not raise it
+anywhere else. Subcode 900 keeps the message that names the argument and
+the byte, where 23.001 would quote the whole string. It is not a JavaScript
+exception (that is 98.900, with what was thrown), so `additional` has only
+the message.
 
 Binary data goes as `.js~bytes(s)`, a Uint8Array, as it already could, and
 comes back with `~js.byteString`. A string JavaScript expects is text, and
@@ -60,12 +69,13 @@ description of the records in `wasm/web-js.cpp` too.
 
 ## Tests
 
-A new portable test, `wasm/tests/js-errors.rex` (35 checks), runs where
+A new portable test, `wasm/tests/js-errors.rex` (36 checks), runs where
 Rexx runs: `qualify-node-cli.sh` runs it under Node, and `web-api.py` in
 the browser's worker (case "js errors"). It checks the `RexxError`'s
 fields, the `cause` of a round trip (once, twice, and through
 `RAISE PROPAGATE`), `additional[3]`, and the text rules both ways: the
-byte or code unit named in the message, inside an Array or a Directory, a
+error 23.900 and its message, the byte or code unit named in it, inside
+an Array or a Directory, a
 property name, `.js~bytes`, and that a `RexxProxy`'s string (shown, not
 passed) may still be any bytes. It also passes in Firefox and WebKit.
 
@@ -78,7 +88,7 @@ and `web-api.py` 51 cases.
 
 ## The patches
 
-[`patches/` at commit 42613e3](https://github.com/JosepMariaBlasco/oorexxwasm/tree/42613e3/patches):
+[`patches/` at commit 984d2b1](https://github.com/JosepMariaBlasco/oorexxwasm/tree/984d2b1/patches):
 0001–0008 are the RFE, and `SHA256SUMS` lists their hashes.
 
 ## Results
