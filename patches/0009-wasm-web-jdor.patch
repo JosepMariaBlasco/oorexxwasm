@@ -85,7 +85,7 @@ index 786af1f..e949832 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index f1382e7..93dabf2 100644
+index cb98e0d..9dad6fc 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -227,7 +227,75 @@ off, or changes the strings.
@@ -320,7 +320,7 @@ index b13d517..cb5c6fa 100644
  };
  </script>
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 04785f9..560e501 100755
+index 6fa9a4a..f2c258f 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -42,7 +42,7 @@ Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP

@@ -54,8 +54,9 @@ copied as arrays and plain objects.
   condition, code ("41.1"), rc, errorText, program, line, traceback; a
   JavaScript exception that went through Rexx and back is its cause.
 - Strings are text both ways: a Rexx string must be UTF-8 and a JavaScript
-  string well-formed (no lone surrogate), else SYNTAX 98.900 (nothing is
-  replaced by U+FFFD); binary data goes as .js~bytes(x), a Uint8Array.
+  string well-formed (no lone surrogate), else SYNTAX 23.900, an invalid
+  data string (nothing is replaced by U+FFFD); binary data goes as
+  .js~bytes(x), a Uint8Array.
 - wasm/web-js.cpp: the package "js"; .JSObject's methods are native (errors
   point at the caller's line).  Each operation goes synchronously to the
   main runtime thread (emscripten_proxy_sync_with_ctx), which may finish it
@@ -122,8 +123,8 @@ copied as arrays and plain objects.
  wasm/build-web.sh                      |   17 +-
  wasm/extra-packages.cpp                |   66 +
  wasm/js-bridge.js                      |  241 ++++
- wasm/js-realm.js                       |  911 ++++++++++++++
- wasm/tests/js-errors.rex               |  152 +++
+ wasm/js-realm.js                       |  915 ++++++++++++++
+ wasm/tests/js-errors.rex               |  158 +++
  wasm/tests/js-extend-gc.rex            |  111 ++
  wasm/tests/js-extend.rex               |  157 +++
  wasm/tests/js-proxy.rex                |  127 ++
@@ -133,11 +134,11 @@ copied as arrays and plain objects.
  wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 1604 ++++++++++++++++++++++++
- wasm/web/js.cls                        |  685 ++++++++++
+ wasm/web-js.cpp                        | 1613 ++++++++++++++++++++++++
+ wasm/web/js.cls                        |  686 ++++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 ++++
- 21 files changed, 5066 insertions(+), 12 deletions(-)
+ 21 files changed, 5086 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -186,7 +187,7 @@ index 9324d0b..786af1f 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index d6f2caf..0cc1a1a 100644
+index d6f2caf..2c97a6f 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -239,6 +239,197 @@ from the test suite's directory:
@@ -253,8 +254,8 @@ index d6f2caf..0cc1a1a 100644
 +  An Array goes as an array, a Directory or StringTable as a plain object
 +  (copies), .nil as null.
 +* Strings are text: a Rexx string must be UTF-8 and a JavaScript string
-+  well-formed (no lone surrogate), else SYNTAX 98.900 (nothing becomes
-+  U+FFFD); binary data goes as `.js~bytes(x)`.
++  well-formed (no lone surrogate), else SYNTAX 23.900, an invalid data
++  string (nothing becomes U+FFFD); binary data goes as `.js~bytes(x)`.
 +* A JavaScript exception (or a rejected Promise under `~await`) is SYNTAX
 +  98.900 "JavaScript error: TypeError: ..."; `condition("O")~additional` is
 +  [1] that message, [2] what was thrown, [3] its stack (when it has one).
@@ -815,10 +816,10 @@ index 0000000..ea8b80b
 +})();
 diff --git a/wasm/js-realm.js b/wasm/js-realm.js
 new file mode 100644
-index 0000000..37b375f
+index 0000000..2abbe57
 --- /dev/null
 +++ b/wasm/js-realm.js
-@@ -0,0 +1,911 @@
+@@ -0,0 +1,915 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -955,7 +956,8 @@ index 0000000..37b375f
 +  // A Rexx string goes to JavaScript as text: its bytes must be UTF-8 (binary
 +  // data goes as .js~bytes(s), a Uint8Array); a JavaScript string comes to
 +  // Rexx as UTF-8, so it must be well-formed (no lone surrogate).  Neither is
-+  // replaced by U+FFFD: a TypeError instead (SYNTAX 98.900 in Rexx).
++  // replaced by U+FFFD: a TypeError instead (SYNTAX 23.900 in Rexx, an
++  // invalid data string; in JavaScript, the TypeError).
 +  // (Descriptive texts, an error's message or a Rexx object's string shown by
 +  // a RexxProxy, are decoded leniently.)
 +  const strict = new TextDecoder('utf-8', { fatal: true });
@@ -1696,6 +1698,9 @@ index 0000000..37b375f
 +  }
 +  function errReply(e) {
 +    const w = new Writer();
++    // a string that is not text (see text()): D + the message, for SYNTAX
++    // 23.900 (an invalid data string, not an exception of JavaScript's)
++    if (e && e[NOT_TEXT]) { w.rec('D', e.message); return w.bytes(); }
 +    let msg;
 +    try {
 +      msg = e instanceof Error || (e && typeof e === 'object' && 'message' in e && 'name' in e)
@@ -1732,10 +1737,10 @@ index 0000000..37b375f
 +})();
 diff --git a/wasm/tests/js-errors.rex b/wasm/tests/js-errors.rex
 new file mode 100644
-index 0000000..9adbcb0
+index 0000000..5153f1f
 --- /dev/null
 +++ b/wasm/tests/js-errors.rex
-@@ -0,0 +1,152 @@
+@@ -0,0 +1,158 @@
 +/* js-errors.rex: tests of errors and text across the JavaScript bridge      */
 +/* (wasm/js-realm.js, wasm/web-js.cpp), in the realm where Rexx runs: the    */
 +/* worker's in the browser, Node's under Node.  A Rexx condition in          */
@@ -1807,8 +1812,14 @@ index 0000000..9adbcb0
 +call check "UTF-8 goes as text", F("s", "return s.length + ' ' + s.codePointAt(0)")~call(.nil, "c3a9"x) == "1 233"
 +call check "UTF-8 comes back the same", F("s", "return s")~call(.nil, "e282ac"x) == "e282ac"x
 +r = errorOf(F("s", "return s"), .array~of(.nil, "ff"x))
-+call check "not UTF-8: SYNTAX 98.900, not U+FFFD", r~left(6) == "98.900" & -
++call check "not UTF-8: SYNTAX 23.900, not U+FFFD", r~left(6) == "23.900" & -
 +  r~pos("argument 2 is not valid UTF-8 (byte 1 is 'FF'x)") > 0 & r~pos(".js~bytes") > 0
++signal on syntax name s6
++x = F("s", "return s")~call(.nil, "ff"x)
++s6:
++c = condition("O")
++call check "an invalid data string, not a JavaScript error: only the message", -
++  c~errortext == "Invalid data string." & c~additional~items == 1 & c~additional[1]~left(8) == "argument"
 +r = errorOf(F("s", "return s"), .array~of(.nil, "abc" || "c3"x))
 +call check "a truncated sequence: the byte where it fails", r~pos("argument 2 is not valid UTF-8 (byte 4 is 'C3'x)") > 0
 +r = errorOf(F("s", "return s"), .array~of(.nil, "eda080"x))
@@ -1828,7 +1839,7 @@ index 0000000..9adbcb0
 +-- A JavaScript string comes to Rexx as UTF-8: it must be well-formed
 +call check "a surrogate pair comes as UTF-8", F("", "return '😀'")~call(.nil) == "f09f9880"x
 +r = errorOf(F("", "return 'ab\uD800'"), .array~of(.nil))
-+call check "a lone surrogate: SYNTAX 98.900", r~left(6) == "98.900" & r~pos("code unit 3 is a lone surrogate, U+D800") > 0
++call check "a lone surrogate: SYNTAX 23.900", r~left(6) == "23.900" & r~pos("code unit 3 is a lone surrogate, U+D800") > 0
 +signal on syntax name s5
 +x = F("", "return ['ok', '\uDC00']")~call(.nil)~makeArray
 +s5:
@@ -2302,7 +2313,7 @@ index 0000000..c89f67e
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..4e4b300 100755
+index e1c1cd8..549678e 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -200,6 +200,208 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
@@ -2418,7 +2429,7 @@ index e1c1cd8..4e4b300 100755
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-proxy.rex'"
 +# --- errors both ways (RexxError's fields and cause, additional[3]) and text
 +# (no U+FFFD: a string that is not UTF-8, or not well-formed, is an error)
-+check "JavaScript objects: errors both ways, and text" '^35 passed, 0 failed$' '!^FAIL ' -- \
++check "JavaScript objects: errors both ways, and text" '^36 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-errors.rex'"
 +cat > "$T/jsgc.rex" <<'EOF'
 +f = .js~Function~new("o", "return 1")
@@ -2537,7 +2548,7 @@ index d544388..b13d517 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..04785f9 100755
+index 3940711..6fa9a4a 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -49,7 +49,10 @@ if len(sys.argv) != 2:
@@ -2635,7 +2646,7 @@ index 3940711..04785f9 100755
 +     lambda r: "28 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # errors both ways and text, in the worker's realm: the portable test
 +  ("js errors", open(f"{SRC}/wasm/tests/js-errors.rex").read(), {"js": {"worker": True}},
-+     lambda r: "35 passed, 0 failed" in r["out"] and r["rc"] == 0),
++     lambda r: "36 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # in the page: its string for the DOM; a call is queued and gives a Promise:
 +  # run by a thread waiting for JavaScript (here, the one in ~await) or by
 +  # the one taking events; a condition rejects it with a RexxError
@@ -2920,10 +2931,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..91d93d4
+index 0000000..e62ab1f
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,1604 @@
+@@ -0,0 +1,1613 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -2972,7 +2983,7 @@ index 0000000..91d93d4
 + * Request and reply are sequences of records "<tag><length>:<bytes>".
 + * Values, both ways:
 + *   S string (UTF-8: a value must be valid UTF-8 to JavaScript, and a
-+ *     well-formed string back; js-realm.js checks both)
++ *     well-formed string back; js-realm.js checks both: D, below)
 + *   N null (.nil)    U undefined (.js~undefined; to
 + *   JavaScript, also an omitted argument)
 + *   O "realm<tab>id"  (to JavaScript) / "realm<tab>id<tab>display" (back)
@@ -2990,7 +3001,8 @@ index 0000000..91d93d4
 + * A request starts with any number of X "realm<tab>id..." records (handles
 + * whose .JSObject was garbage collected), then the operands of the op.
 + * The reply is R + a value, or E + message + the thrown value (+ S its
-+ * stack, when it has one).  A synchronous handler's answer is R + a value,
++ * stack, when it has one), or D + message (a string that is not text:
++ * SYNTAX 23.900).  A synchronous handler's answer is R + a value,
 + * or E + message + T the condition's fields (conditionFields()).
 + *
 + * Transport: a request goes into a queue here (queued) and the main runtime
@@ -3706,6 +3718,14 @@ index 0000000..91d93d4
 +    Rec r;
 +    if (!nextRec(reply, pos, r)) return c->Nil();
 +    if (r.tag == 'R') return toRexx(c, reply, pos);
++    // D: a string that is not text (not UTF-8 to JavaScript, not well-formed
++    // back): an invalid data string, not an exception of JavaScript's
++    if (r.tag == 'D')
++    {
++        c->RaiseException(Rexx_Error_Invalid_data_string_user_defined,
++                          c->ArrayOfOne(c->String(r.data.data(), r.data.size())));
++        return NULLOBJECT;
++    }
 +    // E: the message, then the thrown value (a .JSObject for an Error), and
 +    // its stack when it has one: ADDITIONAL [1] the message, [2] the value,
 +    // [3] the stack
@@ -4530,10 +4550,10 @@ index 0000000..91d93d4
 +}
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
 new file mode 100644
-index 0000000..69d0698
+index 0000000..5f9adc6
 --- /dev/null
 +++ b/wasm/web/js.cls
-@@ -0,0 +1,685 @@
+@@ -0,0 +1,686 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -4636,7 +4656,8 @@ index 0000000..69d0698
 + * in JavaScript (.js~Array and .js~Object are JavaScript's own).  Any other
 + * Rexx object goes by reference, as a RexxProxy (below).  A string goes as
 + * text: a Rexx string must be UTF-8 and a JavaScript string well-formed (no
-+ * lone surrogate), else it is SYNTAX 98.900 (nothing is replaced by U+FFFD);
++ * lone surrogate), else it is SYNTAX 23.900, an invalid data string
++ * (nothing is replaced by U+FFFD);
 + * binary data goes as .js~bytes(x).  A JavaScript exception is SYNTAX 98.900
 + * "JavaScript error: TypeError: ..."; condition("O")~additional is [1] that
 + * message, [2] what was thrown, [3] its stack (text), when it has one.
