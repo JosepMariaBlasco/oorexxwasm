@@ -41,6 +41,15 @@ again is sent as a new record `C` with its id, which the JavaScript side
 resolves to the copy it already made; too deep is a record `G`. The format
 is described at the top of `wasm/web-js.cpp`.
 
+### Big copies
+
+Each item the copy reads is a local reference of the native method in
+progress, kept until the method returns. The copy now releases it once the
+item is copied (the container keeps the item alive), except the value being
+sent itself. Measured under Node: an Array of 1,000,000 strings sent three
+times left the process at about 430 MB, now about 338 MB; a Directory of
+200,000 entries, 20–50 MB less.
+
 ### Where it is written
 
 The specification says so in
@@ -57,7 +66,8 @@ twice, a multi-dimensional Array that contains itself, two arguments copied
 on their own, a Rexx method's result through a `RexxProxy`, and 1000 and
 1001 levels.
 
-**Patches 1–6** are byte-identical. **Patch 8** and the example
+**Patches 1–6** are byte-identical (and so are 8–12 to those of the
+cycles change, which the release of local references does not touch). **Patch 8** and the example
 environments 0009–0012 differ only in the hashes and line numbers of the
 files patch 7 also changes. The patches apply cleanly to trunk **r13268**,
 in order, with `svn patch` or `git apply`. Patches 1–8 alone build and pass
@@ -65,7 +75,7 @@ their tests: `qualify-node-cli.sh` 32 checks, and `web-api.py` 53 cases.
 
 ## The patches
 
-[`patches/` at commit abc7ff2](https://github.com/JosepMariaBlasco/oorexxwasm/tree/abc7ff2/patches):
+[`patches/` at commit a838e37](https://github.com/JosepMariaBlasco/oorexxwasm/tree/a838e37/patches):
 0001–0008 are the RFE, and `SHA256SUMS` lists their hashes.
 
 ## Results
