@@ -149,6 +149,20 @@ back = F~new("o", -
   " return [e.constructor.name, e instanceof TypeError, JSON.stringify(e.message)," -
   "  'cause:', e.cause && e.cause.constructor.name, e.cause && e.cause.message].join(' | '); }")
 say "   " back~call(.nil, acct)
+say "--- float text (topics/float-text.md): JavaScript numbers -> Rexx"
+-- each value is made in JavaScript and returned; Rexx shows it, its length, DATATYPE(v, "N")
+fl = '1.0|1/3|0.1 + 0.2|1e16|1e21|1e-7|-0.0|2**53 + 1|2n**53n + 1n|Number.MAX_VALUE|Number.MIN_VALUE|NaN|Infinity|-Infinity'
+do while fl \= ""
+  parse var fl e "|" fl
+  v = F~new("return " e)~call(.nil)
+  say left(e, 40) "'"v"'" length(v) datatype(v, "N")
+end
+say "--- float text: Rexx strings -> a JavaScript number (.js~num)"
+fl = '1E+16|1e16|1E16| 1.5 |-0|NaN|nan|Infinity|inf|1E+999'
+do while fl \= ""
+  parse var fl e "|" fl
+  say left("'"e"'", 40) tonum(k, e)
+end
 exit
 
 show: procedure
@@ -181,6 +195,13 @@ tryAt: procedure
   signal on syntax name bad3
   return show(o[i])
 bad3: return "SYNTAX" condition("O")~code":" condition("O")~message
+
+tonum: procedure                     -- what JavaScript receives from .js~num(s)
+  use arg k, s
+  signal on syntax
+  return k~call(.nil, .js~num(s))
+syntax:
+  return "SYNTAX" condition("O")~code condition("O")~additional[1]
 
 ::class Thing
 ::method bad
