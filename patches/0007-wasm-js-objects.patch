@@ -32,7 +32,7 @@ Object, SHort, STring, Number, BIgint, shortened down to their capitals;
 copied as arrays and plain objects (a multi-dimensional Array as arrays
 nested by dimension, the first outermost); a copy keeps cycles and sharing
 (an Array that contains itself is an array that contains itself; at most
-1000 deep).
+1000 deep), releasing each item's local reference once copied.
 
 - Message names arrive uppercased, so they are resolved case-insensitively
   along the prototype chain (cached per object; of two matches the one
@@ -143,16 +143,16 @@ nested by dimension, the first outermost); a copy keeps cycles and sharing
  wasm/tests/js-proxy.rex                |  127 ++
  wasm/tests/qualify-node-cli.sh         |  212 +++
  wasm/tests/web-api.html                |    4 +-
- wasm/tests/web-api.py                  |  225 +++-
+ wasm/tests/web-api.py                  |  225 ++-
  wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 1719 ++++++++++++++++++++++++
+ wasm/web-js.cpp                        | 1742 ++++++++++++++++++++++++
  wasm/web/boolean.cls                   |  172 +++
  wasm/web/js.cls                        |  694 ++++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 +++
- 25 files changed, 5653 insertions(+), 12 deletions(-)
+ 25 files changed, 5676 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -3248,10 +3248,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..826efc4
+index 0000000..b41dd96
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,1719 @@
+@@ -0,0 +1,1742 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -3956,7 +3956,14 @@ index 0000000..826efc4
 +{
 +    std::map<RexxObjectPtr, size_t> ids;
 +    size_t next = 0;
++    RexxObjectPtr top = NULLOBJECT;            // the value being sent
 +};
++// Each item a copy reads (ArrayAt, AT) is a local reference of the native
++// method in progress, kept until it returns: released once copied, so that
++// a big Array does not grow the heap by one reference per item (the
++// container keeps the item alive, and the memo needs only its identity).
++// Not the value being sent itself (an Array that contains itself), which
++// the caller may hold only by its own local reference.
 +// how deep copies may nest (the copy recurses here, and in JavaScript)
 +static const int maxCopyDepth = 1000;
 +
@@ -3991,7 +3998,7 @@ index 0000000..826efc4
 +    CopyMemo *memo = nullptr)
 +{
 +    CopyMemo top;
-+    if (memo == nullptr) memo = &top;
++    if (memo == nullptr) { memo = &top; top.top = v; }
 +    if (v == NULLOBJECT) { putRec(out, 'U', ""); return; }
 +    if (v == c->Nil()) { putRec(out, 'N', ""); return; }
 +    if (isA(c, v, jsObjectClass))
@@ -4044,7 +4051,12 @@ index 0000000..826efc4
 +        }
 +        size_t size = c->ArraySize((RexxArrayObject)v);
 +        putRec(out, 'A', std::to_string(size) + "\t" + std::to_string(id));
-+        for (size_t i = 1; i <= size; i++) fromRexx(c, out, c->ArrayAt((RexxArrayObject)v, i), depth + 1, memo);
++        for (size_t i = 1; i <= size; i++)
++        {
++            RexxObjectPtr item = c->ArrayAt((RexxArrayObject)v, i);
++            fromRexx(c, out, item, depth + 1, memo);
++            if (item != NULLOBJECT && item != memo->top) c->ReleaseLocalReference(item);
++        }
 +        return;
 +    }
 +    if (c->IsDirectory(v) || c->IsStringTable(v))
@@ -4058,8 +4070,12 @@ index 0000000..826efc4
 +        {
 +            RexxObjectPtr k = c->ArrayAt(keys, i);
 +            putRec(out, 'K', c->ObjectToStringValue(k));
-+            fromRexx(c, out, c->SendMessage1(v, "AT", k), depth + 1, memo);
++            RexxObjectPtr item = c->SendMessage1(v, "AT", k);
++            fromRexx(c, out, item, depth + 1, memo);
++            if (item != NULLOBJECT && item != memo->top) c->ReleaseLocalReference(item);
++            c->ReleaseLocalReference(k);
 +        }
++        c->ReleaseLocalReference(keys);
 +        return;
 +    }
 +    if (c->IsString(v))
@@ -4117,11 +4133,18 @@ index 0000000..826efc4
 +        else
 +        {
 +            RexxArrayObject at = c->NewArray(ndims);
-+            for (size_t k = 0; k < ndims; k++) c->ArrayPut(at, c->StringSize(index[k]), k + 1);
++            for (size_t k = 0; k < ndims; k++)
++            {
++                RexxObjectPtr n = c->StringSize(index[k]);
++                c->ArrayPut(at, n, k + 1);
++                c->ReleaseLocalReference(n);
++            }
 +            // an empty slot is undefined, as in a one-dimensional Array (AT gives .nil)
 +            RexxObjectPtr item = c->SendMessage(a, "AT", at);
 +            if (item == c->Nil() && c->SendMessage(a, "HASINDEX", at) == c->False()) item = NULLOBJECT;
 +            fromRexx(c, out, item, depth + 1, memo);
++            if (item != NULLOBJECT && item != memo->top) c->ReleaseLocalReference(item);
++            c->ReleaseLocalReference(at);
 +        }
 +        index.pop_back();
 +    }
