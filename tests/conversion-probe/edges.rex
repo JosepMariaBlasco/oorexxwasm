@@ -44,6 +44,16 @@ m = .array~new(2,2); m[1,1] = 1; m[2,2] = 4
 say left("2-D Array 2x2", 40) k~call(.nil, m)
 m = .array~new(2, 3); m[1, 2] = "b"; m[2, 1] = "d"
 say left("2-D Array 2x3, m[1,2]=b m[2,1]=d", 40) k~call(.nil, m)
+-- copies keep cycles and sharing: what is the same object in JavaScript
+same = F~new("x", "p", "return p.split(' ').map((e) => e + ': ' + Function('x', 'return ' + e)(x)).join(', ')")
+a = .array~of(1, 2); a~append(a)
+say left("a = (1, 2); a~append(a)", 40) same~call(.nil, a, "x.length x[2]===x")
+b = .array~of(1); c = .array~of(2, b); b~append(c)
+say left("b = (1, c), c = (2, b)", 40) same~call(.nil, b, "x[1][1]===x x[1]===x")
+x = .array~of(9)
+say left(".array~of(x, x)", 40) same~call(.nil, .array~of(x, x), "x[0]===x[1]")
+d = .directory~new; da = .array~of(d); d["a"] = da
+say left("Array -> Directory -> the Array", 40) same~call(.nil, da, "x[0].a===x")
 d = .directory~new; d~method = "POST"; d["cache"] = "no-store"
 say left("Directory (d~method=, d['cache']=)", 40) k~call(.nil, d)
 st = .stringtable~new; st["Key"] = 1

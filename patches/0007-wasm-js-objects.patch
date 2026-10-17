@@ -30,7 +30,9 @@ of BSF4ooRexx's box(): BOolean, BYte, Char, Double, Float, Int, Long,
 Object, SHort, STring, Number, BIgint, shortened down to their capitals;
 .js~unbox gives the Rexx value back); Arrays and Directories/StringTables are
 copied as arrays and plain objects (a multi-dimensional Array as arrays
-nested by dimension, the first outermost).
+nested by dimension, the first outermost); a copy keeps cycles and sharing
+(an Array that contains itself is an array that contains itself; at most
+1000 deep).
 
 - Message names arrive uppercased, so they are resolved case-insensitively
   along the prototype chain (cached per object; of two matches the one
@@ -126,31 +128,31 @@ nested by dimension, the first outermost).
   iteration, options latest and max, release).  Documented in wasm/README.md.
 ---
  interpreter/package/PackageManager.cpp |   16 +
- wasm/README.md                         |  202 +++
+ wasm/README.md                         |  206 +++
  wasm/build-node.sh                     |   18 +-
  wasm/build-web.sh                      |   18 +-
  wasm/extra-packages.cpp                |   66 +
  wasm/js-bridge.js                      |  241 ++++
- wasm/js-realm.js                       |  915 +++++++++++++
+ wasm/js-realm.js                       |  926 +++++++++++++
  wasm/tests/boolean-test.rex            |   82 ++
- wasm/tests/js-arrays.rex               |   49 +
+ wasm/tests/js-arrays.rex               |   86 ++
  wasm/tests/js-booleans.rex             |   71 +
  wasm/tests/js-errors.rex               |  158 +++
  wasm/tests/js-extend-gc.rex            |  111 ++
  wasm/tests/js-extend.rex               |  157 +++
  wasm/tests/js-proxy.rex                |  127 ++
- wasm/tests/qualify-node-cli.sh         |  211 +++
+ wasm/tests/qualify-node-cli.sh         |  212 +++
  wasm/tests/web-api.html                |    4 +-
  wasm/tests/web-api.py                  |  225 +++-
  wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 1672 ++++++++++++++++++++++++
+ wasm/web-js.cpp                        | 1719 ++++++++++++++++++++++++
  wasm/web/boolean.cls                   |  172 +++
- wasm/web/js.cls                        |  693 ++++++++++
+ wasm/web/js.cls                        |  694 ++++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 +++
- 25 files changed, 5552 insertions(+), 12 deletions(-)
+ 25 files changed, 5653 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -203,10 +205,10 @@ index 9324d0b..786af1f 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index d6f2caf..44e2d4c 100644
+index d6f2caf..0646f9c 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -239,6 +239,206 @@ from the test suite's directory:
+@@ -239,6 +239,210 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -277,7 +279,11 @@ index d6f2caf..44e2d4c 100644
 +  An Array goes as an array, a Directory or StringTable as a plain object
 +  (copies), .nil as null.  An Array keeps its size (an empty slot is
 +  undefined), and a multi-dimensional Array goes as arrays nested by
-+  dimension, the first outermost: `m[i, j]` is `a[i-1][j-1]`.
++  dimension, the first outermost: `m[i, j]` is `a[i-1][j-1]`.  A copy keeps
++  the structure: an Array that contains itself is an array that contains
++  itself, and one that appears twice in a value is one array (Directories
++  and StringTables too); each value sent is copied on its own, and copies
++  nested more than 1000 deep are an error (a RangeError).
 +* Strings are text: a Rexx string must be UTF-8 and a JavaScript string
 +  well-formed (no lone surrogate), else SYNTAX 23.900, an invalid data
 +  string (nothing becomes U+FFFD); binary data goes as `.js~bytes(x)`.
@@ -413,7 +419,7 @@ index d6f2caf..44e2d4c 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -247,6 +447,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -247,6 +451,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).
@@ -843,10 +849,10 @@ index 0000000..ea8b80b
 +})();
 diff --git a/wasm/js-realm.js b/wasm/js-realm.js
 new file mode 100644
-index 0000000..d6e904f
+index 0000000..a5aaaad
 --- /dev/null
 +++ b/wasm/js-realm.js
-@@ -0,0 +1,915 @@
+@@ -0,0 +1,926 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -1122,15 +1128,20 @@ index 0000000..d6e904f
 +      case 'H': return handlerFunction(dec.decode(d));
 +      case 'V': return byName(s());
 +      case 'R': return rexxProxy(dec.decode(d));
++      // A and T: an Array, a Directory or StringTable, copied: the size, and
++      // an id (a tab before it) by which C refers to this copy again (an Array
++      // that contains itself, or appears twice); G: too deep to copy
 +      case 'A': {
-+        const n = Number(dec.decode(d)), a = new Array(n);
++        const [size, id] = dec.decode(d).split('\t'), n = Number(size), a = new Array(n);
++        if (id) (r.copies || (r.copies = new Map())).set(id, a);
 +        for (let i = 0; i < n; i++) {
 +          a[i] = val(r, what === ARGS ? 'argument ' + (i + 1) : 'item ' + (i + 1) + (what ? ' of ' + what : ''));
 +        }
 +        return a;
 +      }
 +      case 'T': {
-+        const n = Number(dec.decode(d)), o = {};
++        const [size, id] = dec.decode(d).split('\t'), n = Number(size), o = {};
++        if (id) (r.copies || (r.copies = new Map())).set(id, o);
 +        const of = what ? ' of ' + what : '';
 +        for (let i = 0; i < n; i++) {
 +          const k = r.text('an index' + of);
@@ -1138,6 +1149,12 @@ index 0000000..d6e904f
 +        }
 +        return o;
 +      }
++      case 'C': {
++        const copy = r.copies && r.copies.get(dec.decode(d));
++        if (copy === undefined) throw new Error('bad copy record ' + dec.decode(d));
++        return copy;
++      }
++      case 'G': throw new RangeError(dec.decode(d));
 +      default: throw new Error('bad value record ' + tag);
 +    }
 +  }
@@ -1852,15 +1869,18 @@ index 0000000..b0bfb2a
 +  if self~value then return "true"; return "false"
 diff --git a/wasm/tests/js-arrays.rex b/wasm/tests/js-arrays.rex
 new file mode 100644
-index 0000000..8b350ec
+index 0000000..d769448
 --- /dev/null
 +++ b/wasm/tests/js-arrays.rex
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,86 @@
 +/* js-arrays.rex: the shape of a Rexx Array in JavaScript, in the realm     */
 +/* where Rexx runs: the worker's in the browser, Node's under Node.  An     */
 +/* Array goes as an array (a copy) and keeps its size, an empty slot being  */
 +/* undefined; a multi-dimensional Array goes as arrays nested by dimension, */
-+/* the first outermost (a 2x3 Array is an array of 2 arrays of 3).          */
++/* the first outermost (a 2x3 Array is an array of 2 arrays of 3).  A copy  */
++/* keeps the structure: an Array that contains itself is an array that      */
++/* contains itself, one that appears twice is one array (also through       */
++/* Directories and StringTables); more than 1000 deep is an error.          */
 +/* Prints one line per check; exits 1 if any fails.                         */
 +.local~ok = 0; .local~bad = 0
 +.local~fn = .js~Function~new("args", "body", "return new Function(...args.split(','), body)")
@@ -1891,6 +1911,35 @@ index 0000000..8b350ec
 +call check "a JavaScript array of arrays comes back by reference", -
 +  F("", "return [[1, 2], [3, 4]]")~call(.nil)~isA(.JSObject)
 +
++-- copies keep the structure: cycles and sharing
++a = .array~of(1, 2); a~append(a)
++call check "an Array that contains itself: a[2] is a", F("x", "return x.length === 3 && x[2] === x")~call(.nil, a)
++b = .array~of(1); c = .array~of(2, b); b~append(c)
++call check "two Arrays that contain each other: b[1][1] is b", F("x", "return x[1][1] === x && x[1] !== x")~call(.nil, b)
++r = .array~of(1); s = .array~of(r); t = .array~of(s); r~append(t)
++call check "a longer cycle (3 Arrays)", F("x", "return x[1][0][0] === x")~call(.nil, r)
++x = .array~of(9)
++call check "an Array that appears twice is one array", F("v", "return v[0] === v[1] && v[0] !== v[2]")~call(.nil, .array~of(x, x, .array~of(9)))
++d = .directory~new; da = .array~of(d); d["a"] = da
++call check "a cycle through a Directory", F("v", "return v[0].a === v")~call(.nil, da)
++st = .stringtable~new; st["k"] = 1
++call check "a StringTable that appears twice is one object", F("v", "return v[0] === v[1] && v[0].k === '1'")~call(.nil, .array~of(st, st))
++m = .array~new(2, 2); m[1, 1] = m; m[2, 2] = x
++call check "a multi-dimensional Array that contains itself", F("v", "return v[0][0] === v && v[1][1][0] === '9'")~call(.nil, m)
++call check "each value sent is copied on its own (two arguments, two copies)", -
++  F("p, q", "return p !== q && p[0] === p[1]")~call(.nil, .array~of(x, x), .array~of(x, x)) & -
++  F("p, q", "return p !== q")~call(.nil, x, x)
++call check "a Rexx method's result keeps it too (RexxProxy)", -
++  F("o", "const v = o.sendMessage('SELF'); return v[2] === v")~call(.nil, .Holder~new)
++deep = .array~new; cur = deep; do 999; n = .array~new; cur~append(n); cur = n; end
++call check "1000 levels deep: copied", F("v", "let k = 1; while (v.length) { v = v[0]; k++; } return k")~call(.nil, deep) == 1000
++cur~append(.array~new)
++signal on syntax name s1
++y = F("v", "return 1")~call(.nil, deep)
++s1:
++call check "1001 levels deep: SYNTAX 98.900, a RangeError", condition("O")~code == "98.900" & -
++  pos("RangeError: Arrays, Directories or StringTables nested more than 1000 deep", condition("O")~additional[1]) > 0
++
 +say
 +say .ok "passed," .bad "failed"
 +exit .bad > 0
@@ -1903,6 +1952,11 @@ index 0000000..8b350ec
 +  if ok == 1 then do; .local~ok += 1; say "ok  " what; end
 +  else do; .local~bad += 1; say "FAIL" what; end
 +  return
++
++::class Holder
++::method self
++  a = .array~of(1, 2); a~append(a)
++  return a
 +
 +::requires "js.cls"
 diff --git a/wasm/tests/js-booleans.rex b/wasm/tests/js-booleans.rex
@@ -2560,10 +2614,10 @@ index 0000000..c89f67e
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..686a39f 100755
+index e1c1cd8..5403ea4 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -200,6 +200,217 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
+@@ -200,6 +200,218 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
  check "name resolution (host resolver)" '^localhost=1 127\.0\.0\.1$' '^invalid=0$' '^reverse=1 ' "^hostname=$(hostname)\$" '^hostid=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' -- \
    "$X dns.rex"
  
@@ -2684,8 +2738,9 @@ index e1c1cd8..686a39f 100755
 +  "$X '$(cd "$(dirname "$0")" && pwd)/boolean-test.rex'"
 +check "JavaScript objects: booleans both ways (.Boolean)" '^22 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-booleans.rex'"
-+# --- the shape of an Array: sparse keeps its size, multi-dimensional nested
-+check "JavaScript objects: the shape of an Array (sparse, multi-dimensional)" '^10 passed, 0 failed$' '!^FAIL ' -- \
++# --- the shape of an Array: sparse keeps its size, multi-dimensional nested;
++# copies keep cycles and sharing, and more than 1000 deep is an error
++check "JavaScript objects: the shape of an Array (sparse, multi-dimensional, cycles)" '^21 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-arrays.rex'"
 +cat > "$T/jsgc.rex" <<'EOF'
 +f = .js~Function~new("o", "return 1")
@@ -2804,7 +2859,7 @@ index d544388..b13d517 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..f235e23 100755
+index 3940711..2c7e906 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -49,7 +49,10 @@ if len(sys.argv) != 2:
@@ -2906,9 +2961,9 @@ index 3940711..f235e23 100755
 +  # booleans both ways (.Boolean), in the worker's realm: the portable test
 +  ("js booleans", open(f"{SRC}/wasm/tests/js-booleans.rex").read(), {"js": {"worker": True}},
 +     lambda r: "22 passed, 0 failed" in r["out"] and r["rc"] == 0),
-+  # the shape of an Array (sparse, multi-dimensional), in the worker's realm
++  # the shape of an Array (sparse, multi-dimensional, cycles), in the worker's realm
 +  ("js arrays", open(f"{SRC}/wasm/tests/js-arrays.rex").read(), {"js": {"worker": True}},
-+     lambda r: "10 passed, 0 failed" in r["out"] and r["rc"] == 0),
++     lambda r: "21 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # in the page: its string for the DOM; a call is queued and gives a Promise:
 +  # run by a thread waiting for JavaScript (here, the one in ~await) or by
 +  # the one taking events; a condition rejects it with a RexxError
@@ -3193,10 +3248,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..ca8b7e7
+index 0000000..826efc4
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,1672 @@
+@@ -0,0 +1,1719 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -3251,6 +3306,10 @@ index 0000000..ca8b7e7
 + *   JavaScript, also an omitted argument)
 + *   O "realm<tab>id"  (to JavaScript) / "realm<tab>id<tab>display" (back)
 + *   A count + values (an Array)    T count + (K key, value) (a plain object)
++ *     (to JavaScript: count<tab>id, the copy's id in this value)
++ *   C "id"              (to JavaScript) that copy again: an Array, Directory
++ *                       or StringTable met before in the same value (CopyMemo)
++ *   G message           (to JavaScript) copies nested too deep: a RangeError
 + *   F number   B boolean ("1"/"0")   I bigint   Y bytes (Uint8Array)
 + *   H "id<tab>options"  (to JavaScript) a .JSHandler: that realm's function
 + *                       for it (see Handlers below)
@@ -3888,15 +3947,53 @@ index 0000000..ca8b7e7
 +    return cls != NULLOBJECT && c->IsInstanceOf(v, (RexxClassObject)cls);
 +}
 +
++// what one conversion has copied so far: each Array, Directory or StringTable
++// copied gets an id (A or T + its size and the id), and when it comes again
++// it is sent as C + the id, so that JavaScript reuses the copy it made: an
++// Array that contains itself is an array that contains itself, an Array that
++// appears twice is one array.  Each value sent starts with an empty memo.
++struct CopyMemo
++{
++    std::map<RexxObjectPtr, size_t> ids;
++    size_t next = 0;
++};
++// how deep copies may nest (the copy recurses here, and in JavaScript)
++static const int maxCopyDepth = 1000;
++
 +static void fromRexxDims(RexxThreadContext *c, std::string &out, RexxObjectPtr a,
-+    RexxArrayObject dims, std::vector<size_t> &index, int depth);
++    RexxArrayObject dims, std::vector<size_t> &index, int depth, CopyMemo *memo, size_t id);
++
++// too deep (depth counts from 0): G + the message, which JavaScript raises as
++// a RangeError
++static bool tooDeep(std::string &out, int depth)
++{
++    if (depth < maxCopyDepth) return false;
++    putRec(out, 'G', "Arrays, Directories or StringTables nested more than " +
++           std::to_string(maxCopyDepth) + " deep cannot be copied to JavaScript");
++    return true;
++}
++
++// an Array, Directory or StringTable seen before in this conversion: C + its
++// id, and true (also when it is too deep); else a new id for it (in *id),
++// and false
++static bool copiedBefore(std::string &out, RexxObjectPtr v, int depth, CopyMemo *memo, size_t *id)
++{
++    if (tooDeep(out, depth)) return true;
++    auto seen = memo->ids.find(v);
++    if (seen != memo->ids.end()) { putRec(out, 'C', std::to_string(seen->second)); return true; }
++    *id = ++memo->next;
++    memo->ids[v] = *id;
++    return false;
++}
 +
 +// encode a Rexx value for JavaScript
-+static void fromRexx(RexxThreadContext *c, std::string &out, RexxObjectPtr v, int depth = 0)
++static void fromRexx(RexxThreadContext *c, std::string &out, RexxObjectPtr v, int depth = 0,
++    CopyMemo *memo = nullptr)
 +{
++    CopyMemo top;
++    if (memo == nullptr) memo = &top;
 +    if (v == NULLOBJECT) { putRec(out, 'U', ""); return; }
 +    if (v == c->Nil()) { putRec(out, 'N', ""); return; }
-+    if (depth > 64) { putRec(out, 'N', ""); return; }        // a cycle: cut it
 +    if (isA(c, v, jsObjectClass))
 +    {
 +        putRec(out, 'O', c->ObjectToStringValue(c->SendMessage0(v, "JSREF")));
@@ -3933,6 +4030,8 @@ index 0000000..ca8b7e7
 +    }
 +    if (c->IsArray(v))
 +    {
++        size_t id;
++        if (copiedBefore(out, v, depth, memo, &id)) return;
 +        // a multi-dimensional Array: arrays nested by dimension, the first
 +        // outermost (a 2x3 Array is an array of 2 arrays of 3)
 +        size_t ndims = 0;
@@ -3940,24 +4039,26 @@ index 0000000..ca8b7e7
 +        if (ndims > 1)
 +        {
 +            std::vector<size_t> index;
-+            fromRexxDims(c, out, v, (RexxArrayObject)c->SendMessage0(v, "DIMENSIONS"), index, depth);
++            fromRexxDims(c, out, v, (RexxArrayObject)c->SendMessage0(v, "DIMENSIONS"), index, depth, memo, id);
 +            return;
 +        }
 +        size_t size = c->ArraySize((RexxArrayObject)v);
-+        putRec(out, 'A', std::to_string(size));
-+        for (size_t i = 1; i <= size; i++) fromRexx(c, out, c->ArrayAt((RexxArrayObject)v, i), depth + 1);
++        putRec(out, 'A', std::to_string(size) + "\t" + std::to_string(id));
++        for (size_t i = 1; i <= size; i++) fromRexx(c, out, c->ArrayAt((RexxArrayObject)v, i), depth + 1, memo);
 +        return;
 +    }
 +    if (c->IsDirectory(v) || c->IsStringTable(v))
 +    {
++        size_t id;
++        if (copiedBefore(out, v, depth, memo, &id)) return;
 +        RexxArrayObject keys = (RexxArrayObject)c->SendMessage0(v, "ALLINDEXES");
 +        size_t n = c->ArrayItems(keys);
-+        putRec(out, 'T', std::to_string(n));
++        putRec(out, 'T', std::to_string(n) + "\t" + std::to_string(id));
 +        for (size_t i = 1; i <= n; i++)
 +        {
 +            RexxObjectPtr k = c->ArrayAt(keys, i);
 +            putRec(out, 'K', c->ObjectToStringValue(k));
-+            fromRexx(c, out, c->SendMessage1(v, "AT", k), depth + 1);
++            fromRexx(c, out, c->SendMessage1(v, "AT", k), depth + 1, memo);
 +        }
 +        return;
 +    }
@@ -4001,17 +4102,18 @@ index 0000000..ca8b7e7
 +// one dimension of a multi-dimensional Array (fromRexx): index holds the
 +// positions of the outer dimensions; the items are read with AT, by their
 +// indexes, not by their place in the Array's storage (where the first
-+// index varies fastest)
++// index varies fastest).  The outermost array carries the Array's id (memo).
 +static void fromRexxDims(RexxThreadContext *c, std::string &out, RexxObjectPtr a,
-+    RexxArrayObject dims, std::vector<size_t> &index, int depth)
++    RexxArrayObject dims, std::vector<size_t> &index, int depth, CopyMemo *memo, size_t id)
 +{
 +    size_t level = index.size() + 1, ndims = c->ArraySize(dims), n = 0;
 +    c->ObjectToStringSize(c->ArrayAt(dims, level), &n);
-+    putRec(out, 'A', std::to_string(n));
++    if (level > 1 && tooDeep(out, depth)) return;
++    putRec(out, 'A', std::to_string(n) + (level == 1 ? "\t" + std::to_string(id) : std::string()));
 +    for (size_t i = 1; i <= n; i++)
 +    {
 +        index.push_back(i);
-+        if (level < ndims) fromRexxDims(c, out, a, dims, index, depth + 1);
++        if (level < ndims) fromRexxDims(c, out, a, dims, index, depth + 1, memo, 0);
 +        else
 +        {
 +            RexxArrayObject at = c->NewArray(ndims);
@@ -4019,7 +4121,7 @@ index 0000000..ca8b7e7
 +            // an empty slot is undefined, as in a one-dimensional Array (AT gives .nil)
 +            RexxObjectPtr item = c->SendMessage(a, "AT", at);
 +            if (item == c->Nil() && c->SendMessage(a, "HASINDEX", at) == c->False()) item = NULLOBJECT;
-+            fromRexx(c, out, item, depth + 1);
++            fromRexx(c, out, item, depth + 1, memo);
 +        }
 +        index.pop_back();
 +    }
@@ -5049,10 +5151,10 @@ index 0000000..73ecfc2
 +  return 1
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
 new file mode 100644
-index 0000000..9bd89ca
+index 0000000..1f6f974
 --- /dev/null
 +++ b/wasm/web/js.cls
-@@ -0,0 +1,693 @@
+@@ -0,0 +1,694 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -5156,7 +5258,8 @@ index 0000000..9bd89ca
 + * Java's ranges); .js~unbox(o) gives a box's Rexx value back; an
 + * Array goes as an array, a Directory or StringTable as a plain object (copies),
 + * a multi-dimensional Array as arrays nested by dimension (m[i, j] is
-+ * a[i-1][j-1]), .nil as null; .js~newArray(items...) and .js~newObject(directory) make them
++ * a[i-1][j-1]), keeping cycles and sharing (an Array that contains itself
++ * is an array that contains itself; at most 1000 deep), .nil as null; .js~newArray(items...) and .js~newObject(directory) make them
 + * in JavaScript (.js~Array and .js~Object are JavaScript's own).  Any other
 + * Rexx object goes by reference, as a RexxProxy (below).  A string goes as
 + * text: a Rexx string must be UTF-8 and a JavaScript string well-formed (no
