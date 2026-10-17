@@ -44,7 +44,8 @@
 .nil / .js~undefined                     null undefined
 Array (1, 'a', (2, 3))                   Array(3)[string:"1", string:"a", Array(2)[string:"2", string:"3"]]
 sparse Array [1,,x,] (size 4)            Array(4)[string:"1", undefined, string:"x", undefined]
-2-D Array 2x2                            Array(4)[string:"1", undefined, undefined, string:"4"]
+2-D Array 2x2                            Array(2)[Array(2)[string:"1", undefined], Array(2)[undefined, string:"4"]]
+2-D Array 2x3, m[1,2]=b m[2,1]=d         Array(2)[Array(3)[undefined, string:"b", undefined], Array(3)[string:"d", undefined, undefined]]
 Directory (d~method=, d['cache']=)       Object{"cache": string:"no-store", "METHOD": string:"POST"}
 StringTable ['Key']                      Object{"Key": string:"1"}
 stem s.                                  RexxProxy:S.
@@ -113,9 +114,9 @@ throw 42: message / additional[2]        JavaScript error: 42. / '42' (len 2)
 throw 42: additional items               2
 --- errors: Rexx condition in JavaScript
 SYNTAX 41.1 (instanceof RexxError | Erro
-    true | true | RexxError | "Error 41.1: Bad arithmetic conversion. (Nonnumeric value (\"a\") used in arithmetic operation.)" | ["message","name","condition","code","rc","errorText","program","line","traceback"] | ["SYNTAX","41.1",41,"Bad arithmetic conversion.","string",175,3,false]
+    true | true | RexxError | "Error 41.1: Bad arithmetic conversion. (Nonnumeric value (\"a\") used in arithmetic operation.)" | ["message","name","condition","code","rc","errorText","program","line","traceback"] | ["SYNTAX","41.1",41,"Bad arithmetic conversion.","string",177,3,false]
 RAISE SYNTAX 93.900 with a message      
-    true | true | RexxError | "Error 93.900: Incorrect call to method. (my message.)" | ["message","name","condition","code","rc","errorText","program","line","traceback"] | ["SYNTAX","93.900",93,"Incorrect call to method.","string",177,3,false]
+    true | true | RexxError | "Error 93.900: Incorrect call to method. (my message.)" | ["message","name","condition","code","rc","errorText","program","line","traceback"] | ["SYNTAX","93.900",93,"Incorrect call to method.","string",179,3,false]
 user condition (RAISE USER oops)        
     no error
 --- errors: JavaScript exception through Rexx and back

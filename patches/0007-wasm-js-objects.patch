@@ -29,7 +29,8 @@ strings always go as strings (.js~num, .js~bool, .js~bigint, .js~bytes,
 of BSF4ooRexx's box(): BOolean, BYte, Char, Double, Float, Int, Long,
 Object, SHort, STring, Number, BIgint, shortened down to their capitals;
 .js~unbox gives the Rexx value back); Arrays and Directories/StringTables are
-copied as arrays and plain objects.
+copied as arrays and plain objects (a multi-dimensional Array as arrays
+nested by dimension, the first outermost).
 
 - Message names arrive uppercased, so they are resolved case-insensitively
   along the prototype chain (cached per object; of two matches the one
@@ -125,34 +126,36 @@ copied as arrays and plain objects.
   iteration, options latest and max, release).  Documented in wasm/README.md.
 ---
  interpreter/package/PackageManager.cpp |   16 +
- wasm/README.md                         |  200 +++
+ wasm/README.md                         |  202 +++
  wasm/build-node.sh                     |   18 +-
  wasm/build-web.sh                      |   18 +-
  wasm/extra-packages.cpp                |   66 +
  wasm/js-bridge.js                      |  241 ++++
  wasm/js-realm.js                       |  915 +++++++++++++
  wasm/tests/boolean-test.rex            |   82 ++
- wasm/tests/js-booleans.rex             |   71 ++
+ wasm/tests/js-arrays.rex               |   49 +
+ wasm/tests/js-booleans.rex             |   71 +
  wasm/tests/js-errors.rex               |  158 +++
  wasm/tests/js-extend-gc.rex            |  111 ++
  wasm/tests/js-extend.rex               |  157 +++
  wasm/tests/js-proxy.rex                |  127 ++
- wasm/tests/qualify-node-cli.sh         |  208 +++
+ wasm/tests/qualify-node-cli.sh         |  211 +++
  wasm/tests/web-api.html                |    4 +-
- wasm/tests/web-api.py                  |  222 +++-
+ wasm/tests/web-api.py                  |  225 +++-
  wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 1632 ++++++++++++++++++++++++
+ wasm/web-js.cpp                        | 1672 ++++++++++++++++++++++++
  wasm/web/boolean.cls                   |  172 +++
- wasm/web/js.cls                        |  692 ++++++++++
+ wasm/web/js.cls                        |  693 ++++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
- wasm/web/ooRexx.js                     |  217 ++++
- 24 files changed, 5454 insertions(+), 12 deletions(-)
+ wasm/web/ooRexx.js                     |  217 +++
+ 25 files changed, 5552 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
  create mode 100644 wasm/tests/boolean-test.rex
+ create mode 100644 wasm/tests/js-arrays.rex
  create mode 100644 wasm/tests/js-booleans.rex
  create mode 100644 wasm/tests/js-errors.rex
  create mode 100644 wasm/tests/js-extend-gc.rex
@@ -200,10 +203,10 @@ index 9324d0b..786af1f 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index d6f2caf..8417c8c 100644
+index d6f2caf..44e2d4c 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -239,6 +239,204 @@ from the test suite's directory:
+@@ -239,6 +239,206 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -272,7 +275,9 @@ index d6f2caf..8417c8c 100644
 +  JavaScript's safe integers), and `.js~unbox(o)` gives the Rexx value back
 +  (also of a JavaScript `Number`, `String`, `Boolean` or `BigInt` object).
 +  An Array goes as an array, a Directory or StringTable as a plain object
-+  (copies), .nil as null.
++  (copies), .nil as null.  An Array keeps its size (an empty slot is
++  undefined), and a multi-dimensional Array goes as arrays nested by
++  dimension, the first outermost: `m[i, j]` is `a[i-1][j-1]`.
 +* Strings are text: a Rexx string must be UTF-8 and a JavaScript string
 +  well-formed (no lone surrogate), else SYNTAX 23.900, an invalid data
 +  string (nothing becomes U+FFFD); binary data goes as `.js~bytes(x)`.
@@ -408,7 +413,7 @@ index d6f2caf..8417c8c 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -247,6 +445,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -247,6 +447,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).
@@ -1845,6 +1850,61 @@ index 0000000..b0bfb2a
 +::class Json2 subclass Boolean
 +::method makeJSON unguarded
 +  if self~value then return "true"; return "false"
+diff --git a/wasm/tests/js-arrays.rex b/wasm/tests/js-arrays.rex
+new file mode 100644
+index 0000000..8b350ec
+--- /dev/null
++++ b/wasm/tests/js-arrays.rex
+@@ -0,0 +1,49 @@
++/* js-arrays.rex: the shape of a Rexx Array in JavaScript, in the realm     */
++/* where Rexx runs: the worker's in the browser, Node's under Node.  An     */
++/* Array goes as an array (a copy) and keeps its size, an empty slot being  */
++/* undefined; a multi-dimensional Array goes as arrays nested by dimension, */
++/* the first outermost (a 2x3 Array is an array of 2 arrays of 3).          */
++/* Prints one line per check; exits 1 if any fails.                         */
++.local~ok = 0; .local~bad = 0
++.local~fn = .js~Function~new("args", "body", "return new Function(...args.split(','), body)")
++json = F("x", "return JSON.stringify(x)")
++-- an array's shape, with undefined (JSON would say null) and holes told apart
++shape = F("x", "const d = (x) => Array.isArray(x) ? '[' + Array.from({length: x.length}," -
++  "(_, i) => i in x ? d(x[i]) : '<hole>').join(',') + ']' : x === undefined ? 'u' : typeof x === 'string' ? x : typeof x + ':' + x;" -
++  "return d(x)")
++
++call check "a one-dimensional Array: an array", json~call(.nil, .array~of("a", "b")) == '["a","b"]'
++s = .array~new(4); s[1] = 1; s[3] = "x"
++call check "a sparse Array keeps its size; empty slots are undefined, not holes", shape~call(.nil, s) == "[1,u,x,u]"
++m = .array~new(2, 2); m[1, 1] = 1; m[2, 2] = 4
++call check "2x2: an array of 2 arrays of 2", shape~call(.nil, m) == "[[1,u],[u,4]]"
++m = .array~new(2, 3); m[1, 2] = "b"; m[2, 1] = "d"
++call check "2x3: the first dimension outermost (m[i, j] is a[i-1][j-1])", -
++  shape~call(.nil, m) == "[[u,b,u],[d,u,u]]" & F("a", "return a[0][1] + a[1][0]")~call(.nil, m) == "bd"
++c = .array~new(2, 2, 2)
++do i = 1 to 2; do j = 1 to 2; do k = 1 to 2; c[i, j, k] = i || j || k; end; end; end
++call check "2x2x2: three levels", json~call(.nil, c) == '[[["111","112"],["121","122"]],[["211","212"],["221","222"]]]'
++call check "a dimension of size 0: empty arrays", json~call(.nil, .array~new(2, 0)) == "[[],[]]"
++g = .array~new(2, 2); g[3, 1] = "z"
++call check "an Array that grew: its dimensions now (" g~dimensions~makeString("L", "x") ")", -
++  shape~call(.nil, g) == "[[u,u],[u,u],[z,u]]"
++d = .directory~new; d["m"] = .array~new(1, 2); d["m"][1, 2] = .js~true
++call check "inside a Directory, with a .Boolean item", json~call(.nil, d) == '{"m":[[null,true]]}'
++call check "inside an Array", shape~call(.nil, .array~of(m, "y")) == "[[[u,b,u],[d,u,u]],y]"
++call check "a JavaScript array of arrays comes back by reference", -
++  F("", "return [[1, 2], [3, 4]]")~call(.nil)~isA(.JSObject)
++
++say
++say .ok "passed," .bad "failed"
++exit .bad > 0
++
++F: procedure                        -- F(params, body): a JavaScript function
++  return .fn~call(.nil, arg(1), arg(2))
++
++check: procedure
++  parse arg what, ok
++  if ok == 1 then do; .local~ok += 1; say "ok  " what; end
++  else do; .local~bad += 1; say "FAIL" what; end
++  return
++
++::requires "js.cls"
 diff --git a/wasm/tests/js-booleans.rex b/wasm/tests/js-booleans.rex
 new file mode 100644
 index 0000000..90dc7a2
@@ -2500,10 +2560,10 @@ index 0000000..c89f67e
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..264df91 100755
+index e1c1cd8..686a39f 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -200,6 +200,214 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
+@@ -200,6 +200,217 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
  check "name resolution (host resolver)" '^localhost=1 127\.0\.0\.1$' '^invalid=0$' '^reverse=1 ' "^hostname=$(hostname)\$" '^hostid=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' -- \
    "$X dns.rex"
  
@@ -2624,6 +2684,9 @@ index e1c1cd8..264df91 100755
 +  "$X '$(cd "$(dirname "$0")" && pwd)/boolean-test.rex'"
 +check "JavaScript objects: booleans both ways (.Boolean)" '^22 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-booleans.rex'"
++# --- the shape of an Array: sparse keeps its size, multi-dimensional nested
++check "JavaScript objects: the shape of an Array (sparse, multi-dimensional)" '^10 passed, 0 failed$' '!^FAIL ' -- \
++  "$X '$(cd "$(dirname "$0")" && pwd)/js-arrays.rex'"
 +cat > "$T/jsgc.rex" <<'EOF'
 +f = .js~Function~new("o", "return 1")
 +do i = 1 to 300; x = f~call(.nil, .Gone~new); end
@@ -2741,7 +2804,7 @@ index d544388..b13d517 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..b62d283 100755
+index 3940711..f235e23 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -49,7 +49,10 @@ if len(sys.argv) != 2:
@@ -2756,7 +2819,7 @@ index 3940711..b62d283 100755
  srv = subprocess.Popen([sys.executable, "-c", f"""
  import os, sys
  from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
-@@ -136,6 +139,170 @@ CASES = [
+@@ -136,6 +139,173 @@ CASES = [
                         '::options trace r', {},
       lambda r: r["out"].count("  worker") == 12 and "total 4\n" in r["out"] and "*-*" in r["err"]
                 and r["err"] == r["trace"] and r["errmsg"] == ""),
@@ -2843,6 +2906,9 @@ index 3940711..b62d283 100755
 +  # booleans both ways (.Boolean), in the worker's realm: the portable test
 +  ("js booleans", open(f"{SRC}/wasm/tests/js-booleans.rex").read(), {"js": {"worker": True}},
 +     lambda r: "22 passed, 0 failed" in r["out"] and r["rc"] == 0),
++  # the shape of an Array (sparse, multi-dimensional), in the worker's realm
++  ("js arrays", open(f"{SRC}/wasm/tests/js-arrays.rex").read(), {"js": {"worker": True}},
++     lambda r: "10 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # in the page: its string for the DOM; a call is queued and gives a Promise:
 +  # run by a thread waiting for JavaScript (here, the one in ~await) or by
 +  # the one taking events; a condition rejects it with a RexxError
@@ -2927,7 +2993,7 @@ index 3940711..b62d283 100755
  ]
  
  fails = 0; ran = 0
-@@ -157,6 +324,59 @@ with sync_playwright() as p:
+@@ -157,6 +327,59 @@ with sync_playwright() as p:
          except Exception: ok = False
          fails += not ok; ran += 1
          print(("ok  " if ok else "FAIL"), f"{name:20}", json.dumps(r, ensure_ascii=False)[:300] if not ok or os.environ.get("SHOW") else f"{r.get('ms')} ms")
@@ -3127,10 +3193,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..cfc1f46
+index 0000000..ca8b7e7
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,1632 @@
+@@ -0,0 +1,1672 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -3822,6 +3888,9 @@ index 0000000..cfc1f46
 +    return cls != NULLOBJECT && c->IsInstanceOf(v, (RexxClassObject)cls);
 +}
 +
++static void fromRexxDims(RexxThreadContext *c, std::string &out, RexxObjectPtr a,
++    RexxArrayObject dims, std::vector<size_t> &index, int depth);
++
 +// encode a Rexx value for JavaScript
 +static void fromRexx(RexxThreadContext *c, std::string &out, RexxObjectPtr v, int depth = 0)
 +{
@@ -3864,6 +3933,16 @@ index 0000000..cfc1f46
 +    }
 +    if (c->IsArray(v))
 +    {
++        // a multi-dimensional Array: arrays nested by dimension, the first
++        // outermost (a 2x3 Array is an array of 2 arrays of 3)
++        size_t ndims = 0;
++        c->ObjectToStringSize(c->SendMessage0(v, "DIMENSION"), &ndims);
++        if (ndims > 1)
++        {
++            std::vector<size_t> index;
++            fromRexxDims(c, out, v, (RexxArrayObject)c->SendMessage0(v, "DIMENSIONS"), index, depth);
++            return;
++        }
 +        size_t size = c->ArraySize((RexxArrayObject)v);
 +        putRec(out, 'A', std::to_string(size));
 +        for (size_t i = 1; i <= size; i++) fromRexx(c, out, c->ArrayAt((RexxArrayObject)v, i), depth + 1);
@@ -3917,6 +3996,33 @@ index 0000000..cfc1f46
 +    }
 +    if (g != NULLOBJECT) c->ReleaseGlobalReference(g);
 +    putRec(out, 'R', std::to_string(id) + "\t" + str);
++}
++
++// one dimension of a multi-dimensional Array (fromRexx): index holds the
++// positions of the outer dimensions; the items are read with AT, by their
++// indexes, not by their place in the Array's storage (where the first
++// index varies fastest)
++static void fromRexxDims(RexxThreadContext *c, std::string &out, RexxObjectPtr a,
++    RexxArrayObject dims, std::vector<size_t> &index, int depth)
++{
++    size_t level = index.size() + 1, ndims = c->ArraySize(dims), n = 0;
++    c->ObjectToStringSize(c->ArrayAt(dims, level), &n);
++    putRec(out, 'A', std::to_string(n));
++    for (size_t i = 1; i <= n; i++)
++    {
++        index.push_back(i);
++        if (level < ndims) fromRexxDims(c, out, a, dims, index, depth + 1);
++        else
++        {
++            RexxArrayObject at = c->NewArray(ndims);
++            for (size_t k = 0; k < ndims; k++) c->ArrayPut(at, c->StringSize(index[k]), k + 1);
++            // an empty slot is undefined, as in a one-dimensional Array (AT gives .nil)
++            RexxObjectPtr item = c->SendMessage(a, "AT", at);
++            if (item == c->Nil() && c->SendMessage(a, "HASINDEX", at) == c->False()) item = NULLOBJECT;
++            fromRexx(c, out, item, depth + 1);
++        }
++        index.pop_back();
++    }
 +}
 +
 +// the result of a reply: its value, or a raised SYNTAX 98.900 condition
@@ -4943,10 +5049,10 @@ index 0000000..73ecfc2
 +  return 1
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
 new file mode 100644
-index 0000000..e574ee3
+index 0000000..9bd89ca
 --- /dev/null
 +++ b/wasm/web/js.cls
-@@ -0,0 +1,692 @@
+@@ -0,0 +1,693 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -5049,7 +5155,8 @@ index 0000000..e574ee3
 + * caseless, shortened down to the capitals; whole numbers checked against
 + * Java's ranges); .js~unbox(o) gives a box's Rexx value back; an
 + * Array goes as an array, a Directory or StringTable as a plain object (copies),
-+ * .nil as null; .js~newArray(items...) and .js~newObject(directory) make them
++ * a multi-dimensional Array as arrays nested by dimension (m[i, j] is
++ * a[i-1][j-1]), .nil as null; .js~newArray(items...) and .js~newObject(directory) make them
 + * in JavaScript (.js~Array and .js~Object are JavaScript's own).  Any other
 + * Rexx object goes by reference, as a RexxProxy (below).  A string goes as
 + * text: a Rexx string must be UTF-8 and a JavaScript string well-formed (no

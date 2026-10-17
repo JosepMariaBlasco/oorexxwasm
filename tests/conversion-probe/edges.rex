@@ -42,6 +42,8 @@ a = .array~new(4); a[1] = 1; a[3] = "x"
 say left("sparse Array [1,,x,] (size" a~size")", 40) k~call(.nil, a)
 m = .array~new(2,2); m[1,1] = 1; m[2,2] = 4
 say left("2-D Array 2x2", 40) k~call(.nil, m)
+m = .array~new(2, 3); m[1, 2] = "b"; m[2, 1] = "d"
+say left("2-D Array 2x3, m[1,2]=b m[2,1]=d", 40) k~call(.nil, m)
 d = .directory~new; d~method = "POST"; d["cache"] = "no-store"
 say left("Directory (d~method=, d['cache']=)", 40) k~call(.nil, d)
 st = .stringtable~new; st["Key"] = 1
