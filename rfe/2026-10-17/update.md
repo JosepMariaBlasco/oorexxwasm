@@ -35,7 +35,8 @@ for a real boolean, and a JavaScript boolean came back to Rexx as "1" or
 ### Until RFE #880 is accepted
 
 Patch 7 carries a verbatim copy of the class proposed there,
-`wasm/web/boolean.cls` (version 1, SHA-256 `65310b4c525c…`), installed
+`wasm/web/boolean.cls` (version 2, SHA-256 `080fd7e21beb…`; see
+[Version 2](#version-2-of-booleancls) below), installed
 next to `js.cls`, which requires it, with its tests,
 `wasm/tests/boolean-test.rex`. When the core has the class, the copy goes
 (a package's own class would otherwise take precedence over the core
@@ -50,9 +51,28 @@ The specification says so in
 *Pitfalls* and *Guarantees*, with its table of changes; `wasm/README.md`
 and the first comment of `wasm/web/js.cls` too.
 
+### Version 2 of `boolean.cls`
+
+Later the same day the class went to version 2, and patch 7 carries it
+instead of version 1 (the copy stays verbatim). Two changes:
+
+- Its prolog puts the class in `.environment` as `BOOLEAN`, unless an entry
+  of that name is already there: once some package has loaded the file,
+  `.Boolean` is visible everywhere, with no `::requires`, as a core class
+  would be, and it never replaces a `.Boolean` the core (or another
+  package) put there first.
+- `defaultName` returns the value, so an Array's `makeString` and
+  `toString` show "1" and "0" instead of "a Boolean".
+
+The header has a `Version: 2` line, and the class has 22 tests (two more,
+for `makeString` and `toString`). With version 2, patches 1–6 and 0012 are
+byte-identical to those of version 1, and 8–11 differ only in the hashes of
+the files patch 7 also changes. Patches 1–8 alone still build and pass
+(31 checks, 52 cases).
+
 ## Tests
 
-`qualify-node-cli.sh` runs `boolean-test.rex` (the class's own 20 tests)
+`qualify-node-cli.sh` runs `boolean-test.rex` (the class's own 22 tests)
 and a new portable test, `wasm/tests/js-booleans.rex` (22 checks), which
 `web-api.py` runs in the browser's worker too (case "js booleans"): both
 directions, the identity of the instances, Rexx's use of them, a subclass,
@@ -70,7 +90,7 @@ apply cleanly to trunk **r13268**, in order, with `svn patch` or
 
 ## The patches
 
-[`patches/` at commit d475177](https://github.com/JosepMariaBlasco/oorexxwasm/tree/d475177/patches):
+[`patches/` at commit 9cd3b47](https://github.com/JosepMariaBlasco/oorexxwasm/tree/9cd3b47/patches):
 0001–0008 are the RFE, and `SHA256SUMS` lists their hashes.
 
 ## Results
