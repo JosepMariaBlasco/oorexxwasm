@@ -1,0 +1,122 @@
+--- Rexx -> JavaScript
+'0'                                      string:"0"
+'-0'                                     string:"-0"
+'42'                                     string:"42"
+'-7'                                     string:"-7"
+'007'                                    string:"007"
+'+5'                                     string:"+5"
+' 5'                                     string:" 5"
+'5 '                                     string:"5 "
+'3.14'                                   string:"3.14"
+'.5'                                     string:".5"
+'5.'                                     string:"5."
+'1E3'                                    string:"1E3"
+'1e3'                                    string:"1e3"
+'1E+3'                                   string:"1E+3"
+'1E-3'                                   string:"1E-3"
+'-1.5E2'                                 string:"-1.5E2"
+'1.0'                                    string:"1.0"
+'12345678901234567890123456789'          string:"12345678901234567890123456789"
+'3.14159265358979323846264'              string:"3.14159265358979323846264"
+'1E999'                                  string:"1E999"
+'1E-999'                                 string:"1E-999"
+'.'                                      string:"."
+'-'                                      string:"-"
+'E3'                                     string:"E3"
+'1E'                                     string:"1E"
+'0x10'                                   string:"0x10"
+'1_000'                                  string:"1_000"
+'inf'                                    string:"inf"
+'NaN'                                    string:"NaN"
+'abc'                                    string:"abc"
+''                                       string:""
+'1 2'                                    string:"1 2"
+12345678901234567890 * 10 (DIGITS 9)     string:"1.23456789E+20"
+5 (an integer object inside Rexx)        string:"5"
+.true / .false                           string:"1" string:"0"
+.js~true / .js~false / .js~bool(0)       boolean:true boolean:false boolean:false
+.Boolean~true / .Boolean~false           boolean:true boolean:false
+.js~true == .Boolean~true (same object)  1 1
+.js~num: '007' '3.14' '1E3' '-0'         number:7 number:3.14 number:1000 number:-0
+.js~num('abc')                           abc
+.js~bigint(12345678901234567890123)      bigint:12345678901234567890123
+.js~box('Int', 7) / ('BO', 1) / ('STring number:7 boolean:true string:"7"
+.nil / .js~undefined                     null undefined
+Array (1, 'a', (2, 3))                   Array(3)[string:"1", string:"a", Array(2)[string:"2", string:"3"]]
+sparse Array [1,,x,] (size 4)            Array(4)[string:"1", undefined, string:"x", undefined]
+2-D Array 2x2                            Array(4)[string:"1", undefined, undefined, string:"4"]
+Directory (d~method=, d['cache']=)       Object{"cache": string:"no-store", "METHOD": string:"POST"}
+StringTable ['Key']                      Object{"Key": string:"1"}
+stem s.                                  RexxProxy:S.
+.list~of(1,2)                            RexxProxy:a List
+.mutablebuffer~new('12')                 RexxProxy:12
+'é' (UTF-8 bytes)                       string:"é"
+'ff'x (not UTF-8)                        SYNTAX 23.900: argument 2 is not valid UTF-8 (byte 1 is 'FF'x): a Rexx string goes to JavaScript as text; .js~bytes(s) passes its bytes
+.js~bytes('ff'x)                         Uint8Array[255]
+'ff'x round trip                         SYNTAX 23.900: argument 2 is not valid UTF-8 (byte 1 is 'FF'x): a Rexx string goes to JavaScript as text; .js~bytes(s) passes its bytes
+'é' round trip (== 'é')                1
+JS 'a\uD800' (lone surrogate) to Rexx    SYNTAX 23.900: a JavaScript string that is not well-formed cannot go to Rexx (code unit 2 is a lone surrogate, U+D800)
+--- JavaScript -> Rexx
+true                                     '1' (len 1)
+false                                    '0' (len 1)
+null                                     .nil
+undefined                                .js~undefined
+0                                        '0' (len 1)
+-0                                       '0' (len 1)
+1e21                                     '1E+21' (len 5)
+1e-7                                     '1E-7' (len 4)
+1e16                                     '10000000000000000' (len 17)
+1.0                                      '1' (len 1)
+2**53+2                                  '9007199254740994' (len 16)
+0.1+0.2                                  '0.30000000000000004' (len 19)
+1/3                                      '0.3333333333333333' (len 18)
+NaN                                      'NaN' (len 3)
+Infinity                                 'Infinity' (len 8)
+-Infinity                                '-Infinity' (len 9)
+12345678901234567890n                    '12345678901234567890' (len 20)
+'café'                                  'café' (len 5)
+''                                       '' (len 0)
+[1,2]                                    JSObject:Array
+({a:1})                                  JSObject:Object
+new Map([[1,2]])                         JSObject:Map
+new Set([1])                             JSObject:Set
+new Uint8Array([97,255])                 JSObject:Uint8Array
+new Number(5)                            JSObject:Number
+Symbol('s')                              JSObject:Symbol(s)
+true: class / is .Boolean~true / r + 1   Boolean 1 2
+false through Rexx and back              boolean:false
+Uint8Array~js.byteString                 '61FF'x
+datatype(1e21 / 1e-7 / NaN, 'N')         1 1 0
+--- positions
+[10,20,30]: o[1] o[3] o[4] o~length      10 30 .js~undefined 3
+o~items / o~size / o~js.className        .js~undefined .js~undefined Array
+~makeArray: class, items, [1]            Array 3 10
+do with index i item v over              1=10 2=20 3=30
+o[0]                                     SYNTAX 98.900: JavaScript error: RangeError: 0 is not an index of an Array: arrays count from 1 here, as Rexx Arrays (o~js.invokeStrict("at", i) is JavaScript's own).
+--- names
+{foo:1, Foo:2, bar:3}: o~bar             3
+o~foo (differ only in case)              '1' (len 1)
+o~js.getStrict('Foo') / o['foo']         2 1
+o~nothere                                .js~undefined
+--- identity
+same JS object twice: == / =             1 1
+two different {}: == / =                 0 0
+Rexx object twice to JS: a === b         1
+Rexx object round trip (== itself)       1
+--- errors: JavaScript exception in Rexx
+code / errortext                         98.900 / Execution error.
+message                                  JavaScript error: TypeError: bad thing.
+additional items / [2] class             3 / JSObject:TypeError
+additional[2]~name / ~message            TypeError / bad thing
+additional[3] (the stack), first line    TypeError: bad thing
+throw 42: message / additional[2]        JavaScript error: 42. / '42' (len 2)
+throw 42: additional items               2
+--- errors: Rexx condition in JavaScript
+SYNTAX 41.1 (instanceof RexxError | Erro
+    true | true | RexxError | "Error 41.1: Bad arithmetic conversion. (Nonnumeric value (\"a\") used in arithmetic operation.)" | ["message","name","condition","code","rc","errorText","program","line","traceback"] | ["SYNTAX","41.1",41,"Bad arithmetic conversion.","string",175,3,false]
+RAISE SYNTAX 93.900 with a message      
+    true | true | RexxError | "Error 93.900: Incorrect call to method. (my message.)" | ["message","name","condition","code","rc","errorText","program","line","traceback"] | ["SYNTAX","93.900",93,"Incorrect call to method.","string",177,3,false]
+user condition (RAISE USER oops)        
+    no error
+--- errors: JavaScript exception through Rexx and back
+    RexxError | false | "Error 98.900: Execution error. (JavaScript error: TypeError: from JS.)" | cause: | TypeError | from JS

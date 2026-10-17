@@ -148,6 +148,7 @@ run's summary puts all platforms side by side.
     [`.github/workflows/release.yml`](.github/workflows/release.yml);
   - `relink.sh`, `check-method-signatures.py`.
 - `tests/`: `qualify.sh`, probes (Node, browser, recursion, threads), the
+  bridge's conversion probe (`conversion-probe/`, run by `qualify.sh`), the
   official suite runners, and the JDOR comparison with the Java handler.
 - `playground/`: the ooRexx Playground page and its samples. See
   [`playground/README.md`](playground/README.md).

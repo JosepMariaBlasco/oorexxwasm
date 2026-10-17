@@ -200,6 +200,9 @@ else
     "$X server.rex 50113 1 & sleep 1.5; python3 -c \"import socket; c=socket.create_connection(('127.0.0.1',50113)); c.sendall(b'pong'); print('py got', c.recv(100))\"; wait"
   check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
     "$X udp.rex serve 50114 & sleep 1.5; $X udp.rex send 50114; wait"
+  # the bridge's conversion probe: its output must be exactly the expected one
+  check "JavaScript conversions: the probe's output (tests/conversion-probe)" '^probe output as expected$' -- \
+    "$X '$HERE/conversion-probe/edges.rex' > edges.now 2>&1; diff -u '$HERE/conversion-probe/edges.out' edges.now && echo 'probe output as expected'"
   check "name resolution (host resolver)" '^localhost=1 127\.0\.0\.1$' '^invalid=0$' '^reverse=1 ' "^hostname=$(hostname)\$" '^hostid=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' -- \
     "$X dns.rex"
 fi
