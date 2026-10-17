@@ -10,6 +10,7 @@ the test results and a link to the patches at the commit they describe.
 
 | Date | Update |
 |---|---|
+| 2026-10-17 | [Booleans are `.Boolean`, the class of RFE #880](2026-10-17/update.md) |
 | 2026-10-16 | [Errors that keep their information, strings that stay text](2026-10-16/update.md) |
 | 2026-10-15 | [The page's Rexx scripts under a debugger](2026-10-15/update.md) |
 | 2026-10-13 (4) | [The UNINIT of a `.js~extend` pair sees its variables](2026-10-13-4/update.md) |
