@@ -85,7 +85,7 @@ index 786af1f..e949832 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index b3dd55a..0d2828c 100644
+index de1adbc..b9176cf 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -227,7 +227,75 @@ off, or changes the strings.

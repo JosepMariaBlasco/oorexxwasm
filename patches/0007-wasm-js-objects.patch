@@ -60,7 +60,7 @@ copied as arrays and plain objects.
 - Booleans: a .Boolean goes to JavaScript as a boolean, and a JavaScript
   boolean comes back as .Boolean~true or .Boolean~false ("1" and "0" for
   Rexx).  .Boolean is the class proposed for the core in RFE #880:
-  wasm/web/boolean.cls is a verbatim copy of it (version 1), required by
+  wasm/web/boolean.cls is a verbatim copy of it (version 2), required by
   js.cls, to be removed when the core has it; wasm/tests/boolean-test.rex
   its tests.  .js~bool(x) is .Boolean~of(x), .js~true and .js~false are
   .Boolean~true and .Boolean~false.
@@ -131,7 +131,7 @@ copied as arrays and plain objects.
  wasm/extra-packages.cpp                |   66 +
  wasm/js-bridge.js                      |  241 ++++
  wasm/js-realm.js                       |  915 +++++++++++++
- wasm/tests/boolean-test.rex            |   80 ++
+ wasm/tests/boolean-test.rex            |   82 ++
  wasm/tests/js-booleans.rex             |   71 ++
  wasm/tests/js-errors.rex               |  158 +++
  wasm/tests/js-extend-gc.rex            |  111 ++
@@ -144,11 +144,11 @@ copied as arrays and plain objects.
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
  wasm/web-js.cpp                        | 1632 ++++++++++++++++++++++++
- wasm/web/boolean.cls                   |  157 +++
+ wasm/web/boolean.cls                   |  172 +++
  wasm/web/js.cls                        |  692 ++++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 ++++
- 24 files changed, 5437 insertions(+), 12 deletions(-)
+ 24 files changed, 5454 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -200,7 +200,7 @@ index 9324d0b..786af1f 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index d6f2caf..849f76e 100644
+index d6f2caf..8417c8c 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -239,6 +239,204 @@ from the test suite's directory:
@@ -259,7 +259,7 @@ index d6f2caf..849f76e 100644
 +  boolean comes back as `.Boolean~true` or `.Boolean~false`, which are "1"
 +  and "0" for Rexx.  `.Boolean` is the class proposed for the ooRexx core in
 +  RFE #880; until it is there, `web/boolean.cls` is a verbatim copy of it
-+  (version 1, sha256 65310b4c525c...; its tests: `tests/boolean-test.rex`),
++  (version 2, sha256 080fd7e21beb...; its tests: `tests/boolean-test.rex`),
 +  which js.cls requires.  `.js~bool(x)` is `.Boolean~of(x)` (x a Rexx
 +  logical value), `.js~true` and `.js~false` are `.Boolean~true` and
 +  `.Boolean~false`.
@@ -1759,10 +1759,10 @@ index 0000000..d6e904f
 +})();
 diff --git a/wasm/tests/boolean-test.rex b/wasm/tests/boolean-test.rex
 new file mode 100644
-index 0000000..21ca52f
+index 0000000..b0bfb2a
 --- /dev/null
 +++ b/wasm/tests/boolean-test.rex
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,82 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026      Rexx Language Association. All rights reserved.    */
@@ -1825,6 +1825,8 @@ index 0000000..21ca52f
 +call ok "of rejects 2", trapOf(2)
 +call ok "datatype O", datatype(t, "O") & datatype(f, "O")
 +call ok "select when", sel(f) == "f"
++call ok "Array makeString", .array~of(t, f, t)~makeString("L", " ") == "1 0 1"
++call ok "Array toString", .array~of(t, f)~toString(, ",") == "1,0"
 +say "all" pass "passed," fail "failed"
 +exit fail > 0
 +
@@ -2498,7 +2500,7 @@ index 0000000..c89f67e
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..a03f061 100755
+index e1c1cd8..264df91 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -200,6 +200,214 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
@@ -2618,7 +2620,7 @@ index e1c1cd8..a03f061 100755
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-errors.rex'"
 +# --- booleans: .Boolean (boolean.cls, a verbatim copy of the class proposed
 +# in RFE #880; its own tests) both ways across the bridge
-+check "JavaScript objects: .Boolean (boolean.cls, its tests)" '^all 20 passed, 0 failed$' -- \
++check "JavaScript objects: .Boolean (boolean.cls, its tests)" '^all 22 passed, 0 failed$' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/boolean-test.rex'"
 +check "JavaScript objects: booleans both ways (.Boolean)" '^22 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-booleans.rex'"
@@ -4763,10 +4765,10 @@ index 0000000..cfc1f46
 +}
 diff --git a/wasm/web/boolean.cls b/wasm/web/boolean.cls
 new file mode 100644
-index 0000000..37d7cbc
+index 0000000..73ecfc2
 --- /dev/null
 +++ b/wasm/web/boolean.cls
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,172 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026      Rexx Language Association. All rights reserved.    */
@@ -4809,7 +4811,14 @@ index 0000000..37d7cbc
 +/* Standalone version of the class proposed for the ooRexx core               */
 +/* (interpreter/RexxClasses/CoreClasses.orx). The name (.Boolean or           */
 +/* .Logical) is still open.                                                   */
++/*                                                                            */
++/* Version: 2                                                                 */
 +/*----------------------------------------------------------------------------*/
++
++-- Make the class visible everywhere, as a core class would be, without
++-- replacing an entry that is already there (a core .Boolean, or the copy
++-- another package loaded first).
++if \.environment~hasEntry("BOOLEAN") then .environment~setEntry("BOOLEAN", .Boolean)
 +
 +/** A logical value that can be recognized as such. There are two instances per
 +*   class, <code>~true</code> and <code>~false</code>; they behave as the Rexx
@@ -4859,6 +4868,14 @@ index 0000000..37d7cbc
 +
 +/** @return <code>"1"</code> or <code>"0"</code>, so that the object is a plain logical value for Rexx */
 +::method makeString unguarded
++  expose value
++  return value
++
++/** @return <code>"1"</code> or <code>"0"</code>: what an Array shows for the object in
++*   <code>makeString</code> and <code>toString</code>, which use the default name, not
++*   <code>STRING</code> (found by oorexxnet, 17/10/2026)
++*/
++::method defaultName unguarded
 +  expose value
 +  return value
 +

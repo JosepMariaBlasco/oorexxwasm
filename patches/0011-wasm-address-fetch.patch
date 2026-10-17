@@ -247,7 +247,7 @@ index 0000000..01451f3
 +
 +::requires "fetch.cls"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index f773698..354140d 100755
+index 556ff25..f45830f 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -412,6 +412,13 @@ check "a logic error ends the process with a non-zero status" '^Logic error: can
