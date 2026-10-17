@@ -1,6 +1,6 @@
 # ooRexx/WASM and JavaScript
 
-October 16, 2026
+October 17, 2026
 
 *Version 2. [Version 1](posted/2026-10-08/ooRexx-WASM-and-JavaScript.md) was posted to the ooRexx developers' list on October 8, 2026; [Changes since version 1](#changes-since-version-1) lists what differs.*
 
@@ -57,11 +57,13 @@ On an array or a typed array, `o[i]` and `o[i] = v` (the messages `[]` and `[]=`
 
 ## Values
 
-JavaScript strings, numbers, booleans (1/0) and bigints come back as Rexx strings; null as `.nil`, and undefined as `.js~undefined`, a single object, so `x == .js~undefined` tests for it. A property that does not exist reads as `.js~undefined`; `~js.hasProperty` tells the two apart. Rexx strings always go as strings, so "007" stays "007": `.js~num(x)`, `.js~bool(x)`, `.js~bigint(x)` and `.js~bytes(x)` (a Uint8Array) force a type, and `.js~true`, `.js~false` and `.js~undefined` are those values. `.nil` goes as null. An Array goes as an array and a Directory or StringTable as a plain object, both as copies; `.js~newArray(items...)` and `.js~newObject(directory)` make them in JavaScript instead, held by reference. `.js~newObject(name, value, ...)` makes a plain object from names and values, the names exactly as written: `.js~newObject("method", "POST", "cache", "no-store")`. Any other Rexx object goes by reference, as a `RexxProxy`: see [Rexx objects in JavaScript](#rexx-objects-in-javascript).
+JavaScript strings, numbers and bigints come back as Rexx strings, and booleans as `.Boolean~true` and `.Boolean~false` (see below); null as `.nil`, and undefined as `.js~undefined`, a single object, so `x == .js~undefined` tests for it. A property that does not exist reads as `.js~undefined`; `~js.hasProperty` tells the two apart. Rexx strings always go as strings, so "007" stays "007": `.js~num(x)`, `.js~bigint(x)` and `.js~bytes(x)` (a Uint8Array) force a type, and `.js~undefined` is that value. `.nil` goes as null. An Array goes as an array and a Directory or StringTable as a plain object, both as copies; `.js~newArray(items...)` and `.js~newObject(directory)` make them in JavaScript instead, held by reference. `.js~newObject(name, value, ...)` makes a plain object from names and values, the names exactly as written: `.js~newObject("method", "POST", "cache", "no-store")`. Any other Rexx object goes by reference, as a `RexxProxy`: see [Rexx objects in JavaScript](#rexx-objects-in-javascript).
+
+Booleans. Rexx has no boolean of its own: `.true` and `.false` are the strings "1" and "0", and JavaScript takes any string but "" as true, "0" too. A boolean is a `.Boolean`: `.Boolean~true` and `.Boolean~false` are "1" and "0" wherever Rexx uses a string (IF, operators, stems), and they go to JavaScript as `true` and `false`; JavaScript's booleans come back as them, so a boolean that goes through Rexx and back is still one. `.js~bool(x)` is `.Boolean~of(x)`, for a Rexx logical value (`.js~bool(a > b)`; anything but 1 or 0 is error 34.900), and `.js~true` and `.js~false` are `.Boolean~true` and `.Boolean~false`. `.Boolean` is the class proposed for the ooRexx core in [RFE #880](https://sourceforge.net/p/oorexx/feature-requests/880/), with JSON's and YAML's booleans as its subclasses; any instance of it or of a subclass goes as a boolean. Until the core has it, `js.cls` requires a verbatim copy of it, `boolean.cls`.
 
 Strings are text. A Rexx string goes to JavaScript read as UTF-8, and a JavaScript string comes to Rexx as UTF-8. A string that is not text is an error, not a guess: a Rexx string that is not valid UTF-8 (`'ff'x`) and a JavaScript string that is not well-formed (a lone surrogate, as when `"😀"` is cut in half) are SYNTAX 23.900, an invalid data string, naming the value ("argument 2 is not valid UTF-8 (byte 1 is 'FF'x)"); nothing is replaced by U+FFFD. It is not a JavaScript exception, so `additional` has only that message. Binary data goes as `.js~bytes(x)`, a Uint8Array, and comes back with `~js.byteString`.
 
-`.js~box(type, x)` forces a type with the type indicators of BSF4ooRexx's `box()`: `BOolean`, `BYte`, `Char`, `Double`, `Float`, `Int`, `Long`, `Object`, `SHort` and `STring`, and JavaScript's own `Number` and `BIgint`. Case does not matter, and an indicator may be shortened down to its capitals, so `.js~box("bo", 1)` is `.js~box("Boolean", 1)`. The whole-number types check Java's ranges (`.js~box("BYte", 300)` is an error), `Long` within the integers JavaScript holds exactly; `BIgint` takes any whole number. `.js~unbox(o)` gives back the Rexx value of a box, or of a JavaScript `Number`, `String`, `Boolean` or `BigInt` object.
+`.js~box(type, x)` forces a type with the type indicators of BSF4ooRexx's `box()`: `BOolean`, `BYte`, `Char`, `Double`, `Float`, `Int`, `Long`, `Object`, `SHort` and `STring`, and JavaScript's own `Number` and `BIgint`. Case does not matter, and an indicator may be shortened down to its capitals, so `.js~box("bo", 1)` is `.js~box("Boolean", 1)`, which is `.js~bool(1)`. The whole-number types check Java's ranges (`.js~box("BYte", 300)` is an error), `Long` within the integers JavaScript holds exactly; `BIgint` takes any whole number. `.js~unbox(o)` gives back the Rexx value of a box (of a `.Boolean`, "1" or "0"), or of a JavaScript `Number`, `String`, `Boolean` or `BigInt` object.
 
 ## Errors
 
@@ -248,6 +250,7 @@ Each of these has a way out, as in BSF4ooRexx:
 
 - **Case-insensitive names can pick the wrong property.** `.js~page~Event` finds `window.event`, the current event, before `window.Event`, the constructor. Use the exact name: `w~js.getStrict("Event")~new("input")`.
 - **Rexx's own methods win.** Those of Rexx's Object (`send`, `start`, `copy`, `run`, …) and the few the bridge leaves without `js.` (`at`, `put`, `new`, `makeArray`, `supplier`, `await`) are not passed on to JavaScript. Use the exact form for JavaScript's: `o~js.invokeStrict("send", x)`, and JavaScript's own `at` is `a~js.invokeStrict("at", 0)`.
+- **`.true` is a string.** `o~disabled = .false` sends "0", which JavaScript takes as true. Send `.Boolean~false` (or `.js~bool(cond)`).
 - **Binary strings are not text.** A Rexx string of bytes (an image, a file read with `charin`) is not UTF-8, and passing it as a string is an error: pass `.js~bytes(s)`, and come back with `~js.byteString`.
 - **Directory keys are upper case.** `d~method = "POST"` stores `METHOD`, which a JavaScript options object does not know: use `.js~newObject("method", "POST")`, or `d["method"] = "POST"`.
 
@@ -259,6 +262,7 @@ Each of these has a way out, as in BSF4ooRexx:
 - Names are looked up when the message arrives, so a property added later is found.
 - What a JavaScript exception threw is kept, in `condition("O")~additional[2]`, and comes back to JavaScript as the `cause` of the `RexxError` if Rexx does not trap it.
 - No string is changed on its way: what is not text is an error.
+- A JavaScript boolean that goes through Rexx and back is still a boolean.
 - A `.JSObject` keeps its JavaScript object alive while Rexx holds it, and no longer.
 
 ## Relation to BSF4ooRexx and OLEObject
@@ -281,7 +285,7 @@ Further replies on the list are very welcome.
 | --- | --- |
 | **Names.** The bridge's own methods start with `js.` (`js.typeOf`, `js.className`, `js.instanceOf`, `js.hasProperty`, `js.propertyNames`, `js.byteString`), as BSF4ooRexx's with `bsf.`; exact names with `js.getStrict`, `js.setStrict`, `js.invokeStrict` (was `invoke`); a function is called with JavaScript's `f~call(this, args...)`; `ooRexx.js`'s global is `ooRexx` (was `OoRexx`) | Messages, Pitfalls, Rexx from the page |
 | **Arrays.** Arrays and typed arrays count from 1 with `o[i]`, `~at(i)`, `~put(v, i)` and `DO WITH`; lists keep 0; JavaScript's `at` is `o~js.invokeStrict("at", i)` | Messages, Pitfalls |
-| **Values.** undefined comes back as `.js~undefined` (was `.nil`), and a missing property reads as it; `.js~box(type, x)` with BSF4ooRexx's type indicators, and `.js~unbox(o)`; `.js~newObject(name, value, ...)`, with exact names; a string that is not text (not UTF-8, a lone surrogate) is SYNTAX 23.900 (it was changed to U+FFFD) | Values, Pitfalls, Guarantees |
+| **Values.** undefined comes back as `.js~undefined` (was `.nil`), and a missing property reads as it; `.js~box(type, x)` with BSF4ooRexx's type indicators, and `.js~unbox(o)`; `.js~newObject(name, value, ...)`, with exact names; a string that is not text (not UTF-8, a lone surrogate) is SYNTAX 23.900 (it was changed to U+FFFD); booleans are `.Boolean` both ways (RFE #880; they came back as 1/0), and `.js~bool`, `.js~true`, `.js~false` give `.Boolean` | Values, Pitfalls, Guarantees |
 | **Errors.** Gathered in one section; a condition in Rexx called by JavaScript is a `RexxError` with the condition's fields (`condition`, `code`, `rc`, `errorText`, `program`, `line`, `traceback`); a JavaScript exception that goes through Rexx and back is its `cause`; `additional[3]` is a JavaScript exception's stack | Errors, Guarantees |
 | **Handlers.** Synchronous in the worker's realm and under Node, as `.net~handler` (a comparator for `sort` works), and may use the RexxAPI there; queued in the page and with option `queued`, `latest` or `max n` (new); released when JavaScript collects their function; `.js~eventLoop` is `.js~runEventLoop`, and the event queue is explained | Events, Waiting |
 | **Waiting.** Why JavaScript cannot wait for Rexx in the page, and what to do instead | Waiting |

@@ -796,7 +796,7 @@ index e949832..c16231d 100644
  };
  
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index e764f7c..ec1bf1a 100755
+index c898ece..6c0287f 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
 @@ -79,7 +79,7 @@ cp "$SRC/samples/rexxtry.rex" "$OUT/"
@@ -809,7 +809,7 @@ index e764f7c..ec1bf1a 100755
  done
  cp "$SRC/wasm/web/js.cls" "$OUT/"
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index e75964b..554421a 100755
+index aa24b52..93042c7 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
 @@ -73,7 +73,7 @@ done
@@ -1093,10 +1093,10 @@ index 0000000..92f276a
 +  address t "RETURN thread ok"
 +  return rc
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 549678e..5cb2e35 100755
+index a03f061..f773698 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -402,6 +402,10 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
+@@ -408,6 +408,10 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
  check "a logic error ends the process with a non-zero status" '^Logic error: cannot locate startup image' '^status=[1-9]' -- \
    "mkdir noimg && cp '$NB/rexx.js' '$NB/rexx.wasm' noimg/ && cd noimg && PATH=/usr/bin:/bin '$(command -v node)' rexx.js -e 'say 1'; echo status=\$?"
  
@@ -1108,7 +1108,7 @@ index 549678e..5cb2e35 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index f2c258f..b0e3e64 100755
+index df31a4b..2ea4ef7 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -96,6 +96,9 @@ CASES = [

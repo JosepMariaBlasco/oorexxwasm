@@ -35,7 +35,7 @@ qualify-node-cli.sh and web-api.py.  Not part of the posted RFE.
  create mode 100644 wasm/web/fetch.cls
 
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index ec1bf1a..9150635 100755
+index 6c0287f..9b81a72 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
 @@ -82,7 +82,7 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
@@ -44,16 +44,16 @@ index ec1bf1a..9150635 100755
  done
 -cp "$SRC/wasm/web/js.cls" "$OUT/"
 +cp "$SRC/wasm/web/js.cls" "$SRC/wasm/web/commandwords.cls" "$SRC/wasm/web/fetch.cls" "$OUT/"
+ cp "$SRC/wasm/web/boolean.cls" "$OUT/"          # .Boolean, for js.cls (RFE #880)
  
  launcher() {   # launcher NAME [rexx.js option]
-   cat > "$OUT/$1" <<SH
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index 554421a..86bad73 100755
+index 93042c7..0286547 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
-@@ -78,6 +78,8 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
- done
+@@ -79,6 +79,8 @@ done
  # JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
+ PRELOAD+=("--preload-file" "$SRC/wasm/web/boolean.cls@/usr/lib/ooRexx/boolean.cls")   # .Boolean, for js.cls (RFE #880)
  PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls"
 +          "--preload-file" "$SRC/wasm/web/commandwords.cls@/usr/lib/ooRexx/commandwords.cls"
 +          "--preload-file" "$SRC/wasm/web/fetch.cls@/usr/lib/ooRexx/fetch.cls"
@@ -247,10 +247,10 @@ index 0000000..01451f3
 +
 +::requires "fetch.cls"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 5cb2e35..013c448 100755
+index f773698..354140d 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -406,6 +406,13 @@ check "a logic error ends the process with a non-zero status" '^Logic error: can
+@@ -412,6 +412,13 @@ check "a logic error ends the process with a non-zero status" '^Logic error: can
  check "command handlers in Rexx (cmdhandler.cls)" '^[0-9]+ passed, 0 failed$' '!^FAIL ' -- \
    "$X '$(cd "$(dirname "$0")" && pwd)/cmdhandler.rex'"
  
@@ -265,7 +265,7 @@ index 5cb2e35..013c448 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index b0e3e64..6a7dbf3 100755
+index 2ea4ef7..88e9f48 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -67,6 +67,9 @@ class H(SimpleHTTPRequestHandler):

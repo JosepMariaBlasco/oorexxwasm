@@ -57,6 +57,13 @@ copied as arrays and plain objects.
   string well-formed (no lone surrogate), else SYNTAX 23.900, an invalid
   data string (nothing is replaced by U+FFFD); binary data goes as
   .js~bytes(x), a Uint8Array.
+- Booleans: a .Boolean goes to JavaScript as a boolean, and a JavaScript
+  boolean comes back as .Boolean~true or .Boolean~false ("1" and "0" for
+  Rexx).  .Boolean is the class proposed for the core in RFE #880:
+  wasm/web/boolean.cls is a verbatim copy of it (version 1), required by
+  js.cls, to be removed when the core has it; wasm/tests/boolean-test.rex
+  its tests.  .js~bool(x) is .Boolean~of(x), .js~true and .js~false are
+  .Boolean~true and .Boolean~false.
 - wasm/web-js.cpp: the package "js"; .JSObject's methods are native (errors
   point at the caller's line).  Each operation goes synchronously to the
   main runtime thread (emscripten_proxy_sync_with_ctx), which may finish it
@@ -118,30 +125,35 @@ copied as arrays and plain objects.
   iteration, options latest and max, release).  Documented in wasm/README.md.
 ---
  interpreter/package/PackageManager.cpp |   16 +
- wasm/README.md                         |  193 +++
- wasm/build-node.sh                     |   17 +-
- wasm/build-web.sh                      |   17 +-
+ wasm/README.md                         |  200 +++
+ wasm/build-node.sh                     |   18 +-
+ wasm/build-web.sh                      |   18 +-
  wasm/extra-packages.cpp                |   66 +
  wasm/js-bridge.js                      |  241 ++++
- wasm/js-realm.js                       |  915 ++++++++++++++
+ wasm/js-realm.js                       |  915 +++++++++++++
+ wasm/tests/boolean-test.rex            |   80 ++
+ wasm/tests/js-booleans.rex             |   71 ++
  wasm/tests/js-errors.rex               |  158 +++
  wasm/tests/js-extend-gc.rex            |  111 ++
  wasm/tests/js-extend.rex               |  157 +++
  wasm/tests/js-proxy.rex                |  127 ++
- wasm/tests/qualify-node-cli.sh         |  202 +++
+ wasm/tests/qualify-node-cli.sh         |  208 +++
  wasm/tests/web-api.html                |    4 +-
- wasm/tests/web-api.py                  |  219 +++-
+ wasm/tests/web-api.py                  |  222 +++-
  wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 1613 ++++++++++++++++++++++++
- wasm/web/js.cls                        |  686 ++++++++++
+ wasm/web-js.cpp                        | 1632 ++++++++++++++++++++++++
+ wasm/web/boolean.cls                   |  157 +++
+ wasm/web/js.cls                        |  692 ++++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 ++++
- 21 files changed, 5086 insertions(+), 12 deletions(-)
+ 24 files changed, 5437 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
+ create mode 100644 wasm/tests/boolean-test.rex
+ create mode 100644 wasm/tests/js-booleans.rex
  create mode 100644 wasm/tests/js-errors.rex
  create mode 100644 wasm/tests/js-extend-gc.rex
  create mode 100644 wasm/tests/js-extend.rex
@@ -150,6 +162,7 @@ copied as arrays and plain objects.
  create mode 100644 wasm/tests/web-scripts.html
  create mode 100644 wasm/tests/web-scripts.rex
  create mode 100644 wasm/web-js.cpp
+ create mode 100644 wasm/web/boolean.cls
  create mode 100644 wasm/web/js.cls
 
 diff --git a/interpreter/package/PackageManager.cpp b/interpreter/package/PackageManager.cpp
@@ -187,10 +200,10 @@ index 9324d0b..786af1f 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index d6f2caf..2c97a6f 100644
+index d6f2caf..849f76e 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -239,6 +239,197 @@ from the test suite's directory:
+@@ -239,6 +239,204 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -242,9 +255,16 @@ index d6f2caf..2c97a6f 100644
 +  (as its `o[i]`), another iterable's 1..n and values, other objects' own
 +  properties), `o~js.byteString`.  Rexx's own Object methods (send, start, copy, ...)
 +  are not passed on: `o~js.invokeStrict("send", x)`.
-+* Rexx strings always go as strings; `.js~num(x)`, `.js~bool(x)`,
-+  `.js~true`, `.js~false`, `.js~bigint(x)`, `.js~bytes(x)` (a Uint8Array),
-+  `.js~undefined` force a type; so does `.js~box(type, x)` with the type
++* Booleans: a `.Boolean` goes to JavaScript as a boolean, and a JavaScript
++  boolean comes back as `.Boolean~true` or `.Boolean~false`, which are "1"
++  and "0" for Rexx.  `.Boolean` is the class proposed for the ooRexx core in
++  RFE #880; until it is there, `web/boolean.cls` is a verbatim copy of it
++  (version 1, sha256 65310b4c525c...; its tests: `tests/boolean-test.rex`),
++  which js.cls requires.  `.js~bool(x)` is `.Boolean~of(x)` (x a Rexx
++  logical value), `.js~true` and `.js~false` are `.Boolean~true` and
++  `.Boolean~false`.
++* Rexx strings always go as strings; `.js~num(x)`, `.js~bigint(x)`,
++  `.js~bytes(x)` (a Uint8Array), `.js~undefined` force a type; so does `.js~box(type, x)` with the type
 +  indicators of BSF4ooRexx's `box()` (`BOolean`, `BYte`, `Char`, `Double`,
 +  `Float`, `Int`, `Long`, `Object`, `SHort`, `STring`, and JavaScript's
 +  `Number` and `BIgint`; caseless, shortened down to their capitals: `"bo"`
@@ -388,7 +408,7 @@ index d6f2caf..2c97a6f 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -247,6 +438,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -247,6 +445,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).
@@ -398,7 +418,7 @@ index d6f2caf..2c97a6f 100644
    CALL / internal function calls / method calls): Node about 7,100 / 5,400 /
    4,000; browser workers about 900 / 700 / 500 in Chromium, 1,300 / 900 / 700
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index 47b554f..3f6ba84 100755
+index 47b554f..c7ac22f 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
 @@ -40,7 +40,8 @@
@@ -434,16 +454,17 @@ index 47b554f..3f6ba84 100755
  cp "$BUILD/bin/rexx.img" "$OUT/"
  # rexxtry, as native installs have it next to rexx (rexx rexxtry)
  cp "$SRC/samples/rexxtry.rex" "$OUT/"
-@@ -71,6 +81,7 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+@@ -71,6 +81,8 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
             csvStream/csvStream.cls dateparser/dateparser.cls; do
    cp "$SRC/extensions/$cls" "$OUT/"
  done
 +cp "$SRC/wasm/web/js.cls" "$OUT/"
++cp "$SRC/wasm/web/boolean.cls" "$OUT/"          # .Boolean, for js.cls (RFE #880)
  
  launcher() {   # launcher NAME [rexx.js option]
    cat > "$OUT/$1" <<SH
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index 585e5ca..71c0919 100755
+index 585e5ca..ead2dd7 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
 @@ -47,7 +47,8 @@
@@ -469,16 +490,17 @@ index 585e5ca..71c0919 100755
  
  # the portable extension classes (not ncurses: no native library here)
  PRELOAD=()
-@@ -65,6 +72,8 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+@@ -65,6 +72,9 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
             csvStream/csvStream.cls dateparser/dateparser.cls; do
    PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
  done
 +# the JavaScript bridge's classes
++PRELOAD+=("--preload-file" "$SRC/wasm/web/boolean.cls@/usr/lib/ooRexx/boolean.cls")   # .Boolean, for js.cls (RFE #880)
 +PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls")
  
  # The most the memory may grow to.  Every run creates a shared
  # WebAssembly.Memory, and WebKit charges its declared maximum, not its size,
-@@ -86,13 +95,13 @@ wasm,websocket,mainScriptUrlOrBlob]"
+@@ -86,13 +96,13 @@ wasm,websocket,mainScriptUrlOrBlob]"
  cmd=$(cat "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
  cmd=$(sed -E 's/--preload-file [^ ]+//g; s/-sENVIRONMENT=[^ ]+//' <<<"$cmd")
  cmd=${cmd//-o bin\/rexx.js/-o $OUT\/rexx.js}
@@ -816,7 +838,7 @@ index 0000000..ea8b80b
 +})();
 diff --git a/wasm/js-realm.js b/wasm/js-realm.js
 new file mode 100644
-index 0000000..2abbe57
+index 0000000..d6e904f
 --- /dev/null
 +++ b/wasm/js-realm.js
 @@ -0,0 +1,915 @@
@@ -1139,7 +1161,7 @@ index 0000000..2abbe57
 +    switch (typeof v) {
 +      case 'string': w.rec('S', checkText(v)); return;
 +      case 'number': w.rec('S', number(v)); return;
-+      case 'boolean': w.rec('S', v ? '1' : '0'); return;
++      case 'boolean': w.rec('L', v ? '1' : '0'); return;           // .Boolean~true, ~false
 +      case 'bigint': w.rec('S', v.toString()); return;
 +      case 'undefined': w.rec('U', ''); return;
 +      default:
@@ -1735,6 +1757,169 @@ index 0000000..2abbe57
 +  return { realm: REALM, handle: handleRequest, release, close, errorText, Reader };
 +  };
 +})();
+diff --git a/wasm/tests/boolean-test.rex b/wasm/tests/boolean-test.rex
+new file mode 100644
+index 0000000..21ca52f
+--- /dev/null
++++ b/wasm/tests/boolean-test.rex
+@@ -0,0 +1,80 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026      Rexx Language Association. All rights reserved.    */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*----------------------------------------------------------------------------*/
++/* boolean-test.rex: tests for boolean.cls. Exit code 0 if all pass.          */
++/*----------------------------------------------------------------------------*/
++pass = 0; fail = 0
++t = .Boolean~true; f = .Boolean~false
++call ok "isA", t~isA(.Boolean) & f~isA(.Boolean) & \"1"~isA(.Boolean)
++call ok "same instance", .Boolean~true == .Boolean~true & (.Boolean~true~identityHash == t~identityHash)
++call ok "IF true", iif(t)
++call ok "IF false", \iif(f)
++call ok "NOT", (\t) == 0 & (\f) == 1 & t~"\" == 0 & f~"\" == 1
++call ok "AND/OR/XOR", (t & f) == 0 & (t | f) == 1 & (t && t) == 0
++call ok "say/concat", t"" == "1" & ("x" || f) == "x0" & t~string == "1"
++call ok "= with strings", t = 1 & f = 0 & t = .true & f \= .true & t <> f
++call ok "== with strings", t == "1" & f \== "1"
++call ok "= across classes", t = .Json2~true & f = .Json2~false
++call ok "string methods", t~length == 1 & f~c2x == "30"
++call ok "of", .Boolean~of(3 > 2) == .Boolean~true & .Boolean~of(0)~identityHash == f~identityHash
++call ok "of subclass", .Json2~of(1)~isA(.Json2) & .Json2~true~isA(.Boolean)
++call ok "subclass has own instances", .Json2~true~identityHash \== t~identityHash
++call ok "subclass serializer", .Json2~true~makeJSON == "true" & .Json2~false~makeJSON == "false"
++tb = .table~new; tb[t] = "yes"
++call ok "table key", tb[t] == "yes" & tb~hasIndex(.Boolean~true)
++call ok "new is private", trapNew()
++call ok "of rejects 2", trapOf(2)
++call ok "datatype O", datatype(t, "O") & datatype(f, "O")
++call ok "select when", sel(f) == "f"
++say "all" pass "passed," fail "failed"
++exit fail > 0
++
++ok: procedure expose pass fail
++  parse arg name, cond
++  if cond == 1 then pass = pass + 1; else do; fail = fail + 1; say "FAIL:" name; end
++  return
++iif: if arg(1) then return 1; return 0
++sel: select; when arg(1) then return "t"; otherwise return "f"; end
++trapNew: signal on syntax name tn; x = .Boolean~new(1); return 0
++tn: return 1
++trapOf: signal on syntax name to; x = .Boolean~of(arg(1)); return 0
++to: return condition("O")~code == 34.900
++
++::requires "boolean.cls"
++::class Json2 subclass Boolean
++::method makeJSON unguarded
++  if self~value then return "true"; return "false"
+diff --git a/wasm/tests/js-booleans.rex b/wasm/tests/js-booleans.rex
+new file mode 100644
+index 0000000..90dc7a2
+--- /dev/null
++++ b/wasm/tests/js-booleans.rex
+@@ -0,0 +1,71 @@
++/* js-booleans.rex: booleans across the JavaScript bridge (.Boolean,        */
++/* boolean.cls), in the realm where Rexx runs: the worker's in the browser, */
++/* Node's under Node.  A .Boolean goes to JavaScript as a boolean, and a    */
++/* JavaScript boolean comes to Rexx as .Boolean~true or .Boolean~false.     */
++/* Prints one line per check; exits 1 if any fails.                         */
++.local~ok = 0; .local~bad = 0
++.local~fn = .js~Function~new("args", "body", "return new Function(...args.split(','), body)")
++show = F("x", "return typeof x + ' ' + x")
++id = F("x", "return x")
++
++-- Rexx to JavaScript
++call check ".Boolean~true is true", show~call(.nil, .Boolean~true) == "boolean true"
++call check ".Boolean~false is false", show~call(.nil, .Boolean~false) == "boolean false"
++call check ".js~true, .js~false are .Boolean's", .js~true == .Boolean~true & .js~true~isA(.Boolean) & -
++  .js~false~isA(.Boolean) & .js~false~value == 0
++call check ".js~bool(a > b) is .Boolean~of", .js~bool(3 > 2) == .Boolean~true & show~call(.nil, .js~bool(2 > 3)) == "boolean false"
++call check ".js~box('BOolean', x) too", .js~box("bo", 1)~isA(.Boolean) & show~call(.nil, .js~box("Boolean", 0)) == "boolean false"
++signal on syntax name s1
++x = .js~bool("true")
++s1:
++call check ".js~bool takes a Rexx logical value only (34.900)", condition("O")~code == "34.900"
++call check ".true is still the string 1", show~call(.nil, .true) == "string 1"
++call check "a subclass of .Boolean is a boolean too", show~call(.nil, .MyBool~false) == "boolean false"
++d = .directory~new; d["on"] = .Boolean~true; d["off"] = .Boolean~false
++call check "inside a Directory, as JSON", F("o", "return JSON.stringify(o)")~call(.nil, d) == '{"off":false,"on":true}' | -
++  F("o", "return JSON.stringify(o)")~call(.nil, d) == '{"on":true,"off":false}'
++call check "inside an Array", F("a", "return a.map((x) => typeof x).join()")~call(.nil, .array~of(.js~true, 1)) == "boolean,string"
++
++-- JavaScript to Rexx
++t = F("", "return true")~call(.nil); f = F("", "return false")~call(.nil)
++call check "true comes as .Boolean~true", t~isA(.Boolean) & t == .Boolean~true & t~class == .Boolean
++call check "false comes as .Boolean~false", f~isA(.Boolean) & f~value == 0
++call check "the very instances", .Boolean~true~identityHash == t~identityHash
++ok = 0; if t then ok = 1; if f then ok = 0
++call check "IF takes them", ok == 1
++call check "they are 1 and 0 for Rexx", t == 1 & f = 0 & t + f == 1 & \f & (t & \f) & datatype(t, "O")
++s.t = "yes"; s.1 = "one"
++call check "as a stem tail, 1", s.t == "one"
++call check "round trip: a JavaScript boolean stays one", show~call(.nil, id~call(.nil, .js~false)) == "boolean false"
++a = F("", "return [true, false, 1]")~call(.nil)~makeArray
++call check "in an array made a Rexx Array", a[1]~isA(.Boolean) & a[2]~isA(.Boolean) & \a[3]~isA(.Boolean)
++o = .js~newObject("x", 1)
++call check "~js.hasProperty gives one", o~js.hasProperty("x")~isA(.Boolean) & o~js.hasProperty("x") & \o~js.hasProperty("y")
++call check "arguments of a call of Rexx", F("o", "return o.kind(true, false, 1)")~call(.nil, .Thing~new) == "Boolean Boolean String"
++call check ".js~unbox(.Boolean) is its value, a string", .js~unbox(.Boolean~true) == 1 & .js~unbox(.Boolean~true)~isA(.String)
++call check ".js~unbox(new Boolean(false)) is 0", .js~unbox(F("", "return new Boolean(false)")~call(.nil)) == "0"
++
++say
++say .ok "passed," .bad "failed"
++exit .bad > 0
++
++F: procedure                        -- F(params, body): a JavaScript function
++  return .fn~call(.nil, arg(1), arg(2))
++
++check: procedure
++  parse arg what, ok
++  if ok == 1 then do; .local~ok += 1; say "ok  " what; end
++  else do; .local~bad += 1; say "FAIL" what; end
++  return
++
++::class MyBool subclass Boolean
++
++::class Thing
++::method kind
++  r = ""
++  do a over arg(1, "A")
++    r = r a~class~id
++  end
++  return r~strip
++
++::requires "js.cls"
 diff --git a/wasm/tests/js-errors.rex b/wasm/tests/js-errors.rex
 new file mode 100644
 index 0000000..5153f1f
@@ -2313,10 +2498,10 @@ index 0000000..c89f67e
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..549678e 100755
+index e1c1cd8..a03f061 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -200,6 +200,208 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
+@@ -200,6 +200,214 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
  check "name resolution (host resolver)" '^localhost=1 127\.0\.0\.1$' '^invalid=0$' '^reverse=1 ' "^hostname=$(hostname)\$" '^hostid=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' -- \
    "$X dns.rex"
  
@@ -2409,7 +2594,7 @@ index e1c1cd8..549678e 100755
 +tf = .js~eval("(...v) => v.map((x) => typeof x).join(' ')")
 +say "box:" tf~call(.nil, .js~box("bo", 1), .js~box("Int", 7), .js~box("BIG", "123456789012345678901"), -
 +  .js~box("st", 5), .js~box("n", "1.5"), .js~box("Ch", "z"), .js~box("o", .nil), 5)
-+say "unbox:" .js~unbox(.js~box("BOOLEAN", "true")) .js~unbox(.js~box("sh", -5)) .js~unbox(.js~Number~new(3)) .js~unbox("plain")
++say "unbox:" .js~unbox(.js~box("BOOLEAN", .true)) .js~unbox(.js~box("sh", -5)) .js~unbox(.js~Number~new(3)) .js~unbox("plain")
 +signal on syntax name b1; x = .js~box("BYTE", 300)
 +b1: say "byte 300:" (condition("O")~message~pos("cannot be a BYte") > 0)
 +signal on syntax name b2; x = .js~box("B", 1)
@@ -2431,6 +2616,12 @@ index e1c1cd8..549678e 100755
 +# (no U+FFFD: a string that is not UTF-8, or not well-formed, is an error)
 +check "JavaScript objects: errors both ways, and text" '^36 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-errors.rex'"
++# --- booleans: .Boolean (boolean.cls, a verbatim copy of the class proposed
++# in RFE #880; its own tests) both ways across the bridge
++check "JavaScript objects: .Boolean (boolean.cls, its tests)" '^all 20 passed, 0 failed$' -- \
++  "$X '$(cd "$(dirname "$0")" && pwd)/boolean-test.rex'"
++check "JavaScript objects: booleans both ways (.Boolean)" '^22 passed, 0 failed$' '!^FAIL ' -- \
++  "$X '$(cd "$(dirname "$0")" && pwd)/js-booleans.rex'"
 +cat > "$T/jsgc.rex" <<'EOF'
 +f = .js~Function~new("o", "return 1")
 +do i = 1 to 300; x = f~call(.nil, .Gone~new); end
@@ -2548,7 +2739,7 @@ index d544388..b13d517 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..6fa9a4a 100755
+index 3940711..b62d283 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -49,7 +49,10 @@ if len(sys.argv) != 2:
@@ -2563,7 +2754,7 @@ index 3940711..6fa9a4a 100755
  srv = subprocess.Popen([sys.executable, "-c", f"""
  import os, sys
  from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
-@@ -136,6 +139,167 @@ CASES = [
+@@ -136,6 +139,170 @@ CASES = [
                         '::options trace r', {},
       lambda r: r["out"].count("  worker") == 12 and "total 4\n" in r["out"] and "*-*" in r["err"]
                 and r["err"] == r["trace"] and r["errmsg"] == ""),
@@ -2647,6 +2838,9 @@ index 3940711..6fa9a4a 100755
 +  # errors both ways and text, in the worker's realm: the portable test
 +  ("js errors", open(f"{SRC}/wasm/tests/js-errors.rex").read(), {"js": {"worker": True}},
 +     lambda r: "36 passed, 0 failed" in r["out"] and r["rc"] == 0),
++  # booleans both ways (.Boolean), in the worker's realm: the portable test
++  ("js booleans", open(f"{SRC}/wasm/tests/js-booleans.rex").read(), {"js": {"worker": True}},
++     lambda r: "22 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # in the page: its string for the DOM; a call is queued and gives a Promise:
 +  # run by a thread waiting for JavaScript (here, the one in ~await) or by
 +  # the one taking events; a condition rejects it with a RexxError
@@ -2731,7 +2925,7 @@ index 3940711..6fa9a4a 100755
  ]
  
  fails = 0; ran = 0
-@@ -157,6 +321,59 @@ with sync_playwright() as p:
+@@ -157,6 +324,59 @@ with sync_playwright() as p:
          except Exception: ok = False
          fails += not ok; ran += 1
          print(("ok  " if ok else "FAIL"), f"{name:20}", json.dumps(r, ensure_ascii=False)[:300] if not ok or os.environ.get("SHOW") else f"{r.get('ms')} ms")
@@ -2931,10 +3125,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..e62ab1f
+index 0000000..cfc1f46
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,1613 @@
+@@ -0,0 +1,1632 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -2984,6 +3178,7 @@ index 0000000..e62ab1f
 + * Values, both ways:
 + *   S string (UTF-8: a value must be valid UTF-8 to JavaScript, and a
 + *     well-formed string back; js-realm.js checks both: D, below)
++ *   L "1"/"0"           (back) a boolean: .Boolean~true, .Boolean~false
 + *   N null (.nil)    U undefined (.js~undefined; to
 + *   JavaScript, also an omitted argument)
 + *   O "realm<tab>id"  (to JavaScript) / "realm<tab>id<tab>display" (back)
@@ -3309,6 +3504,9 @@ index 0000000..e62ab1f
 +static RexxObjectPtr jsTypedClass = NULLOBJECT;     // .JSTyped: .js~num(x) and friends
 +static RexxObjectPtr jsUndefined = NULLOBJECT;      // .js~undefined, the one object
 +static RexxObjectPtr jsHandlerClass = NULLOBJECT;   // .JSHandler: .js~handler(obj, msg)
++static RexxObjectPtr jsBooleanClass = NULLOBJECT;   // .Boolean (boolean.cls, RFE #880)
++static RexxObjectPtr jsTrue = NULLOBJECT;           // .Boolean~true, .Boolean~false
++static RexxObjectPtr jsFalse = NULLOBJECT;
 +static RexxObjectPtr jsEventClass = NULLOBJECT;     // .JSEvent: what .js~nextEvent gives
 +
 +// ---- events -------------------------------------------------------------------
@@ -3580,6 +3778,9 @@ index 0000000..e62ab1f
 +    {
 +        case 'S': return c->String(r.data.data(), r.data.size());
 +        case 'U': return jsUndefined != NULLOBJECT ? jsUndefined : c->Nil();
++        case 'L':                                   // a boolean: .Boolean~true or ~false
++            if (jsTrue == NULLOBJECT) return c->String(r.data.c_str());
++            return r.data == "1" ? jsTrue : jsFalse;
 +        case 'O':
 +        {
 +            size_t t1 = r.data.find('\t'), t2 = r.data.find('\t', t1 + 1);
@@ -3628,6 +3829,11 @@ index 0000000..e62ab1f
 +    if (isA(c, v, jsObjectClass))
 +    {
 +        putRec(out, 'O', c->ObjectToStringValue(c->SendMessage0(v, "JSREF")));
++        return;
++    }
++    if (isA(c, v, jsBooleanClass))                         // a .Boolean (any subclass): a boolean
++    {
++        putRec(out, 'B', c->ObjectToStringValue(c->SendMessage0(v, "VALUE")));
 +        return;
 +    }
 +    if (isA(c, v, jsHandlerClass))
@@ -4122,10 +4328,17 @@ index 0000000..e62ab1f
 +
 +// ---- routines for js.cls ------------------------------------------------------------
 +
-+// JsSetup(.JSObject, .JSTyped, .JSHandler, .JSEvent, .js~undefined)
-+RexxRoutine5(int, JsSetup, RexxObjectPtr, objectClass, RexxObjectPtr, typedClass,
-+             RexxObjectPtr, handlerClass, RexxObjectPtr, eventClass, RexxObjectPtr, undefinedValue)
++// JsSetup(.JSObject, .JSTyped, .JSHandler, .JSEvent, .js~undefined, .Boolean)
++RexxRoutine6(int, JsSetup, RexxObjectPtr, objectClass, RexxObjectPtr, typedClass,
++             RexxObjectPtr, handlerClass, RexxObjectPtr, eventClass, RexxObjectPtr, undefinedValue,
++             RexxObjectPtr, booleanClass)
 +{
++    if (jsBooleanClass == NULLOBJECT)
++    {
++        jsBooleanClass = context->RequestGlobalReference(booleanClass);
++        jsTrue = context->RequestGlobalReference(context->SendMessage0(booleanClass, "TRUE"));
++        jsFalse = context->RequestGlobalReference(context->SendMessage0(booleanClass, "FALSE"));
++    }
 +    jsInstance = context->threadContext->instance;
 +    if (jsUndefined == NULLOBJECT) jsUndefined = context->RequestGlobalReference(undefinedValue);
 +    if (jsObjectClass == NULLOBJECT) jsObjectClass = context->RequestGlobalReference(objectClass);
@@ -4548,12 +4761,175 @@ index 0000000..e62ab1f
 +{
 +    return &jsPackage;
 +}
+diff --git a/wasm/web/boolean.cls b/wasm/web/boolean.cls
+new file mode 100644
+index 0000000..37d7cbc
+--- /dev/null
++++ b/wasm/web/boolean.cls
+@@ -0,0 +1,157 @@
++/*----------------------------------------------------------------------------*/
++/*                                                                            */
++/* Copyright (c) 2026      Rexx Language Association. All rights reserved.    */
++/*                                                                            */
++/* This program and the accompanying materials are made available under       */
++/* the terms of the Common Public License v1.0 which accompanies this         */
++/* distribution. A copy is also available at the following address:           */
++/* https://www.oorexx.org/license.html                                        */
++/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
++/*----------------------------------------------------------------------------*/
++/*----------------------------------------------------------------------------*/
++/* boolean.cls: a logical value that knows it is one.                         */
++/*                                                                            */
++/* Standalone version of the class proposed for the ooRexx core               */
++/* (interpreter/RexxClasses/CoreClasses.orx). The name (.Boolean or           */
++/* .Logical) is still open.                                                   */
++/*----------------------------------------------------------------------------*/
++
++/** A logical value that can be recognized as such. There are two instances per
++*   class, <code>~true</code> and <code>~false</code>; they behave as the Rexx
++*   strings <code>"1"</code> and <code>"0"</code> wherever a string is used
++*   (IF, WHEN, operators, string methods, SAY), and <code>isA(.Boolean)</code>
++*   tells them apart from plain strings. A subclass gets its own two instances.
++*/
++::class "Boolean" public inherit Comparable
++
++/** The instance for <code>.true</code>. */
++::attribute true  get class unguarded
++
++/** The instance for <code>.false</code>. */
++::attribute false get class unguarded
++
++/** Only the class itself creates instances. */
++::method new class private
++  forward class (super)
++
++/** Creates the two instances of this class (or subclass). */
++::method activate class
++  expose true false
++  true  = self~new(.true)
++  false = self~new(.false)
++
++/** Returns the instance for a logical value: <code>.Boolean~of(a > b)</code>.
++*   @param value a Rexx logical value (<code>0</code> or <code>1</code>), or a Boolean
++*   @return <code>~true</code> or <code>~false</code> of the receiving class
++*/
++::method of class unguarded
++  use strict arg value
++  value = value~request("string")
++  if value == .nil | \datatype(value, "O") then
++    raise syntax 34.900 array ("Logical value must be 0 or 1; found" value)
++  if value then return self~true
++  return self~false
++
++/** Stores the logical value. */
++::method init
++  expose value
++  use strict arg value
++
++/** @return the Rexx logical value, <code>"1"</code> or <code>"0"</code> */
++::method value unguarded
++  expose value
++  return value
++
++/** @return <code>"1"</code> or <code>"0"</code>, so that the object is a plain logical value for Rexx */
++::method makeString unguarded
++  expose value
++  return value
++
++/** @return <code>"1"</code> or <code>"0"</code> (SAY, string concatenation of the object itself) */
++::method string unguarded
++  expose value
++  return value
++
++/** Logical NOT. Defined here, not left to UNKNOWN: in ooRexx up to r13271 at
++*   least, the message "\" sent to .true or .false (integer-backed strings)
++*   returns the value itself, not its negation (bug #2117: RexxInteger::notOp
++*   lacks the "!"; the prefix operator is not affected). Prefix NOT on the
++*   value is right.
++*/
++::method "\" unguarded
++  expose value
++  return \value
++
++/** Any other message goes to the string value (operators, string methods). */
++::method unknown unguarded
++  expose value
++  use arg messageName, arguments
++  forward to (value) message (messageName) arguments (arguments)
++
++/** The logical value's hash, consistent with <code>==</code>. */
++::method hashCode unguarded
++  expose value
++  return value~hashCode
++
++/** Equal: same logical value (another Boolean of any class, or a string). */
++::method "=" unguarded
++  use strict arg other
++  return self~compareTo(other) = 0
++
++::method "\=" unguarded
++  use strict arg other
++  return self~compareTo(other) \= 0
++
++::method "<>" unguarded
++  forward message ("\=")
++
++::method "><" unguarded
++  forward message ("\=")
++
++/** Strictly equal: the same logical value, compared as strings. */
++::method "==" unguarded
++  expose value
++  use strict arg other
++  return value == other~request("string")
++
++::method "\==" unguarded
++  expose value
++  use strict arg other
++  return value \== other~request("string")
++
++/** For Comparable: -1, 0 or 1 comparing the logical values. */
++::method compareTo unguarded
++  expose value
++  use strict arg other
++  otherValue = other~request("string")
++  if otherValue == .nil then
++    raise syntax 88.900 array ("Argument ""other"" ["other"] has no STRING method")
++  if value < otherValue then return -1
++  if value = otherValue then return  0
++  return 1
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
 new file mode 100644
-index 0000000..5f9adc6
+index 0000000..e574ee3
 --- /dev/null
 +++ b/wasm/web/js.cls
-@@ -0,0 +1,686 @@
+@@ -0,0 +1,692 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -4641,11 +5017,15 @@ index 0000000..5f9adc6
 + * Methods of Rexx's Object (send, start, copy, run, request, ...) and at/put
 + * are not passed on: use o~js.invokeStrict("send", x).
 + *
-+ * Values: JavaScript strings, numbers, booleans (1/0) and bigints come back as
-+ * Rexx strings, null as .nil and undefined as .js~undefined (one object, so
++ * Values: JavaScript strings, numbers and bigints come back as Rexx strings,
++ * booleans as .Boolean~true and .Boolean~false (boolean.cls: "1" and "0" for
++ * Rexx, the class proposed for the core in RFE #880), null as .nil and
++ * undefined as .js~undefined (one object, so
 + * x == .js~undefined; a property that does not exist gives it, and
 + * o~js.hasProperty("name") tells the two apart).  Rexx strings go as strings,
-+ * always (also "42"); .js~num(x), .js~bool(x), .js~true, .js~false,
++ * always (also "42"), and a .Boolean as a boolean; .js~bool(x) is
++ * .Boolean~of(x) (x a Rexx logical value), .js~true and .js~false are
++ * .Boolean~true and .Boolean~false; .js~num(x),
 + * .js~bigint(x), .js~bytes(x) (a Uint8Array), .js~undefined force a type, and
 + * so does .js~box(type, x) with BSF4ooRexx's type indicators (BOolean, BYte,
 + * Char, Double, Float, Int, Long, Object, SHort, STring; also Number, BIgint;
@@ -4765,10 +5145,13 @@ index 0000000..5f9adc6
 + * the session made before (later code sees earlier definitions, as the
 + * scripts of a page share their globals).
 + */
-+call JsSetup .JSObject, .JSTyped, .JSHandler, .JSEvent, .JSTyped~undefined
++call JsSetup .JSObject, .JSTyped, .JSHandler, .JSEvent, .JSTyped~undefined, .Boolean
 +.environment~js = .JSGlobal~new(JsDefaultRealm(), 0, "global")
 +
 +::requires "js" LIBRARY
++-- .Boolean: a verbatim copy of the class proposed for the core in RFE #880
++-- (to be removed when the core has it)
++::requires "boolean.cls"
 +
 +/** A JavaScript object (or function, array, Promise, symbol) of a realm. */
 +::class JSObject public
@@ -4933,13 +5316,13 @@ index 0000000..5f9adc6
 +::method num unguarded              -- force a JavaScript number
 +  use strict arg x
 +  return .JSTyped~new("F", x)
-+::method bool unguarded             -- force a boolean (1/0, true/false)
++::method bool unguarded             -- a boolean: .Boolean~of(x), x a Rexx logical value
 +  use strict arg x
-+  return .JSTyped~new("B", x)
++  return .Boolean~of(x)
 +::method true unguarded
-+  return .JSTyped~new("B", 1)
++  return .Boolean~true
 +::method false unguarded
-+  return .JSTyped~new("B", 0)
++  return .Boolean~false
 +::method bigint unguarded
 +  use strict arg x
 +  return .JSTyped~new("I", x)
@@ -5005,13 +5388,12 @@ index 0000000..5f9adc6
 +syntax: raise propagate
 +::method unbox unguarded            -- .js~unbox(o): the Rexx value of a box or of a JavaScript wrapper
 +  use strict arg o
-+  if o~isA(.JSTyped) then do
-+    if o~kind == "B" then return wordpos(o~value~string~strip~lower, "1 true") > 0
-+    return o~string
-+  end
++  if o~isA(.Boolean) then return o~value
++  if o~isA(.JSTyped) then return o~string
 +  if o~isA(.JSObject) then do
 +    c = o~js.className
-+    if wordpos(c, "Number String Boolean BigInt") > 0 then return o~js.invokeStrict("valueOf")
++    if wordpos(c, "Number String BigInt") > 0 then return o~js.invokeStrict("valueOf")
++    if c == "Boolean" then return o~js.invokeStrict("valueOf")~value
 +  end
 +  return o
 +::method newArray unguarded         -- a new JavaScript array of the arguments

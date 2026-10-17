@@ -85,7 +85,7 @@ index 786af1f..e949832 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index cb98e0d..9dad6fc 100644
+index b3dd55a..0d2828c 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -227,7 +227,75 @@ off, or changes the strings.
@@ -165,7 +165,7 @@ index cb98e0d..9dad6fc 100644
  
  ## The test suite's API groups (`wasm/build-test.sh`)
  
-@@ -450,7 +518,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -457,7 +525,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
@@ -176,7 +176,7 @@ index cb98e0d..9dad6fc 100644
    in the MEMFS runtime of the CMake build (`bin/`).
  * Maximum recursion depth is set by the JS engine's native stack (internal
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index 71c0919..e75964b 100755
+index ead2dd7..aa24b52 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
 @@ -48,6 +48,7 @@
@@ -201,13 +201,14 @@ index 71c0919..e75964b 100755
  for f in web-js extra-packages; do
    "$EMXX" -O3 -std=gnu++11 -pthread -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0 -DHAVE_CONFIG_H -DOPSYS_EMSCRIPTEN \
      -I"$SRC/api" -I"$SRC/api/platform/unix" -I"$BUILD" -c "$SRC/wasm/$f.cpp" -o "$BUILD/$f.o"
-@@ -72,8 +76,11 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+@@ -72,9 +76,12 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
             csvStream/csvStream.cls dateparser/dateparser.cls; do
    PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
  done
 -# the JavaScript bridge's classes
--PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls")
 +# JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
+ PRELOAD+=("--preload-file" "$SRC/wasm/web/boolean.cls@/usr/lib/ooRexx/boolean.cls")   # .Boolean, for js.cls (RFE #880)
+-PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls")
 +PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls"
 +          "--preload-file" "$SRC/wasm/web/jdor.cls@/usr/lib/ooRexx/jdor.cls"
 +          "--preload-file" "$SRC/wasm/web/BSF.CLS@/usr/lib/ooRexx/BSF.CLS"
@@ -215,7 +216,7 @@ index 71c0919..e75964b 100755
  
  # The most the memory may grow to.  Every run creates a shared
  # WebAssembly.Memory, and WebKit charges its declared maximum, not its size,
-@@ -95,13 +102,14 @@ wasm,websocket,mainScriptUrlOrBlob]"
+@@ -96,13 +103,14 @@ wasm,websocket,mainScriptUrlOrBlob]"
  cmd=$(cat "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
  cmd=$(sed -E 's/--preload-file [^ ]+//g; s/-sENVIRONMENT=[^ ]+//' <<<"$cmd")
  cmd=${cmd//-o bin\/rexx.js/-o $OUT\/rexx.js}
@@ -320,7 +321,7 @@ index b13d517..cb5c6fa 100644
  };
  </script>
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 6fa9a4a..f2c258f 100755
+index b62d283..df31a4b 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -42,7 +42,7 @@ Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP
