@@ -171,7 +171,7 @@ say left("Directory subclass", 40) k~call(.nil, sd)
 st = .SubTable~new; st["k"] = "v"
 say left("StringTable subclass", 40) k~call(.nil, st)
 say left("Array subclass", 40) k~call(.nil, .SubArray~of("a", "b"))
-say left("Directory subclass with its own AT", 40) k~call(.nil, .UpperAt~new~~put("x", "a"))
+say left("Directory subclass, own AT (not read)", 40) k~call(.nil, .UpperAt~new~~put("x", "a"))
 say left(".js~ref(Directory)", 40) k~call(.nil, .js~ref(.directory~new))~left(10)
 say left(".js~ref(Array)", 40) k~call(.nil, .js~ref(.array~of(1)))~left(10)
 exit

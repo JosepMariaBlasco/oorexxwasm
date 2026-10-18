@@ -37,7 +37,8 @@ copied as arrays and plain objects (a multi-dimensional Array as arrays
 nested by dimension, the first outermost); a copy keeps cycles and sharing
 (an Array that contains itself is an array that contains itself; at most
 1000 deep), releasing each item's local reference once copied.  Subclasses
-of Array, Directory and StringTable are copied too, read with AT;
+of Array, Directory and StringTable are copied too, read by SUPPLIER
+(and DIMENSIONS, an Array's shape);
 .js~ref(x) sends any Rexx object by reference, as a RexxProxy.
 
 - Message names arrive uppercased, so they are resolved case-insensitively
@@ -134,18 +135,18 @@ of Array, Directory and StringTable are copied too, read with AT;
   iteration, options latest and max, release).  Documented in wasm/README.md.
 ---
  interpreter/package/PackageManager.cpp |   16 +
- wasm/README.md                         |  218 +++
+ wasm/README.md                         |  219 +++
  wasm/build-node.sh                     |   18 +-
  wasm/build-web.sh                      |   18 +-
  wasm/extra-packages.cpp                |   66 +
  wasm/js-bridge.js                      |  241 ++++
- wasm/js-realm.js                       |  952 +++++++++++++
+ wasm/js-realm.js                       |  952 ++++++++++++
  wasm/tests/boolean-test.rex            |   82 ++
- wasm/tests/js-arrays.rex               |  119 ++
+ wasm/tests/js-arrays.rex               |  129 ++
  wasm/tests/js-booleans.rex             |   71 +
- wasm/tests/js-errors.rex               |  158 +++
+ wasm/tests/js-errors.rex               |  158 ++
  wasm/tests/js-extend-gc.rex            |  111 ++
- wasm/tests/js-extend.rex               |  157 +++
+ wasm/tests/js-extend.rex               |  157 ++
  wasm/tests/js-floats.rex               |  112 ++
  wasm/tests/js-proxy.rex                |  127 ++
  wasm/tests/qualify-node-cli.sh         |  216 +++
@@ -154,12 +155,12 @@ of Array, Directory and StringTable are copied too, read with AT;
  wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 1769 ++++++++++++++++++++++++
+ wasm/web-js.cpp                        | 1846 ++++++++++++++++++++++++
  wasm/web/boolean.cls                   |  172 +++
- wasm/web/js.cls                        |  706 ++++++++++
+ wasm/web/js.cls                        |  707 +++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 +++
- 26 files changed, 5905 insertions(+), 12 deletions(-)
+ 26 files changed, 5994 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -213,10 +214,10 @@ index 9324d0b..786af1f 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index d6f2caf..2d119a5 100644
+index d6f2caf..91b0df7 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -239,6 +239,222 @@ from the test suite's directory:
+@@ -239,6 +239,223 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -299,8 +300,9 @@ index d6f2caf..2d119a5 100644
 +  itself, and one that appears twice in a value is one array (Directories
 +  and StringTables too); each value sent is copied on its own, and copies
 +  nested more than 1000 deep are an error (a RangeError).  Subclasses of
-+  Array, Directory and StringTable are copied too, read with `AT` (what a
-+  subclass only computes, in `UNKNOWN`, is not copied); keys go as stored
++  Array, Directory and StringTable are copied too, read with `SUPPLIER`, as
++  `DO WITH ... OVER` sees them (and `DIMENSIONS`, an Array's shape): what a
++  subclass only computes, in `UNKNOWN`, is not copied; keys go as stored
 +  (`d~name` stores `NAME`, `d["name"]` keeps the case).  `.js~ref(x)` sends
 +  any Rexx object by reference, as a RexxProxy: the way to share an Array,
 +  Directory or StringTable with JavaScript.
@@ -439,7 +441,7 @@ index d6f2caf..2d119a5 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -247,6 +463,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -247,6 +464,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).
@@ -1915,10 +1917,10 @@ index 0000000..b0bfb2a
 +  if self~value then return "true"; return "false"
 diff --git a/wasm/tests/js-arrays.rex b/wasm/tests/js-arrays.rex
 new file mode 100644
-index 0000000..ec0429a
+index 0000000..ffb4820
 --- /dev/null
 +++ b/wasm/tests/js-arrays.rex
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,129 @@
 +/* js-arrays.rex: the shape of a Rexx Array in JavaScript, in the realm     */
 +/* where Rexx runs: the worker's in the browser, Node's under Node.  An     */
 +/* Array goes as an array (a copy) and keeps its size, an empty slot being  */
@@ -1927,7 +1929,7 @@ index 0000000..ec0429a
 +/* keeps the structure: an Array that contains itself is an array that      */
 +/* contains itself, one that appears twice is one array (also through       */
 +/* Directories and StringTables); more than 1000 deep is an error.          */
-+/* Subclasses are copied too, read with AT; .js~ref(x) shares by reference. */
++/* Subclasses are copied too, read by SUPPLIER; .js~ref(x) is by reference. */
 +/* Prints one line per check; exits 1 if any fails.                         */
 +.local~ok = 0; .local~bad = 0
 +.local~fn = .js~Function~new("args", "body", "return new Function(...args.split(','), body)")
@@ -1987,17 +1989,23 @@ index 0000000..ec0429a
 +call check "1001 levels deep: SYNTAX 98.900, a RangeError", condition("O")~code == "98.900" & -
 +  pos("RangeError: Arrays, Directories or StringTables nested more than 1000 deep", condition("O")~additional[1]) > 0
 +
-+-- subclasses are copied too, read with AT; .js~ref(x) is by reference
++-- subclasses are copied too, read by SUPPLIER (and DIMENSIONS); .js~ref(x) is by reference
 +call check "an Array subclass is copied (an array)", json~call(.nil, .MyArray~of("a", "b")) == '["a","b"]'
 +m = .MyArray~new(2, 2); m[1, 1] = 1; m[2, 2] = 4
 +call check "a 2x2 Array subclass is copied nested; a sparse one keeps its size", -
 +  shape~call(.nil, m) == "[[1,u],[u,4]]" & shape~call(.nil, .MyArray~new(3)~~put("x", 2)) == "[u,x,u]"
++m = .MyArray~new(2, 3); m[1, 1] = "a"
++call check "trailing empty slots: a 2x3 subclass with only m[1,1]; an empty 2x3; size 4, items at 1 and 3", -
++  shape~call(.nil, m) == "[[a,u,u],[u,u,u]]" & shape~call(.nil, .MyArray~new(2, 3)) == "[[u,u,u],[u,u,u]]" & -
++  shape~call(.nil, .MyArray~new(4)~~put("x", 1)~~put("y", 3)) == "[x,u,y,u]"
 +d = .MyDir~new; d["k"] = "v"; t = .MyTable~new; t["k"] = "w"
 +call check "Directory and StringTable subclasses are copied (plain objects)", -
 +  json~call(.nil, d) == '{"k":"v"}' & json~call(.nil, t) == '{"k":"w"}'
 +u = .UpperDir~new; u["a"] = "x"
-+call check "an AT of its own is honoured (Directory and Array subclasses)", -
-+  json~call(.nil, u) == '{"a":"X"}' & json~call(.nil, .AngleArray~of("p", "q")) == '["<p>","<q>"]'
++call check "an AT of its own is not what the copy reads (Directory and Array subclasses)", -
++  json~call(.nil, u) == '{"a":"x"}' & json~call(.nil, .AngleArray~of("p", "q")) == '["p","q"]'
++call check "a SUPPLIER of its own is honoured (Directory and Array subclasses)", -
++  json~call(.nil, .OwnSupplierDir~new) == '{"k1":"v1"}' & shape~call(.nil, .OwnSupplierArray~new(3)) == "[one,u,three]"
 +c = .ComputedDir~new; c["stored"] = 1
 +call check "an entry a subclass only computes (UNKNOWN) is not copied", json~call(.nil, c) == '{"stored":"1"}'
 +r = .directory~new
@@ -2029,6 +2037,10 @@ index 0000000..ec0429a
 +::method at; forward class (super) continue; return result~upper
 +::class AngleArray subclass Array
 +::method at; forward class (super) continue; return "<"result">"
++::class OwnSupplierDir subclass Directory
++::method supplier; return .supplier~new(.array~of("v1"), .array~of("k1"))
++::class OwnSupplierArray subclass Array
++::method supplier; return .supplier~new(.array~of("one", "three"), .array~of(1, 3))
 +::class ComputedDir subclass Directory
 +::method unknown; use arg name; if name == "COMPUTED" then return "made on demand"; forward class (super)
 +
@@ -2811,7 +2823,7 @@ index 0000000..c89f67e
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..f4aa9fe 100755
+index e1c1cd8..ca7317e 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -200,6 +200,222 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
@@ -2937,7 +2949,7 @@ index e1c1cd8..f4aa9fe 100755
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-booleans.rex'"
 +# --- the shape of an Array: sparse keeps its size, multi-dimensional nested;
 +# copies keep cycles and sharing, and more than 1000 deep is an error
-+check "JavaScript objects: the shape of an Array (sparse, multi-dimensional, cycles, subclasses, .js~ref)" '^28 passed, 0 failed$' '!^FAIL ' -- \
++check "JavaScript objects: the shape of an Array (sparse, multi-dimensional, cycles, subclasses, .js~ref)" '^30 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-arrays.rex'"
 +# --- the text of a number: ooRexx's x + 0 under NUMERIC DIGITS 17, -0 kept,
 +# nan/+infinity/-infinity; .js~num reads every form back
@@ -3060,7 +3072,7 @@ index d544388..b13d517 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..7541aef 100755
+index 3940711..0bc4ab7 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -49,7 +49,10 @@ if len(sys.argv) != 2:
@@ -3164,7 +3176,7 @@ index 3940711..7541aef 100755
 +     lambda r: "22 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # the shape of an Array (sparse, multi-dimensional, cycles), in the worker's realm
 +  ("js arrays", open(f"{SRC}/wasm/tests/js-arrays.rex").read(), {"js": {"worker": True}},
-+     lambda r: "28 passed, 0 failed" in r["out"] and r["rc"] == 0),
++     lambda r: "30 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # the text of a number (float text), in the worker's realm
 +  ("js floats", open(f"{SRC}/wasm/tests/js-floats.rex").read(), {"js": {"worker": True}},
 +     lambda r: "27 passed, 0 failed" in r["out"] and r["rc"] == 0),
@@ -3452,10 +3464,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..d82852b
+index 0000000..5554b3f
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,1769 @@
+@@ -0,0 +1,1846 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -4171,8 +4183,32 @@ index 0000000..d82852b
 +// how deep copies may nest (the copy recurses here, and in JavaScript)
 +static const int maxCopyDepth = 1000;
 +
++// the items of an Array subclass, by index, as its SUPPLIER gives them
++typedef std::map<std::vector<size_t>, RexxObjectPtr> SuppliedItems;
 +static void fromRexxDims(RexxThreadContext *c, std::string &out, RexxObjectPtr a,
-+    RexxArrayObject dims, std::vector<size_t> &index, int depth, CopyMemo *memo, size_t id);
++    RexxArrayObject dims, std::vector<size_t> &index, int depth, CopyMemo *memo, size_t id,
++    const SuppliedItems *items = nullptr);
++
++// what SUPPLIER gives, as DO WITH INDEX k ITEM v OVER x sees it: the (index,
++// item) pairs, in its order; how a subclass of Array, Directory or StringTable
++// is read, so that a SUPPLIER of its own is honoured
++static void supplied(RexxThreadContext *c, RexxObjectPtr v,
++    std::vector<std::pair<RexxObjectPtr, RexxObjectPtr>> &pairs)
++{
++    RexxObjectPtr s = c->SendMessage0(v, "SUPPLIER");
++    if (s == NULLOBJECT) return;
++    for (;;)
++    {
++        RexxObjectPtr more = c->SendMessage0(s, "AVAILABLE");
++        bool yes = more != NULLOBJECT && c->ObjectToStringValue(more) == std::string("1");
++        if (more != NULLOBJECT) c->ReleaseLocalReference(more);
++        if (!yes) break;
++        pairs.emplace_back(c->SendMessage0(s, "INDEX"), c->SendMessage0(s, "ITEM"));
++        RexxObjectPtr r = c->SendMessage0(s, "NEXT");
++        if (r != NULLOBJECT) c->ReleaseLocalReference(r);
++    }
++    c->ReleaseLocalReference(s);
++}
 +
 +// too deep (depth counts from 0): G + the message, which JavaScript raises as
 +// a RangeError
@@ -4288,9 +4324,42 @@ index 0000000..d82852b
 +        // outermost (a 2x3 Array is an array of 2 arrays of 3)
 +        size_t ndims = 0;
 +        c->ObjectToStringSize(c->SendMessage0(v, "DIMENSION"), &ndims);
-+        // a subclass of Array is read by messages (DIMENSIONS, AT), whatever
-+        // its dimensions, so that an AT of its own is honoured
-+        if (ndims > 1 || !c->IsArray(v))
++        // a subclass of Array: its shape from DIMENSIONS, its items from
++        // SUPPLIER (a slot SUPPLIER does not give is empty), whatever its
++        // dimensions
++        if (!c->IsArray(v))
++        {
++            RexxArrayObject dims = (RexxArrayObject)c->SendMessage0(v, "DIMENSIONS");
++            size_t nd = dims == NULLOBJECT ? 0 : c->ArraySize(dims);
++            std::vector<size_t> bound(nd);
++            for (size_t k = 0; k < nd; k++) c->ObjectToStringSize(c->ArrayAt(dims, k + 1), &bound[k]);
++            std::vector<std::pair<RexxObjectPtr, RexxObjectPtr>> pairs;
++            supplied(c, v, pairs);
++            SuppliedItems items;
++            for (auto &p : pairs)
++            {
++                std::vector<size_t> at;              // the index: a number, or an Array of numbers
++                if (c->IsArray(p.first))
++                    for (size_t k = 1; k <= c->ArraySize((RexxArrayObject)p.first); k++)
++                    {
++                        size_t x = 0;
++                        c->ObjectToStringSize(c->ArrayAt((RexxArrayObject)p.first, k), &x);
++                        at.push_back(x);
++                    }
++                else { size_t x = 0; c->ObjectToStringSize(p.first, &x); at.push_back(x); }
++                bool inside = at.size() == nd;
++                for (size_t k = 0; inside && k < nd; k++) inside = at[k] >= 1 && at[k] <= bound[k];
++                if (inside && p.second != NULLOBJECT) items[at] = p.second;
++                else if (p.second != NULLOBJECT && p.second != memo->top) c->ReleaseLocalReference(p.second);
++                c->ReleaseLocalReference(p.first);
++            }
++            std::vector<size_t> index;
++            if (nd > 0) fromRexxDims(c, out, v, dims, index, depth, memo, id, &items);
++            else putRec(out, 'A', "0\t" + std::to_string(id));
++            for (auto &e : items) if (e.second != memo->top) c->ReleaseLocalReference(e.second);
++            return;
++        }
++        if (ndims > 1)
 +        {
 +            std::vector<size_t> index;
 +            fromRexxDims(c, out, v, (RexxArrayObject)c->SendMessage0(v, "DIMENSIONS"), index, depth, memo, id);
@@ -4306,13 +4375,27 @@ index 0000000..d82852b
 +        }
 +        return;
 +    }
-+    // a Directory or StringTable, subclasses included, by messages (ALLINDEXES,
-+    // AT): what a subclass only computes (UNKNOWN) is not copied
++    // a Directory or StringTable, subclasses included: by ALLINDEXES and AT, a
++    // subclass by SUPPLIER (what it only computes, in UNKNOWN, is not copied)
 +    if (c->IsDirectory(v) || c->IsStringTable(v) || isA(c, v, directoryClass) ||
 +        isA(c, v, stringTableClass))
 +    {
 +        size_t id;
 +        if (copiedBefore(out, v, depth, memo, &id)) return;
++        if (!c->IsDirectory(v) && !c->IsStringTable(v))
++        {
++            std::vector<std::pair<RexxObjectPtr, RexxObjectPtr>> pairs;
++            supplied(c, v, pairs);
++            putRec(out, 'T', std::to_string(pairs.size()) + "\t" + std::to_string(id));
++            for (auto &p : pairs)
++            {
++                putRec(out, 'K', c->ObjectToStringValue(p.first));
++                fromRexx(c, out, p.second, depth + 1, memo);
++                if (p.second != NULLOBJECT && p.second != memo->top) c->ReleaseLocalReference(p.second);
++                c->ReleaseLocalReference(p.first);
++            }
++            return;
++        }
 +        RexxArrayObject keys = (RexxArrayObject)c->SendMessage0(v, "ALLINDEXES");
 +        size_t n = c->ArrayItems(keys);
 +        putRec(out, 'T', std::to_string(n) + "\t" + std::to_string(id));
@@ -4351,7 +4434,8 @@ index 0000000..d82852b
 +// indexes, not by their place in the Array's storage (where the first
 +// index varies fastest).  The outermost array carries the Array's id (memo).
 +static void fromRexxDims(RexxThreadContext *c, std::string &out, RexxObjectPtr a,
-+    RexxArrayObject dims, std::vector<size_t> &index, int depth, CopyMemo *memo, size_t id)
++    RexxArrayObject dims, std::vector<size_t> &index, int depth, CopyMemo *memo, size_t id,
++    const SuppliedItems *items)
 +{
 +    size_t level = index.size() + 1, ndims = c->ArraySize(dims), n = 0;
 +    c->ObjectToStringSize(c->ArrayAt(dims, level), &n);
@@ -4360,7 +4444,12 @@ index 0000000..d82852b
 +    for (size_t i = 1; i <= n; i++)
 +    {
 +        index.push_back(i);
-+        if (level < ndims) fromRexxDims(c, out, a, dims, index, depth + 1, memo, 0);
++        if (level < ndims) fromRexxDims(c, out, a, dims, index, depth + 1, memo, 0, items);
++        else if (items != nullptr)                 // an Array subclass: what SUPPLIER gave
++        {
++            auto it = items->find(index);
++            fromRexx(c, out, it == items->end() ? NULLOBJECT : it->second, depth + 1, memo);
++        }
 +        else
 +        {
 +            RexxArrayObject at = c->NewArray(ndims);
@@ -5405,10 +5494,10 @@ index 0000000..73ecfc2
 +  return 1
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
 new file mode 100644
-index 0000000..5c21691
+index 0000000..fc7f77c
 --- /dev/null
 +++ b/wasm/web/js.cls
-@@ -0,0 +1,706 @@
+@@ -0,0 +1,707 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -5520,7 +5609,8 @@ index 0000000..5c21691
 + * a multi-dimensional Array as arrays nested by dimension (m[i, j] is
 + * a[i-1][j-1]), keeping cycles and sharing (an Array that contains itself
 + * is an array that contains itself; at most 1000 deep), .nil as null; their
-+ * subclasses too, read with AT (what a subclass only computes is not
++ * subclasses too, read with SUPPLIER, as DO WITH ... OVER sees them (and
++ * DIMENSIONS, an Array's shape: what a subclass only computes is not
 + * copied), and keys as stored (d~name stores NAME, d["name"] keeps the
 + * case); .js~ref(x) sends any object by reference, as a RexxProxy; .js~newArray(items...) and .js~newObject(directory) make them
 + * in JavaScript (.js~Array and .js~Object are JavaScript's own).  Any other

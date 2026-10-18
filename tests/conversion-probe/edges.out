@@ -175,6 +175,6 @@ Directory (d~method, d['cache'])         Object{"cache": string:"no-store", "MET
 Directory subclass                       Object{"k": string:"v"}
 StringTable subclass                     Object{"k": string:"v"}
 Array subclass                           Array(2)[string:"a", string:"b"]
-Directory subclass with its own AT       Object{"a": string:"X"}
+Directory subclass, own AT (not read)    Object{"a": string:"x"}
 .js~ref(Directory)                       RexxProxy:
 .js~ref(Array)                           RexxProxy:

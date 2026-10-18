@@ -85,7 +85,7 @@ index 786af1f..e949832 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index 69b59a8..aceb757 100644
+index 09eadcb..b6db5f3 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -227,7 +227,75 @@ off, or changes the strings.
@@ -165,7 +165,7 @@ index 69b59a8..aceb757 100644
  
  ## The test suite's API groups (`wasm/build-test.sh`)
  
-@@ -475,7 +543,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -476,7 +544,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
@@ -321,7 +321,7 @@ index b13d517..cb5c6fa 100644
  };
  </script>
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 7541aef..d1d2e9b 100755
+index 0bc4ab7..3d995a3 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -42,7 +42,7 @@ Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP
