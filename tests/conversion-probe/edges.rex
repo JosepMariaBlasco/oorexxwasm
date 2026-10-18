@@ -158,7 +158,7 @@ do while fl \= ""
   say left(e, 40) "'"v"'" length(v) datatype(v, "N")
 end
 say "--- float text: Rexx strings -> a JavaScript number (.js~num)"
-fl = '1E+16|1e16|1E16|1E+17|0.0000001| 1.5 |-0|nan|+infinity|-infinity|NaN|Infinity|-Infinity|inf|1E+999'
+fl = '1E+16|1e16|1E16|1E+17|0.0000001| 1.5 |-0|nan|+infinity|-infinity|NaN|Infinity|-Infinity|inf|1E+999|-1E+999|1E-999|-1E-999|5E-324|1.7976931348623157E+308|1.8E+308'
 do while fl \= ""
   parse var fl e "|" fl
   say left("'"e"'", 40) tonum(k, e)

@@ -1093,7 +1093,7 @@ index 0000000..92f276a
 +  address t "RETURN thread ok"
 +  return rc
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 5d77069..31eb0ff 100755
+index b5119e6..03a8194 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -416,6 +416,10 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
@@ -1108,7 +1108,7 @@ index 5d77069..31eb0ff 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index c00cbe0..963bdb3 100755
+index b97b106..9d98134 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -96,6 +96,9 @@ CASES = [

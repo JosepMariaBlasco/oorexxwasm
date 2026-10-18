@@ -163,4 +163,10 @@ Infinity                                 '+infinity' 9 0
 'Infinity'                               number:Infinity
 '-Infinity'                              number:-Infinity
 'inf'                                    SYNTAX 98.900 JavaScript error: TypeError: "inf" is not a number
-'1E+999'                                 number:Infinity
+'1E+999'                                 SYNTAX 98.900 JavaScript error: RangeError: "1E+999" is out of range for a JavaScript number (too large)
+'-1E+999'                                SYNTAX 98.900 JavaScript error: RangeError: "-1E+999" is out of range for a JavaScript number (too large)
+'1E-999'                                 SYNTAX 98.900 JavaScript error: RangeError: "1E-999" is out of range for a JavaScript number (too small: not zero, but it would be 0)
+'-1E-999'                                SYNTAX 98.900 JavaScript error: RangeError: "-1E-999" is out of range for a JavaScript number (too small: not zero, but it would be 0)
+'5E-324'                                 number:5e-324
+'1.7976931348623157E+308'                number:1.7976931348623157e+308
+'1.8E+308'                               SYNTAX 98.900 JavaScript error: RangeError: "1.8E+308" is out of range for a JavaScript number (too large)
