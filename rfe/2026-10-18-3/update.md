@@ -1,5 +1,7 @@
 # RFE #879 update (3), 18 October 2026: subclasses are copied; `.js~ref`
 
+*How a subclass is read changed the same day: by `SUPPLIER`, not `AT`; see [update (4)](../2026-10-18-4/update.md).*
+
 ## What changed
 
 Only **patch 7** (`.JSObject`) changed.

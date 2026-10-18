@@ -10,6 +10,7 @@ the test results and a link to the patches at the commit they describe.
 
 | Date | Update |
 |---|---|
+| 2026-10-18 (4) | [A subclass is read by `SUPPLIER`](2026-10-18-4/update.md) |
 | 2026-10-18 (3) | [Subclasses are copied; `.js~ref` shares](2026-10-18-3/update.md) |
 | 2026-10-18 (2) | [A Rexx number out of range for a double is an error](2026-10-18-2/update.md) |
 | 2026-10-18 | [The text of a number, as ooRexx writes it](2026-10-18/update.md) |
