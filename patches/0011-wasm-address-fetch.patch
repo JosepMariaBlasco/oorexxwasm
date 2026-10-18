@@ -247,10 +247,10 @@ index 0000000..01451f3
 +
 +::requires "fetch.cls"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 41fcf8a..b894d4a 100755
+index 31eb0ff..f624698 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -416,6 +416,13 @@ check "a logic error ends the process with a non-zero status" '^Logic error: can
+@@ -420,6 +420,13 @@ check "a logic error ends the process with a non-zero status" '^Logic error: can
  check "command handlers in Rexx (cmdhandler.cls)" '^[0-9]+ passed, 0 failed$' '!^FAIL ' -- \
    "$X '$(cd "$(dirname "$0")" && pwd)/cmdhandler.rex'"
  
@@ -265,7 +265,7 @@ index 41fcf8a..b894d4a 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 2d3f3a9..3a1aed6 100755
+index 963bdb3..547a4d8 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -67,6 +67,9 @@ class H(SimpleHTTPRequestHandler):

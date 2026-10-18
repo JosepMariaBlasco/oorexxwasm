@@ -151,14 +151,14 @@ back = F~new("o", -
 say "   " back~call(.nil, acct)
 say "--- float text (topics/float-text.md): JavaScript numbers -> Rexx"
 -- each value is made in JavaScript and returned; Rexx shows it, its length, DATATYPE(v, "N")
-fl = '1.0|1/3|0.1 + 0.2|1e16|1e21|1e-7|-0.0|2**53 + 1|2n**53n + 1n|Number.MAX_VALUE|Number.MIN_VALUE|NaN|Infinity|-Infinity'
+fl = '1.0|1/3|0.1 + 0.2|1e16|1e17|1.5e17|1e21|1e-7|1e-20|1e-34|1e-35|1.2345678901234567e-10|1.2345678901234567e-20|-0.0|-1.5e-35|2**53 + 1|2n**53n + 1n|Number.MAX_VALUE|Number.MIN_VALUE|NaN|Infinity|-Infinity'
 do while fl \= ""
   parse var fl e "|" fl
   v = F~new("return " e)~call(.nil)
   say left(e, 40) "'"v"'" length(v) datatype(v, "N")
 end
 say "--- float text: Rexx strings -> a JavaScript number (.js~num)"
-fl = '1E+16|1e16|1E16| 1.5 |-0|NaN|nan|Infinity|inf|1E+999'
+fl = '1E+16|1e16|1E16|1E+17|0.0000001| 1.5 |-0|nan|+infinity|-infinity|NaN|Infinity|-Infinity|inf|1E+999'
 do while fl \= ""
   parse var fl e "|" fl
   say left("'"e"'", 40) tonum(k, e)

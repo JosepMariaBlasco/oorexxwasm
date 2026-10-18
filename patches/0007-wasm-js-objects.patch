@@ -23,7 +23,10 @@ browser, Node's main thread under Node); in the browser .js~page is the
 page's window, with the DOM.  Objects of different realms do not mix.
 Objects, functions, arrays and Promises are .JSObjects, by reference; strings, numbers, booleans (1/0) and
 bigints come back as Rexx strings, null as .nil, undefined as
-.js~undefined (a single object; a missing property reads as it).  Rexx
+.js~undefined (a single object; a missing property reads as it).  A
+number's text is ooRexx's x + 0 under NUMERIC DIGITS 17 on the shortest
+digits (1E+17, 0.0000001, 1E-35; no .0), -0 is kept, NaN and the
+infinities are nan, +infinity, -infinity; .js~num reads them back.  Rexx
 strings always go as strings (.js~num, .js~bool, .js~bigint, .js~bytes,
 .js~undefined force a type, and .js~box(type, x) with the type indicators
 of BSF4ooRexx's box(): BOolean, BYte, Char, Double, Float, Int, Long,
@@ -128,31 +131,32 @@ nested by dimension, the first outermost); a copy keeps cycles and sharing
   iteration, options latest and max, release).  Documented in wasm/README.md.
 ---
  interpreter/package/PackageManager.cpp |   16 +
- wasm/README.md                         |  206 +++
+ wasm/README.md                         |  211 +++
  wasm/build-node.sh                     |   18 +-
  wasm/build-web.sh                      |   18 +-
  wasm/extra-packages.cpp                |   66 +
  wasm/js-bridge.js                      |  241 ++++
- wasm/js-realm.js                       |  926 +++++++++++++
+ wasm/js-realm.js                       |  946 +++++++++++++
  wasm/tests/boolean-test.rex            |   82 ++
  wasm/tests/js-arrays.rex               |   86 ++
  wasm/tests/js-booleans.rex             |   71 +
  wasm/tests/js-errors.rex               |  158 +++
  wasm/tests/js-extend-gc.rex            |  111 ++
  wasm/tests/js-extend.rex               |  157 +++
+ wasm/tests/js-floats.rex               |   83 ++
  wasm/tests/js-proxy.rex                |  127 ++
- wasm/tests/qualify-node-cli.sh         |  212 +++
+ wasm/tests/qualify-node-cli.sh         |  216 +++
  wasm/tests/web-api.html                |    4 +-
- wasm/tests/web-api.py                  |  225 ++-
+ wasm/tests/web-api.py                  |  228 +++-
  wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
  wasm/web-js.cpp                        | 1742 ++++++++++++++++++++++++
  wasm/web/boolean.cls                   |  172 +++
- wasm/web/js.cls                        |  694 ++++++++++
+ wasm/web/js.cls                        |  698 ++++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 +++
- 25 files changed, 5676 insertions(+), 12 deletions(-)
+ 26 files changed, 5795 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -162,6 +166,7 @@ nested by dimension, the first outermost); a copy keeps cycles and sharing
  create mode 100644 wasm/tests/js-errors.rex
  create mode 100644 wasm/tests/js-extend-gc.rex
  create mode 100644 wasm/tests/js-extend.rex
+ create mode 100644 wasm/tests/js-floats.rex
  create mode 100644 wasm/tests/js-proxy.rex
  create mode 100644 wasm/tests/web-debugger.js
  create mode 100644 wasm/tests/web-scripts.html
@@ -205,10 +210,10 @@ index 9324d0b..786af1f 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index d6f2caf..0646f9c 100644
+index d6f2caf..c92c3a2 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -239,6 +239,210 @@ from the test suite's directory:
+@@ -239,6 +239,215 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -236,6 +241,11 @@ index d6f2caf..0646f9c 100644
 +  come back as Rexx strings, null as .nil, undefined as `.js~undefined`
 +  (a single object; a property that does not exist reads as it, and
 +  `~js.hasProperty` tells the two apart).
++  A number's text is what ooRexx writes for `x + 0` under `NUMERIC DIGITS
++  17`, on the shortest digits (`1E+17`, `0.0000001`, `1E-35`; no `.0`),
++  `-0` is kept, and NaN and the infinities are `nan`, `+infinity` and
++  `-infinity`; `.js~num` reads them back (and `NaN`, `Infinity`,
++  `-Infinity`).
 +* ooRexx uppercases message names, so they are resolved case-insensitively
 +  along the prototype chain (cached per object; of two matches the one
 +  starting in lowercase wins, `window.document` over `window.Document`,
@@ -419,7 +429,7 @@ index d6f2caf..0646f9c 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -247,6 +451,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -247,6 +456,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).
@@ -849,10 +859,10 @@ index 0000000..ea8b80b
 +})();
 diff --git a/wasm/js-realm.js b/wasm/js-realm.js
 new file mode 100644
-index 0000000..a5aaaad
+index 0000000..b6ee587
 --- /dev/null
 +++ b/wasm/js-realm.js
-@@ -0,0 +1,926 @@
+@@ -0,0 +1,946 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -1112,8 +1122,13 @@ index 0000000..a5aaaad
 +      case 'N': return null;
 +      case 'U': return undefined;
 +      case 'F': {
-+        const t = s().trim(), n = Number(t);
-+        if (Number.isNaN(n) && !/^[+-]?nan$/i.test(t)) throw new TypeError('"' + s() + '" is not a number');
++        // Rexx numbers, ooRexx's nan, +infinity and -infinity, and
++        // JavaScript's own spellings (NaN, Infinity, -Infinity)
++        const t = s().trim();
++        if (/^[+-]?nan$/i.test(t)) return NaN;
++        if (/^[+-]?infinity$/i.test(t)) return t[0] === '-' ? -Infinity : Infinity;
++        const n = Number(t);
++        if (Number.isNaN(n)) throw new TypeError('"' + s() + '" is not a number');
 +        return n;
 +      }
 +      case 'B': {
@@ -1173,9 +1188,24 @@ index 0000000..a5aaaad
 +
 +  function an(what) { return (/^[aeiou]/i.test(what) ? 'an ' : 'a ') + what; }
 +
++  // a JavaScript number as Rexx text: the shortest digits that read back as
++  // the same double, written as ooRexx writes x + 0 under NUMERIC DIGITS 17
++  // (exponential when the integer part needs more than 17 places or the
++  // decimals more than 34); -0 kept; NaN and the infinities as ooRexx spells
++  // them, "nan", "+infinity", "-infinity"
 +  function number(n) {
-+    if (Number.isFinite(n)) return Object.is(n, -0) ? '0' : String(n).toUpperCase();
-+    return String(n);
++    if (Number.isNaN(n)) return 'nan';
++    if (n === Infinity) return '+infinity';
++    if (n === -Infinity) return '-infinity';
++    if (n === 0) return Object.is(n, -0) ? '-0' : '0';
++    const sign = n < 0 ? '-' : '';
++    const [m, x] = Math.abs(n).toExponential().split('e');
++    const d = m.replace('.', ''), e = Number(x);   // d[0].d[1...] times 10**e
++    if (e + 1 > 17 || d.length - e - 1 > 34)
++      return sign + d[0] + (d.length > 1 ? '.' + d.slice(1) : '') + 'E' + (e < 0 ? '-' : '+') + Math.abs(e);
++    if (e < 0) return sign + '0.' + '0'.repeat(-e - 1) + d;
++    if (d.length <= e + 1) return sign + d + '0'.repeat(e + 1 - d.length);
++    return sign + d.slice(0, e + 1) + '.' + d.slice(e + 1);
 +  }
 +
 +  // a value for Rexx: primitives as strings, anything else by reference
@@ -2480,6 +2510,95 @@ index 0000000..f3cfe7a
 +
 +::class NotJs
 +::class Lone subclass JSObject
+diff --git a/wasm/tests/js-floats.rex b/wasm/tests/js-floats.rex
+new file mode 100644
+index 0000000..638600c
+--- /dev/null
++++ b/wasm/tests/js-floats.rex
+@@ -0,0 +1,83 @@
++/* js-floats.rex: the text of a JavaScript number in Rexx, in the realm     */
++/* where Rexx runs: the worker's in the browser, Node's under Node.  A      */
++/* number arrives with the shortest digits that read back as the same       */
++/* double, written as ooRexx writes x + 0 under NUMERIC DIGITS 17: plain    */
++/* digits unless the integer part needs more than 17 places or the decimals */
++/* more than 34; no ".0"; -0 kept; NaN and the infinities as ooRexx spells  */
++/* them, "nan", "+infinity", "-infinity".  .js~num reads every form back.   */
++/* Prints one line per check; exits 1 if any fails.                         */
++.local~ok = 0; .local~bad = 0
++.local~fn = .js~Function~new("args", "body", "return new Function(...args.split(','), body)")
++num = F("e", "return Function('return ' + e)()")   -- a JavaScript number from an expression
++
++-- literal, then its text in Rexx; the double nearest 1.2345678901234567e-10
++-- has the shortest digits 1.2345678901234568e-10
++t = .array~of("1e16", "10000000000000000", "1e17", "1E+17", "1.5e17", "1.5E+17", -
++  "1e21", "1E+21", "1e-7", "0.0000001", "1e-20", "0.00000000000000000001", -
++  "1e-34", "0.0000000000000000000000000000000001", "1e-35", "1E-35", -
++  "1.2345678901234567e-10", "0.00000000012345678901234568", -
++  "1.2345678901234567e-20", "1.2345678901234567E-20", -
++  "1.7976931348623157e308", "1.7976931348623157E+308", "5e-324", "5E-324", -
++  "0.30000000000000004", "0.30000000000000004", "-1.5e-35", "-1.5E-35")
++do i = 1 to t~items by 2
++  v = num~call(.nil, t[i])
++  call check t[i] "arrives as" t[i + 1], v == t[i + 1]
++end
++call check "an integer float has no .0 (1.0 is 1, 2**53 is 9007199254740992)", -
++  num~call(.nil, "1.0") == "1" & num~call(.nil, "2**53") == "9007199254740992"
++call check "-0 is kept", num~call(.nil, "-0") == "-0"
++call check "NaN, Infinity, -Infinity arrive as nan, +infinity, -infinity", -
++  num~call(.nil, "NaN") == "nan" & num~call(.nil, "Infinity") == "+infinity" & -
++  num~call(.nil, "-Infinity") == "-infinity"
++call check "nan and the infinities are not Rexx numbers", -
++  datatype(num~call(.nil, "NaN"), "N") = 0 & datatype(num~call(.nil, "Infinity"), "N") = 0
++
++-- 2000 doubles of every magnitude: the text is ooRexx's own x + 0 on the
++-- shortest digits, and it reads back as the same double
++x = F("n", "let s = 7; const r = () => (s = (s * 1103515245 + 12345) % 2147483648) / 2147483648;" -
++  "const b = new DataView(new ArrayBuffer(8)); globalThis.floatsProbe = [];" -
++  "while (floatsProbe.length < n) { b.setUint32(0, r() * 2**32); b.setUint32(4, r() * 2**32);" -
++  " let v = b.getFloat64(0); if (floatsProbe.length % 2) v = Number((r() * 10).toFixed(1 + Math.floor(r() * 17)) + 'e' + (Math.floor(r() * 80) - 45));" -
++  " if (Number.isFinite(v) && v !== 0) floatsProbe.push(v); } return n")~call(.nil, 2000)
++value = F("i", "return floatsProbe[i]")
++digits = F("i", "return floatsProbe[i].toExponential()")
++same = F("i, x", "return Object.is(floatsProbe[i], x)")
++diff = 0; back = 0
++numeric digits 17
++do i = 0 to 1999
++  v = value~call(.nil, i)
++  if v \== digits~call(.nil, i) + 0 then diff += 1
++  if \same~call(.nil, i, .js~num(v)) then back += 1
++end
++numeric digits
++call check "2000 doubles: the text is x + 0 under NUMERIC DIGITS 17 (" || diff "different)", diff = 0
++call check "2000 doubles: .js~num reads each text back as the same double (" || back "different)", back = 0
++
++is = F("x, y", "return Object.is(x, Number(y))")
++call check ".js~num reads -0, nan, +infinity, -infinity back", -
++  is~call(.nil, .js~num("-0"), "-0") & is~call(.nil, .js~num("nan"), "NaN") & -
++  is~call(.nil, .js~num("+infinity"), "Infinity") & is~call(.nil, .js~num("-infinity"), "-Infinity")
++call check ".js~num also reads JavaScript's NaN, Infinity, -Infinity", -
++  is~call(.nil, .js~num("NaN"), "NaN") & is~call(.nil, .js~num("Infinity"), "Infinity") & -
++  is~call(.nil, .js~num("-Infinity"), "-Infinity")
++call check ".js~num: inf is not a number (SYNTAX 98.900)", tonum("inf") == "SYNTAX 98.900"
++
++say .ok "passed," .bad "failed"
++exit .bad > 0
++
++tonum: procedure                    -- .js~num(x) sent to JavaScript, or its condition
++  signal on syntax name bad
++  x = .fn~call(.nil, "x", "return typeof x")~call(.nil, .js~num(arg(1)))
++  return x
++bad: return "SYNTAX" condition("O")~code
++
++F: procedure                        -- F(params, body): a JavaScript function
++  return .fn~call(.nil, arg(1), arg(2))
++
++check: procedure
++  parse arg what, ok
++  if ok == 1 then do; .local~ok += 1; say "ok  " what; end
++  else do; .local~bad += 1; say "FAIL" what; end
++  return
++
++::requires "js.cls"
 diff --git a/wasm/tests/js-proxy.rex b/wasm/tests/js-proxy.rex
 new file mode 100644
 index 0000000..c89f67e
@@ -2614,10 +2733,10 @@ index 0000000..c89f67e
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..5403ea4 100755
+index e1c1cd8..5d77069 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -200,6 +200,218 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
+@@ -200,6 +200,222 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
  check "name resolution (host resolver)" '^localhost=1 127\.0\.0\.1$' '^invalid=0$' '^reverse=1 ' "^hostname=$(hostname)\$" '^hostid=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' -- \
    "$X dns.rex"
  
@@ -2742,6 +2861,10 @@ index e1c1cd8..5403ea4 100755
 +# copies keep cycles and sharing, and more than 1000 deep is an error
 +check "JavaScript objects: the shape of an Array (sparse, multi-dimensional, cycles)" '^21 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-arrays.rex'"
++# --- the text of a number: ooRexx's x + 0 under NUMERIC DIGITS 17, -0 kept,
++# nan/+infinity/-infinity; .js~num reads every form back
++check "JavaScript objects: the text of a number (float text)" '^23 passed, 0 failed$' '!^FAIL ' -- \
++  "$X '$(cd "$(dirname "$0")" && pwd)/js-floats.rex'"
 +cat > "$T/jsgc.rex" <<'EOF'
 +f = .js~Function~new("o", "return 1")
 +do i = 1 to 300; x = f~call(.nil, .Gone~new); end
@@ -2859,7 +2982,7 @@ index d544388..b13d517 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..2c7e906 100755
+index 3940711..2d522ea 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -49,7 +49,10 @@ if len(sys.argv) != 2:
@@ -2874,7 +2997,7 @@ index 3940711..2c7e906 100755
  srv = subprocess.Popen([sys.executable, "-c", f"""
  import os, sys
  from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
-@@ -136,6 +139,173 @@ CASES = [
+@@ -136,6 +139,176 @@ CASES = [
                         '::options trace r', {},
       lambda r: r["out"].count("  worker") == 12 and "total 4\n" in r["out"] and "*-*" in r["err"]
                 and r["err"] == r["trace"] and r["errmsg"] == ""),
@@ -2964,6 +3087,9 @@ index 3940711..2c7e906 100755
 +  # the shape of an Array (sparse, multi-dimensional, cycles), in the worker's realm
 +  ("js arrays", open(f"{SRC}/wasm/tests/js-arrays.rex").read(), {"js": {"worker": True}},
 +     lambda r: "21 passed, 0 failed" in r["out"] and r["rc"] == 0),
++  # the text of a number (float text), in the worker's realm
++  ("js floats", open(f"{SRC}/wasm/tests/js-floats.rex").read(), {"js": {"worker": True}},
++     lambda r: "23 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # in the page: its string for the DOM; a call is queued and gives a Promise:
 +  # run by a thread waiting for JavaScript (here, the one in ~await) or by
 +  # the one taking events; a condition rejects it with a RexxError
@@ -3048,7 +3174,7 @@ index 3940711..2c7e906 100755
  ]
  
  fails = 0; ran = 0
-@@ -157,6 +327,59 @@ with sync_playwright() as p:
+@@ -157,6 +330,59 @@ with sync_playwright() as p:
          except Exception: ok = False
          fails += not ok; ran += 1
          print(("ok  " if ok else "FAIL"), f"{name:20}", json.dumps(r, ensure_ascii=False)[:300] if not ok or os.environ.get("SHOW") else f"{r.get('ms')} ms")
@@ -5174,10 +5300,10 @@ index 0000000..73ecfc2
 +  return 1
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
 new file mode 100644
-index 0000000..1f6f974
+index 0000000..935bf0f
 --- /dev/null
 +++ b/wasm/web/js.cls
-@@ -0,0 +1,694 @@
+@@ -0,0 +1,698 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -5270,7 +5396,11 @@ index 0000000..1f6f974
 + * Rexx, the class proposed for the core in RFE #880), null as .nil and
 + * undefined as .js~undefined (one object, so
 + * x == .js~undefined; a property that does not exist gives it, and
-+ * o~js.hasProperty("name") tells the two apart).  Rexx strings go as strings,
++ * o~js.hasProperty("name") tells the two apart).  A number's text is what
++ * ooRexx writes for x + 0 under NUMERIC DIGITS 17, on the shortest digits
++ * (1E+17, 0.0000001, 1E-35; no .0), -0 is kept, and NaN and the infinities
++ * are nan, +infinity and -infinity; .js~num reads them back (and NaN,
++ * Infinity, -Infinity).  Rexx strings go as strings,
 + * always (also "42"), and a .Boolean as a boolean; .js~bool(x) is
 + * .Boolean~of(x) (x a Rexx logical value), .js~true and .js~false are
 + * .Boolean~true and .Boolean~false; .js~num(x),
