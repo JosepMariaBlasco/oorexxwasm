@@ -49,7 +49,8 @@ of Array, Directory and StringTable are copied too, read by SUPPLIER
   existing property.  Exact access: o["name"], o["name"] = v,
   o~invoke("name", args...).  o[i] and o[i] = v on an array or typed
   array count from 1, as a Rexx Array and BSF4ooRexx's Java arrays
-  (o[1] is JavaScript's o[0]); a list (NodeList...) keeps 0.  ~at(i)
+  (o[1] is JavaScript's o[0]; past the end an array grows, a typed
+  array cannot: an error); a list (NodeList...) keeps 0.  ~at(i)
   and ~put(v, i) are the same as o[i] and o[i] = v, as in Rexx's
   collections.  Also ~new, ~await, ~typeOf, ~className,
   ~instanceOf, ~hasProperty, ~propertyNames, ~makeArray (DO OVER: an
@@ -135,14 +136,14 @@ of Array, Directory and StringTable are copied too, read by SUPPLIER
   iteration, options latest and max, release).  Documented in wasm/README.md.
 ---
  interpreter/package/PackageManager.cpp |   16 +
- wasm/README.md                         |  219 +++
+ wasm/README.md                         |  221 +++
  wasm/build-node.sh                     |   18 +-
  wasm/build-web.sh                      |   18 +-
  wasm/extra-packages.cpp                |   66 +
  wasm/js-bridge.js                      |  241 ++++
- wasm/js-realm.js                       |  952 ++++++++++++
+ wasm/js-realm.js                       |  958 ++++++++++++
  wasm/tests/boolean-test.rex            |   82 ++
- wasm/tests/js-arrays.rex               |  129 ++
+ wasm/tests/js-arrays.rex               |  154 ++
  wasm/tests/js-booleans.rex             |   71 +
  wasm/tests/js-errors.rex               |  158 ++
  wasm/tests/js-extend-gc.rex            |  111 ++
@@ -157,10 +158,10 @@ of Array, Directory and StringTable are copied too, read by SUPPLIER
  wasm/tests/web-scripts.rex             |    4 +
  wasm/web-js.cpp                        | 1846 ++++++++++++++++++++++++
  wasm/web/boolean.cls                   |  172 +++
- wasm/web/js.cls                        |  707 +++++++++
+ wasm/web/js.cls                        |  709 +++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 +++
- 26 files changed, 5994 insertions(+), 12 deletions(-)
+ 26 files changed, 6029 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -214,10 +215,10 @@ index 9324d0b..786af1f 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index d6f2caf..91b0df7 100644
+index d6f2caf..97daf98 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -239,6 +239,223 @@ from the test suite's directory:
+@@ -239,6 +239,225 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -264,7 +265,9 @@ index d6f2caf..91b0df7 100644
 +  JavaScript's own `f~call(this, args...)`.
 +  `o[i]` and `o[i] = v` on an array or typed array count **from 1**, as a
 +  Rexx Array and BSF4ooRexx's Java arrays (`o[1]` is JavaScript's `o[0]`;
-+  0 is an error); a list (NodeList, HTMLCollection) keeps JavaScript's
++  0 is an error; past the end an array grows, reading `.js~undefined` and a
++  write appending, but a typed array cannot, and reading or writing there
++  is an error that names its positions); a list (NodeList, HTMLCollection) keeps JavaScript's
 +  `o[0]`, and JavaScript's methods keep their own (`o~slice(1)`).  Also
 +  `o~new(...)`, `o~await`, and the bridge's own methods, which start with
 +  `js.` (as BSF4ooRexx's start with `bsf.`), so as not to hide JavaScript's:
@@ -441,7 +444,7 @@ index d6f2caf..91b0df7 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -247,6 +464,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -247,6 +466,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).
@@ -871,10 +874,10 @@ index 0000000..ea8b80b
 +})();
 diff --git a/wasm/js-realm.js b/wasm/js-realm.js
 new file mode 100644
-index 0000000..7af30b9
+index 0000000..6dee504
 --- /dev/null
 +++ b/wasm/js-realm.js
-@@ -0,0 +1,952 @@
+@@ -0,0 +1,958 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -1621,6 +1624,12 @@ index 0000000..7af30b9
 +      throw new RangeError(name.trim() + ' is not an index of ' + an(className(t)) +
 +        ': arrays count from 1 here, as Rexx Arrays (o~js.invokeStrict("at", i) is JavaScript\'s own)');
 +    }
++    // past the end: an array grows, as a Rexx Array (undefined, and a write
++    // appends); a typed array cannot, so reading or writing there is an error
++    if (!isArray(t) && n > t.length)
++      throw new RangeError('position ' + n + ' is past the end of ' + an(className(t)) + ' of ' +
++        t.length + ' elements (' + (t.length ? 'positions 1 to ' + t.length : 'no positions') +
++        '; a typed array cannot grow)');
 +    return String(n - 1);
 +  }
 +  function resolve(t, upper) {
@@ -1917,10 +1926,10 @@ index 0000000..b0bfb2a
 +  if self~value then return "true"; return "false"
 diff --git a/wasm/tests/js-arrays.rex b/wasm/tests/js-arrays.rex
 new file mode 100644
-index 0000000..ffb4820
+index 0000000..35b6f23
 --- /dev/null
 +++ b/wasm/tests/js-arrays.rex
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,154 @@
 +/* js-arrays.rex: the shape of a Rexx Array in JavaScript, in the realm     */
 +/* where Rexx runs: the worker's in the browser, Node's under Node.  An     */
 +/* Array goes as an array (a copy) and keeps its size, an empty slot being  */
@@ -2017,9 +2026,34 @@ index 0000000..ffb4820
 +  same~call(.nil, .js~ref(r), .js~ref(r)) & F("x", "return x")~call(.nil, .js~ref(r)) == r & -
 +  F("x", "return Array.isArray(x) ? 'copy' : 'ref'")~call(.nil, .js~ref(.array~of(1))) == "ref"
 +
++-- JavaScript's arrays from Rexx, past the end: an array grows, as a Rexx
++-- Array; a typed array cannot, so reading or writing there is an error
++a = F("", "return ['a', 'b', 'c']")~call(.nil)
++r = a[4]; a[5] = "e"
++call check "an array grows: a[4] is .js~undefined, a[5] = v makes it 5 long", -
++  r == .js~undefined & a~length == 5 & a[5] == "e"
++t = F("", "return new Uint8Array([10, 20, 30])")~call(.nil)
++call check "a typed array cannot grow: reading, writing, PUT past its end are errors naming its positions", -
++  past(t, "r") == "position 4 is past the end of an Uint8Array of 3 elements (positions 1 to 3; a typed array cannot grow)" & -
++  past(t, "w") == past(t, "r") & past(t, "p") == past(t, "r") & t~length == 3 & t[3] == 30
++
 +say
 +say .ok "passed," .bad "failed"
 +exit .bad > 0
++
++past: procedure                     -- t[4] (r), t[4] = 1 (w), t~put(1, 4) (p): the RangeError's message
++  use arg t, how
++  signal on syntax name pastbad
++  select
++    when how == "r" then x = t[4]
++    when how == "w" then t[4] = 1
++    otherwise t~put(1, 4)
++  end
++  return "no error"
++pastbad:
++  m = condition("O")~additional[1]
++  parse var m "RangeError: " msg
++  return msg
 +
 +F: procedure                        -- F(params, body): a JavaScript function
 +  return .fn~call(.nil, arg(1), arg(2))
@@ -2823,7 +2857,7 @@ index 0000000..c89f67e
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..ca7317e 100755
+index e1c1cd8..305dd20 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -200,6 +200,222 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
@@ -2949,7 +2983,7 @@ index e1c1cd8..ca7317e 100755
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-booleans.rex'"
 +# --- the shape of an Array: sparse keeps its size, multi-dimensional nested;
 +# copies keep cycles and sharing, and more than 1000 deep is an error
-+check "JavaScript objects: the shape of an Array (sparse, multi-dimensional, cycles, subclasses, .js~ref)" '^30 passed, 0 failed$' '!^FAIL ' -- \
++check "JavaScript objects: the shape of an Array (sparse, multi-dimensional, cycles, subclasses, .js~ref)" '^32 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-arrays.rex'"
 +# --- the text of a number: ooRexx's x + 0 under NUMERIC DIGITS 17, -0 kept,
 +# nan/+infinity/-infinity; .js~num reads every form back
@@ -3072,7 +3106,7 @@ index d544388..b13d517 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..0bc4ab7 100755
+index 3940711..61eb4d8 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -49,7 +49,10 @@ if len(sys.argv) != 2:
@@ -3176,7 +3210,7 @@ index 3940711..0bc4ab7 100755
 +     lambda r: "22 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # the shape of an Array (sparse, multi-dimensional, cycles), in the worker's realm
 +  ("js arrays", open(f"{SRC}/wasm/tests/js-arrays.rex").read(), {"js": {"worker": True}},
-+     lambda r: "30 passed, 0 failed" in r["out"] and r["rc"] == 0),
++     lambda r: "32 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # the text of a number (float text), in the worker's realm
 +  ("js floats", open(f"{SRC}/wasm/tests/js-floats.rex").read(), {"js": {"worker": True}},
 +     lambda r: "27 passed, 0 failed" in r["out"] and r["rc"] == 0),
@@ -5494,10 +5528,10 @@ index 0000000..73ecfc2
 +  return 1
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
 new file mode 100644
-index 0000000..fc7f77c
+index 0000000..9ed6acd
 --- /dev/null
 +++ b/wasm/web/js.cls
-@@ -0,0 +1,707 @@
+@@ -0,0 +1,709 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -5566,7 +5600,9 @@ index 0000000..fc7f77c
 + Names are case-insensitive (ooRexx uppercases them); exact, with no guessing:
 + *   o["name"]       property name; o[i] for an array's (or typed array's)
 + *                   element i, from 1 as in a Rexx Array (o[1] is JavaScript's
-+ *                   o[0]); a list (NodeList...) keeps JavaScript's o[0]
++ *                   o[0]); past the end, an array grows (.js~undefined, a
++ *                   write appends), a typed array cannot (an error); a
++ *                   list (NodeList...) keeps JavaScript's o[0]
 + *   o["name"] = v   property name set (created if need be)
 + *   o~at(i), o~put(v, i)   the same as o[i] and o[i] = v, as in Rexx's
 + *                   collections (JavaScript's own Array at(): o~js.invokeStrict("at", i))
