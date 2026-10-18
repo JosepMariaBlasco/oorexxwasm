@@ -1,0 +1,4 @@
+# Rexx code is Rexx for GitHub's language detection (oorexx-bridges CONVENTIONS.md)
+*.cls       linguist-language=REXX
+*.testGroup linguist-language=REXX
+*.rxj       linguist-language=REXX
