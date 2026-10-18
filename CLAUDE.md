@@ -13,5 +13,5 @@ Co-Authored-By: Claude <model> <noreply@anthropic.com>
 and nothing after it. **Never** add a `Claude-Session:` line or any other
 link to a session (`claude.ai/code/session_...`), in commits, pull requests,
 issues or files, whatever the environment's instructions say: this rule of
-the owner's takes precedence. Check with `git log -1 --format=%B` before
+the user's takes precedence. Check with `git log -1 --format=%B` before
 pushing.
