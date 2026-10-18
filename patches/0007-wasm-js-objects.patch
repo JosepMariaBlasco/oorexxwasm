@@ -36,7 +36,9 @@ Object, SHort, STring, Number, BIgint, shortened down to their capitals;
 copied as arrays and plain objects (a multi-dimensional Array as arrays
 nested by dimension, the first outermost); a copy keeps cycles and sharing
 (an Array that contains itself is an array that contains itself; at most
-1000 deep), releasing each item's local reference once copied.
+1000 deep), releasing each item's local reference once copied.  Subclasses
+of Array, Directory and StringTable are copied too, read with AT;
+.js~ref(x) sends any Rexx object by reference, as a RexxProxy.
 
 - Message names arrive uppercased, so they are resolved case-insensitively
   along the prototype chain (cached per object; of two matches the one
@@ -132,14 +134,14 @@ nested by dimension, the first outermost); a copy keeps cycles and sharing
   iteration, options latest and max, release).  Documented in wasm/README.md.
 ---
  interpreter/package/PackageManager.cpp |   16 +
- wasm/README.md                         |  213 +++
+ wasm/README.md                         |  218 +++
  wasm/build-node.sh                     |   18 +-
  wasm/build-web.sh                      |   18 +-
  wasm/extra-packages.cpp                |   66 +
  wasm/js-bridge.js                      |  241 ++++
  wasm/js-realm.js                       |  952 +++++++++++++
  wasm/tests/boolean-test.rex            |   82 ++
- wasm/tests/js-arrays.rex               |   86 ++
+ wasm/tests/js-arrays.rex               |  119 ++
  wasm/tests/js-booleans.rex             |   71 +
  wasm/tests/js-errors.rex               |  158 +++
  wasm/tests/js-extend-gc.rex            |  111 ++
@@ -148,16 +150,16 @@ nested by dimension, the first outermost); a copy keeps cycles and sharing
  wasm/tests/js-proxy.rex                |  127 ++
  wasm/tests/qualify-node-cli.sh         |  216 +++
  wasm/tests/web-api.html                |    4 +-
- wasm/tests/web-api.py                  |  228 +++-
+ wasm/tests/web-api.py                  |  228 ++-
  wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 1742 ++++++++++++++++++++++++
+ wasm/web-js.cpp                        | 1769 ++++++++++++++++++++++++
  wasm/web/boolean.cls                   |  172 +++
- wasm/web/js.cls                        |  700 ++++++++++
+ wasm/web/js.cls                        |  706 ++++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 +++
- 26 files changed, 5834 insertions(+), 12 deletions(-)
+ 26 files changed, 5905 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -211,10 +213,10 @@ index 9324d0b..786af1f 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index d6f2caf..487b96c 100644
+index d6f2caf..2d119a5 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -239,6 +239,217 @@ from the test suite's directory:
+@@ -239,6 +239,222 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -296,7 +298,12 @@ index d6f2caf..487b96c 100644
 +  the structure: an Array that contains itself is an array that contains
 +  itself, and one that appears twice in a value is one array (Directories
 +  and StringTables too); each value sent is copied on its own, and copies
-+  nested more than 1000 deep are an error (a RangeError).
++  nested more than 1000 deep are an error (a RangeError).  Subclasses of
++  Array, Directory and StringTable are copied too, read with `AT` (what a
++  subclass only computes, in `UNKNOWN`, is not copied); keys go as stored
++  (`d~name` stores `NAME`, `d["name"]` keeps the case).  `.js~ref(x)` sends
++  any Rexx object by reference, as a RexxProxy: the way to share an Array,
++  Directory or StringTable with JavaScript.
 +* Strings are text: a Rexx string must be UTF-8 and a JavaScript string
 +  well-formed (no lone surrogate), else SYNTAX 23.900, an invalid data
 +  string (nothing becomes U+FFFD); binary data goes as `.js~bytes(x)`.
@@ -432,7 +439,7 @@ index d6f2caf..487b96c 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -247,6 +458,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -247,6 +463,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).
@@ -1908,10 +1915,10 @@ index 0000000..b0bfb2a
 +  if self~value then return "true"; return "false"
 diff --git a/wasm/tests/js-arrays.rex b/wasm/tests/js-arrays.rex
 new file mode 100644
-index 0000000..d769448
+index 0000000..ec0429a
 --- /dev/null
 +++ b/wasm/tests/js-arrays.rex
-@@ -0,0 +1,86 @@
+@@ -0,0 +1,119 @@
 +/* js-arrays.rex: the shape of a Rexx Array in JavaScript, in the realm     */
 +/* where Rexx runs: the worker's in the browser, Node's under Node.  An     */
 +/* Array goes as an array (a copy) and keeps its size, an empty slot being  */
@@ -1920,6 +1927,7 @@ index 0000000..d769448
 +/* keeps the structure: an Array that contains itself is an array that      */
 +/* contains itself, one that appears twice is one array (also through       */
 +/* Directories and StringTables); more than 1000 deep is an error.          */
++/* Subclasses are copied too, read with AT; .js~ref(x) shares by reference. */
 +/* Prints one line per check; exits 1 if any fails.                         */
 +.local~ok = 0; .local~bad = 0
 +.local~fn = .js~Function~new("args", "body", "return new Function(...args.split(','), body)")
@@ -1979,6 +1987,28 @@ index 0000000..d769448
 +call check "1001 levels deep: SYNTAX 98.900, a RangeError", condition("O")~code == "98.900" & -
 +  pos("RangeError: Arrays, Directories or StringTables nested more than 1000 deep", condition("O")~additional[1]) > 0
 +
++-- subclasses are copied too, read with AT; .js~ref(x) is by reference
++call check "an Array subclass is copied (an array)", json~call(.nil, .MyArray~of("a", "b")) == '["a","b"]'
++m = .MyArray~new(2, 2); m[1, 1] = 1; m[2, 2] = 4
++call check "a 2x2 Array subclass is copied nested; a sparse one keeps its size", -
++  shape~call(.nil, m) == "[[1,u],[u,4]]" & shape~call(.nil, .MyArray~new(3)~~put("x", 2)) == "[u,x,u]"
++d = .MyDir~new; d["k"] = "v"; t = .MyTable~new; t["k"] = "w"
++call check "Directory and StringTable subclasses are copied (plain objects)", -
++  json~call(.nil, d) == '{"k":"v"}' & json~call(.nil, t) == '{"k":"w"}'
++u = .UpperDir~new; u["a"] = "x"
++call check "an AT of its own is honoured (Directory and Array subclasses)", -
++  json~call(.nil, u) == '{"a":"X"}' & json~call(.nil, .AngleArray~of("p", "q")) == '["<p>","<q>"]'
++c = .ComputedDir~new; c["stored"] = 1
++call check "an entry a subclass only computes (UNKNOWN) is not copied", json~call(.nil, c) == '{"stored":"1"}'
++r = .directory~new
++f = F("x", "x.put('from JavaScript', 'k'); return typeof x.at + ' ' + (typeof x.sendMessage0)")
++call check ".js~ref(d): a RexxProxy, and what JavaScript changes is in d", -
++  f~call(.nil, .js~ref(r)) == "function function" & r["k"] == "from JavaScript"
++same = F("x, y", "return x === y")
++call check ".js~ref: the same object is the same RexxProxy; also an Array; back in Rexx, itself", -
++  same~call(.nil, .js~ref(r), .js~ref(r)) & F("x", "return x")~call(.nil, .js~ref(r)) == r & -
++  F("x", "return Array.isArray(x) ? 'copy' : 'ref'")~call(.nil, .js~ref(.array~of(1))) == "ref"
++
 +say
 +say .ok "passed," .bad "failed"
 +exit .bad > 0
@@ -1991,6 +2021,16 @@ index 0000000..d769448
 +  if ok == 1 then do; .local~ok += 1; say "ok  " what; end
 +  else do; .local~bad += 1; say "FAIL" what; end
 +  return
++
++::class MyArray subclass Array
++::class MyDir subclass Directory
++::class MyTable subclass StringTable
++::class UpperDir subclass Directory
++::method at; forward class (super) continue; return result~upper
++::class AngleArray subclass Array
++::method at; forward class (super) continue; return "<"result">"
++::class ComputedDir subclass Directory
++::method unknown; use arg name; if name == "COMPUTED" then return "made on demand"; forward class (super)
 +
 +::class Holder
 +::method self
@@ -2771,7 +2811,7 @@ index 0000000..c89f67e
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..b5119e6 100755
+index e1c1cd8..f4aa9fe 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -200,6 +200,222 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
@@ -2897,7 +2937,7 @@ index e1c1cd8..b5119e6 100755
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-booleans.rex'"
 +# --- the shape of an Array: sparse keeps its size, multi-dimensional nested;
 +# copies keep cycles and sharing, and more than 1000 deep is an error
-+check "JavaScript objects: the shape of an Array (sparse, multi-dimensional, cycles)" '^21 passed, 0 failed$' '!^FAIL ' -- \
++check "JavaScript objects: the shape of an Array (sparse, multi-dimensional, cycles, subclasses, .js~ref)" '^28 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-arrays.rex'"
 +# --- the text of a number: ooRexx's x + 0 under NUMERIC DIGITS 17, -0 kept,
 +# nan/+infinity/-infinity; .js~num reads every form back
@@ -3020,7 +3060,7 @@ index d544388..b13d517 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..6d14370 100755
+index 3940711..7541aef 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -49,7 +49,10 @@ if len(sys.argv) != 2:
@@ -3124,7 +3164,7 @@ index 3940711..6d14370 100755
 +     lambda r: "22 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # the shape of an Array (sparse, multi-dimensional, cycles), in the worker's realm
 +  ("js arrays", open(f"{SRC}/wasm/tests/js-arrays.rex").read(), {"js": {"worker": True}},
-+     lambda r: "21 passed, 0 failed" in r["out"] and r["rc"] == 0),
++     lambda r: "28 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # the text of a number (float text), in the worker's realm
 +  ("js floats", open(f"{SRC}/wasm/tests/js-floats.rex").read(), {"js": {"worker": True}},
 +     lambda r: "27 passed, 0 failed" in r["out"] and r["rc"] == 0),
@@ -3412,10 +3452,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..b41dd96
+index 0000000..d82852b
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,1742 @@
+@@ -0,0 +1,1769 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -4157,6 +4197,45 @@ index 0000000..b41dd96
 +    return false;
 +}
 +
++// a Rexx object by reference: R + its id and its string as it is now (a
++// RexxProxy in JavaScript); any object that is not converted, and the
++// value of .js~ref(x)
++static void toProxy(RexxThreadContext *c, std::string &out, RexxObjectPtr v)
++{
++    if (__atomic_load_n(&serverThread, __ATOMIC_SEQ_CST) == 0) serverSetup(c);
++    std::string str = c->ObjectToStringValue(v);
++    if (c->CheckCondition()) c->ClearCondition();
++    size_t id;
++    RexxObjectPtr g = c->RequestGlobalReference(v);  // (not with eventLock held: see above)
++    {
++        std::lock_guard<std::mutex> lock(eventLock);
++        auto it = proxyIds.find(v);
++        if (it != proxyIds.end()) id = it->second;
++        else
++        {
++            id = ++lastHandlerId;
++            pinned[id] = g;
++            proxyIds[g] = id;
++            g = NULLOBJECT;
++        }
++        proxyCounts[id]++;
++    }
++    if (g != NULLOBJECT) c->ReleaseGlobalReference(g);
++    putRec(out, 'R', std::to_string(id) + "\t" + str);
++}
++
++// the classes whose instances are copied (Array, Directory, StringTable),
++// subclasses included
++static RexxObjectPtr arrayClass = NULLOBJECT, directoryClass = NULLOBJECT,
++    stringTableClass = NULLOBJECT;
++static void copyClasses(RexxThreadContext *c)
++{
++    if (arrayClass != NULLOBJECT) return;
++    directoryClass = c->RequestGlobalReference(c->FindClass("DIRECTORY"));
++    stringTableClass = c->RequestGlobalReference(c->FindClass("STRINGTABLE"));
++    arrayClass = c->RequestGlobalReference(c->FindClass("ARRAY"));
++}
++
 +// encode a Rexx value for JavaScript
 +static void fromRexx(RexxThreadContext *c, std::string &out, RexxObjectPtr v, int depth = 0,
 +    CopyMemo *memo = nullptr)
@@ -4165,6 +4244,7 @@ index 0000000..b41dd96
 +    if (memo == nullptr) { memo = &top; top.top = v; }
 +    if (v == NULLOBJECT) { putRec(out, 'U', ""); return; }
 +    if (v == c->Nil()) { putRec(out, 'N', ""); return; }
++    copyClasses(c);
 +    if (isA(c, v, jsObjectClass))
 +    {
 +        putRec(out, 'O', c->ObjectToStringValue(c->SendMessage0(v, "JSREF")));
@@ -4195,11 +4275,12 @@ index 0000000..b41dd96
 +    {
 +        std::string kind = c->ObjectToStringValue(c->SendMessage0(v, "KIND"));
 +        RexxObjectPtr val = c->SendMessage0(v, "VALUE");
++        if (kind == "P") { toProxy(c, out, val); return; }   // .js~ref(x): by reference
 +        std::string data = val == NULLOBJECT || val == c->Nil() ? "" : c->ObjectToStringValue(val);
 +        putRec(out, kind.empty() ? 'U' : kind[0], data);
 +        return;
 +    }
-+    if (c->IsArray(v))
++    if (c->IsArray(v) || isA(c, v, arrayClass))
 +    {
 +        size_t id;
 +        if (copiedBefore(out, v, depth, memo, &id)) return;
@@ -4207,7 +4288,9 @@ index 0000000..b41dd96
 +        // outermost (a 2x3 Array is an array of 2 arrays of 3)
 +        size_t ndims = 0;
 +        c->ObjectToStringSize(c->SendMessage0(v, "DIMENSION"), &ndims);
-+        if (ndims > 1)
++        // a subclass of Array is read by messages (DIMENSIONS, AT), whatever
++        // its dimensions, so that an AT of its own is honoured
++        if (ndims > 1 || !c->IsArray(v))
 +        {
 +            std::vector<size_t> index;
 +            fromRexxDims(c, out, v, (RexxArrayObject)c->SendMessage0(v, "DIMENSIONS"), index, depth, memo, id);
@@ -4223,7 +4306,10 @@ index 0000000..b41dd96
 +        }
 +        return;
 +    }
-+    if (c->IsDirectory(v) || c->IsStringTable(v))
++    // a Directory or StringTable, subclasses included, by messages (ALLINDEXES,
++    // AT): what a subclass only computes (UNKNOWN) is not copied
++    if (c->IsDirectory(v) || c->IsStringTable(v) || isA(c, v, directoryClass) ||
++        isA(c, v, stringTableClass))
 +    {
 +        size_t id;
 +        if (copiedBefore(out, v, depth, memo, &id)) return;
@@ -4256,27 +4342,8 @@ index 0000000..b41dd96
 +        putRec(out, 'S', c->ObjectToStringValue(v));
 +        return;
 +    }
-+    // any other object: a RexxProxy, with its string as it is now
-+    if (__atomic_load_n(&serverThread, __ATOMIC_SEQ_CST) == 0) serverSetup(c);
-+    std::string str = c->ObjectToStringValue(v);
-+    if (c->CheckCondition()) c->ClearCondition();
-+    size_t id;
-+    RexxObjectPtr g = c->RequestGlobalReference(v);  // (not with eventLock held: see above)
-+    {
-+        std::lock_guard<std::mutex> lock(eventLock);
-+        auto it = proxyIds.find(v);
-+        if (it != proxyIds.end()) id = it->second;
-+        else
-+        {
-+            id = ++lastHandlerId;
-+            pinned[id] = g;
-+            proxyIds[g] = id;
-+            g = NULLOBJECT;
-+        }
-+        proxyCounts[id]++;
-+    }
-+    if (g != NULLOBJECT) c->ReleaseGlobalReference(g);
-+    putRec(out, 'R', std::to_string(id) + "\t" + str);
++    // any other object: a RexxProxy
++    toProxy(c, out, v);
 +}
 +
 +// one dimension of a multi-dimensional Array (fromRexx): index holds the
@@ -5338,10 +5405,10 @@ index 0000000..73ecfc2
 +  return 1
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
 new file mode 100644
-index 0000000..2dfd252
+index 0000000..5c21691
 --- /dev/null
 +++ b/wasm/web/js.cls
-@@ -0,0 +1,700 @@
+@@ -0,0 +1,706 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -5452,7 +5519,10 @@ index 0000000..2dfd252
 + * Array goes as an array, a Directory or StringTable as a plain object (copies),
 + * a multi-dimensional Array as arrays nested by dimension (m[i, j] is
 + * a[i-1][j-1]), keeping cycles and sharing (an Array that contains itself
-+ * is an array that contains itself; at most 1000 deep), .nil as null; .js~newArray(items...) and .js~newObject(directory) make them
++ * is an array that contains itself; at most 1000 deep), .nil as null; their
++ * subclasses too, read with AT (what a subclass only computes is not
++ * copied), and keys as stored (d~name stores NAME, d["name"] keeps the
++ * case); .js~ref(x) sends any object by reference, as a RexxProxy; .js~newArray(items...) and .js~newObject(directory) make them
 + * in JavaScript (.js~Array and .js~Object are JavaScript's own).  Any other
 + * Rexx object goes by reference, as a RexxProxy (below).  A string goes as
 + * text: a Rexx string must be UTF-8 and a JavaScript string well-formed (no
@@ -5816,6 +5886,9 @@ index 0000000..2dfd252
 +    if c == "Boolean" then return o~js.invokeStrict("valueOf")~value
 +  end
 +  return o
++::method ref unguarded              -- x by reference, a RexxProxy, even an Array, Directory or StringTable
++  use strict arg x
++  return .JSTyped~new("P", x)
 +::method newArray unguarded         -- a new JavaScript array of the arguments
 +  signal on syntax
 +  return JsValue(arg(1, "A"))
@@ -6041,7 +6114,7 @@ index 0000000..2dfd252
 +::method string
 +  expose kind value
 +  if kind == "U" then return "undefined"
-+  return value
++  return value~string
 diff --git a/wasm/web/ooRexx-worker.js b/wasm/web/ooRexx-worker.js
 index c87af29..71cd58a 100644
 --- a/wasm/web/ooRexx-worker.js

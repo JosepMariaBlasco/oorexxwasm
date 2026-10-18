@@ -163,6 +163,17 @@ do while fl \= ""
   parse var fl e "|" fl
   say left("'"e"'", 40) tonum(k, e)
 end
+say "--- subclasses and .js~ref (topics/directory-crossing.md)"
+d = .directory~new; d~method = "POST"; d["cache"] = "no-store"
+say left("Directory (d~method, d['cache'])", 40) k~call(.nil, d)
+sd = .SubDir~new; sd["k"] = "v"
+say left("Directory subclass", 40) k~call(.nil, sd)
+st = .SubTable~new; st["k"] = "v"
+say left("StringTable subclass", 40) k~call(.nil, st)
+say left("Array subclass", 40) k~call(.nil, .SubArray~of("a", "b"))
+say left("Directory subclass with its own AT", 40) k~call(.nil, .UpperAt~new~~put("x", "a"))
+say left(".js~ref(Directory)", 40) k~call(.nil, .js~ref(.directory~new))~left(10)
+say left(".js~ref(Array)", 40) k~call(.nil, .js~ref(.array~of(1)))~left(10)
 exit
 
 show: procedure
@@ -203,6 +214,11 @@ tonum: procedure                     -- what JavaScript receives from .js~num(s)
 syntax:
   return "SYNTAX" condition("O")~code condition("O")~additional[1]
 
+::class SubDir subclass Directory
+::class SubTable subclass StringTable
+::class SubArray subclass Array
+::class UpperAt subclass Directory
+::method at; forward class (super) continue; return result~upper
 ::class Thing
 ::method bad
   return 1 + "a"

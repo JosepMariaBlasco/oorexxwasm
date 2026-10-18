@@ -118,9 +118,9 @@ throw 42: message / additional[2]        JavaScript error: 42. / '42' (len 2)
 throw 42: additional items               2
 --- errors: Rexx condition in JavaScript
 SYNTAX 41.1 (instanceof RexxError | Erro
-    true | true | RexxError | "Error 41.1: Bad arithmetic conversion. (Nonnumeric value (\"a\") used in arithmetic operation.)" | ["message","name","condition","code","rc","errorText","program","line","traceback"] | ["SYNTAX","41.1",41,"Bad arithmetic conversion.","string",208,3,false]
+    true | true | RexxError | "Error 41.1: Bad arithmetic conversion. (Nonnumeric value (\"a\") used in arithmetic operation.)" | ["message","name","condition","code","rc","errorText","program","line","traceback"] | ["SYNTAX","41.1",41,"Bad arithmetic conversion.","string",224,3,false]
 RAISE SYNTAX 93.900 with a message      
-    true | true | RexxError | "Error 93.900: Incorrect call to method. (my message.)" | ["message","name","condition","code","rc","errorText","program","line","traceback"] | ["SYNTAX","93.900",93,"Incorrect call to method.","string",210,3,false]
+    true | true | RexxError | "Error 93.900: Incorrect call to method. (my message.)" | ["message","name","condition","code","rc","errorText","program","line","traceback"] | ["SYNTAX","93.900",93,"Incorrect call to method.","string",226,3,false]
 user condition (RAISE USER oops)        
     no error
 --- errors: JavaScript exception through Rexx and back
@@ -170,3 +170,11 @@ Infinity                                 '+infinity' 9 0
 '5E-324'                                 number:5e-324
 '1.7976931348623157E+308'                number:1.7976931348623157e+308
 '1.8E+308'                               SYNTAX 98.900 JavaScript error: RangeError: "1.8E+308" is out of range for a JavaScript number (too large)
+--- subclasses and .js~ref (topics/directory-crossing.md)
+Directory (d~method, d['cache'])         Object{"cache": string:"no-store", "METHOD": string:"POST"}
+Directory subclass                       Object{"k": string:"v"}
+StringTable subclass                     Object{"k": string:"v"}
+Array subclass                           Array(2)[string:"a", string:"b"]
+Directory subclass with its own AT       Object{"a": string:"X"}
+.js~ref(Directory)                       RexxProxy:
+.js~ref(Array)                           RexxProxy:
