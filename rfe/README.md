@@ -10,6 +10,7 @@ the test results and a link to the patches at the commit they describe.
 
 | Date | Update |
 |---|---|
+| 2026-10-18 (2) | [A Rexx number out of range for a double is an error](2026-10-18-2/update.md) |
 | 2026-10-18 | [The text of a number, as ooRexx writes it](2026-10-18/update.md) |
 | 2026-10-17 (3) | [Copies keep cycles and sharing](2026-10-17-3/update.md) |
 | 2026-10-17 (2) | [A multi-dimensional Array keeps its shape](2026-10-17-2/update.md) |
