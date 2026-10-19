@@ -246,6 +246,10 @@ jobs:
           OUT=$RUNNER_TEMP/suite-windows
           BASE=results/suite-windows-r$REV-series.csv
           [[ -f $BASE ]] || BASE=results/suite-wasm-r$REV-series.csv
+          if [[ ! -f $BASE ]]; then
+            { echo "## windows (Node on windows-latest, test/trunk r$REV)"; echo; echo "No reference run for r$REV: nothing to compare with."; } | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           { echo "## windows (Node on windows-latest, test/trunk r$REV)"; echo; echo "Reference: \`$BASE\`"; echo; } >> "$GITHUB_STEP_SUMMARY"
           python tests/suite-check.py "$BASE" "$OUT/results.csv" --pattern "$PATTERN" --md "$OUT/check.md"; rc=$?
           cat "$OUT/check.md" >> "$GITHUB_STEP_SUMMARY"

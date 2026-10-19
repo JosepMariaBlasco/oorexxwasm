@@ -113,20 +113,20 @@ interpreter) runs with `tests/run-suite.sh` under Node and with
 with the test suite's native libraries (`build-wasm/bin-node-test`,
 `bin-web-test`, from `wasm/build-test.sh`: the API test groups need them).
 Results on
-r13268, 402 test groups (GitHub Actions runners, Ubuntu 24.04):
+r13275, 402 test groups (GitHub Actions runners, Ubuntu 24.04):
 
 | | groups passing |
 |---|---:|
 | native (same series) | 400 |
-| Node | 397 |
+| Node | 398 |
 | Chromium | 371 |
 | Firefox | 371 |
-| WebKit | 371 |
+| WebKit | 372 |
 
 Every difference with native has a known cause (mostly: no processes in the
 browser):
-[`results/suite-platforms-r13268-series.md`](results/suite-platforms-r13268-series.md).
-The results on r13263, the previous base, are kept next to them.
+[`results/suite-platforms-r13275-series.md`](results/suite-platforms-r13275-series.md).
+The results on r13268 and r13263, the previous bases, are kept next to them.
 
 The suite also runs in GitHub Actions on demand
 ([`.github/workflows/suite.yml`](.github/workflows/suite.yml): Actions >
