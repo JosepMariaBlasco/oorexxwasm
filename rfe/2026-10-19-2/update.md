@@ -52,9 +52,9 @@ and thrown again, a JavaScript exception through Rexx and JavaScript twice,
 and a `RexxError` made in JavaScript. The case "js handlers sync" of
 `web-api.py` now expects the 41.1 of a synchronous handler's method.
 
-**Patches 1–6** are byte-identical. **Patch 8** and the example
-environments differ only in the hashes and line numbers of the files patch 7
-also changes. The patches apply cleanly to trunk **r13275**, in order, with
+**Patches 1–6** are byte-identical. **Patch 8**, and 0011–0012 of the
+example environments, differ only in the hashes and line numbers of the
+files that the changed patches also touch. The patches apply cleanly to trunk **r13275**, in order, with
 `svn patch` or `git apply`. Patches 1–8 alone build and pass their tests:
 `qualify-node-cli.sh` 33 checks, and `web-api.py` 54 cases.
 
