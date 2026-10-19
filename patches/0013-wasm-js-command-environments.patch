@@ -280,7 +280,7 @@ index 0000000..5f462f1
 +  if command == "raise" then raise user mine description "the description" additional ("one", "two") return 7
 +  return .Thing~new~user
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 25c4552..c63519b 100755
+index 9e31544..b2a74b2 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -420,6 +420,12 @@ check "a logic error ends the process with a non-zero status" '^Logic error: can
@@ -297,7 +297,7 @@ index 25c4552..c63519b 100755
  "$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
  FETCH_SRV=$!; sleep 0.5
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 31f663e..3a3ff9b 100755
+index 60729a4..49700f7 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -99,6 +99,28 @@ CASES = [

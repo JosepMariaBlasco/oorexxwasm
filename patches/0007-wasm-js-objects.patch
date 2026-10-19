@@ -67,7 +67,8 @@ of Array, Directory and StringTable are copied too, read by SUPPLIER
   JavaScript exception that went through Rexx and back is its cause, and a
   condition of Rexx that went through JavaScript and back is raised again
   as itself, with its description and result; a condition on its way to a
-  trap below a call from JavaScript (SIGNAL ON) answers that call first.
+  trap below a call from JavaScript (SIGNAL ON) answers that call first,
+  and refuses further calls of Rexx until it reaches the trap.
 - Strings are text both ways: a Rexx string must be UTF-8 and a JavaScript
   string well-formed (no lone surrogate), else SYNTAX 23.900, an invalid
   data string (nothing is replaced by U+FFFD); binary data goes as
@@ -149,7 +150,7 @@ of Array, Directory and StringTable are copied too, read by SUPPLIER
  wasm/tests/boolean-test.rex            |   82 +
  wasm/tests/js-arrays.rex               |  169 +++
  wasm/tests/js-booleans.rex             |   71 +
- wasm/tests/js-errors.rex               |  222 +++
+ wasm/tests/js-errors.rex               |  225 +++
  wasm/tests/js-extend-gc.rex            |  111 ++
  wasm/tests/js-extend.rex               |  157 ++
  wasm/tests/js-floats.rex               |  112 ++
@@ -160,12 +161,12 @@ of Array, Directory and StringTable are copied too, read by SUPPLIER
  wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 1924 ++++++++++++++++++++++++
+ wasm/web-js.cpp                        | 1934 ++++++++++++++++++++++++
  wasm/web/boolean.cls                   |  172 +++
  wasm/web/js.cls                        |  750 +++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 +++
- 26 files changed, 6273 insertions(+), 12 deletions(-)
+ 26 files changed, 6286 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -2220,10 +2221,10 @@ index 0000000..90dc7a2
 +::requires "js.cls"
 diff --git a/wasm/tests/js-errors.rex b/wasm/tests/js-errors.rex
 new file mode 100644
-index 0000000..a08d2c9
+index 0000000..cfffc39
 --- /dev/null
 +++ b/wasm/tests/js-errors.rex
-@@ -0,0 +1,222 @@
+@@ -0,0 +1,225 @@
 +/* js-errors.rex: tests of errors and text across the JavaScript bridge      */
 +/* (wasm/js-realm.js, wasm/web-js.cpp), in the realm where Rexx runs: the    */
 +/* worker's in the browser, Node's under Node.  A Rexx condition in          */
@@ -2299,6 +2300,8 @@ index 0000000..a08d2c9
 +  .local~userTrapped == "USER MINE | the description | two | (none)"
 +call check "... and JavaScript is not left waiting: it was told, and goes on", -
 +  .js~Promise~resolve(5)~await == 5 & .js~lastSignalled~pos("went past this call") > 0
++call check "... and meanwhile a further call of Rexx from JavaScript is refused, not run", -
++  .js~secondCall~pos("no Rexx code runs on this thread") > 0
 +call on user mine name callOnUser
 +r = F("o", "return 'JavaScript went on: ' + o.user()")~call(.nil, o)
 +call off user mine
@@ -2389,7 +2392,8 @@ index 0000000..a08d2c9
 +userThroughJs: procedure            -- SIGNAL ON USER MINE around a call of JavaScript that raises it
 +  use arg o
 +  signal on user mine name userSignalled
-+  F("o", "try { o.user() } catch (e) { globalThis.lastSignalled = e.message; throw e }")~call(.nil, o)
++  F("o", "try { o.user() } catch (e) { globalThis.lastSignalled = e.message;" -
++    "try { o.add(1); globalThis.secondCall = 'ran' } catch (e2) { globalThis.secondCall = e2.message } throw e }")~call(.nil, o)
 +  return
 +userSignalled:
 +  c = condition("O")
@@ -2978,7 +2982,7 @@ index 0000000..c89f67e
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..2820fd6 100755
+index e1c1cd8..76718be 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -200,6 +200,222 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
@@ -3094,7 +3098,7 @@ index e1c1cd8..2820fd6 100755
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-proxy.rex'"
 +# --- errors both ways (RexxError's fields and cause, additional[3]) and text
 +# (no U+FFFD: a string that is not UTF-8, or not well-formed, is an error)
-+check "JavaScript objects: errors both ways, and text" '^46 passed, 0 failed$' '!^FAIL ' -- \
++check "JavaScript objects: errors both ways, and text" '^47 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-errors.rex'"
 +# --- booleans: .Boolean (boolean.cls, a verbatim copy of the class proposed
 +# in RFE #880; its own tests) both ways across the bridge
@@ -3227,7 +3231,7 @@ index d544388..b13d517 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..8a9f5bf 100755
+index 3940711..d0b71b7 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -49,7 +49,10 @@ if len(sys.argv) != 2:
@@ -3333,7 +3337,7 @@ index 3940711..8a9f5bf 100755
 +     lambda r: r["out"] == "trapped the description\n2\n" and r["rc"] == 0),
 +  # errors both ways and text, in the worker's realm: the portable test
 +  ("js errors", open(f"{SRC}/wasm/tests/js-errors.rex").read(), {"js": {"worker": True}},
-+     lambda r: "46 passed, 0 failed" in r["out"] and r["rc"] == 0),
++     lambda r: "47 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # booleans both ways (.Boolean), in the worker's realm: the portable test
 +  ("js booleans", open(f"{SRC}/wasm/tests/js-booleans.rex").read(), {"js": {"worker": True}},
 +     lambda r: "22 passed, 0 failed" in r["out"] and r["rc"] == 0),
@@ -3627,10 +3631,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..b7b855a
+index 0000000..9b87789
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,1924 @@
+@@ -0,0 +1,1934 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -3932,9 +3936,19 @@ index 0000000..b7b855a
 +// unwinds through here; it must not leave JavaScript waiting, nor this
 +// thread's request half done (JavaScript would write into it later).  So
 +// the call answers an error, and the unwinding is kept in escaped, to go on
-+// when the request this thread waits for is over
++// when the request this thread waits for is over.  Until then no Rexx may
++// run on this thread: the activations being unwound stay on the activity's
++// stack until the trap's activation takes them off, so a later call is
++// answered with an error instead (running it crashed)
 +static std::string runCallbackGuarded(RexxThreadContext *c, const std::string &call, std::exception_ptr &escaped)
 +{
++    if (escaped)
++    {
++        std::string out;
++        putRec(out, 'E', "Error: a condition of Rexx is on its way to a trap of the code that called JavaScript: "
++                         "no Rexx code runs on this thread until it gets there");
++        return out;
++    }
 +    try
 +    {
 +        return runCallback(c, call);

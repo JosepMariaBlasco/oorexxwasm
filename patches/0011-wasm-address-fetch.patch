@@ -247,7 +247,7 @@ index 0000000..01451f3
 +
 +::requires "fetch.cls"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 2f22bb7..25c4552 100755
+index ddda4af..9e31544 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -420,6 +420,13 @@ check "a logic error ends the process with a non-zero status" '^Logic error: can
@@ -265,7 +265,7 @@ index 2f22bb7..25c4552 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index ac9d608..184c254 100755
+index 74615a0..ebdae4f 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -67,6 +67,9 @@ class H(SimpleHTTPRequestHandler):
