@@ -57,7 +57,7 @@ to ooRexx as an optional extension, and moved to the core later if wanted.
 
 ```rexx
 ::requires "cmdhandler.cls"
-.CommandHandler~register("DEMO", obj)    -- obj isA .CommandHandler; .nil removes
+.CommandHandler~register("DEMO", obj)    -- obj isA .CommandHandler; ~unregister(name) removes
 -- each command: obj~command(command, context) -> RC (0 if nothing returned)
 ```
 

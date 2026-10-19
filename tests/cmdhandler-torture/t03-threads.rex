@@ -112,7 +112,7 @@ unexpected:
   h = .Counter~new
   do i = 1 to flips while .local~flipping
     .CommandHandler~register("FLIP", h)
-    .CommandHandler~register("FLIP", .nil)
+    .CommandHandler~unregister("FLIP")
   end
   return i - 1
 

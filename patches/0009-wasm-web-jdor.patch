@@ -20,7 +20,9 @@ the HTML canvas, no Java involved.
   corrections its author accepted in October 2026).  The objects
   commands return say what they are, JDOR objects of the browser build
   ("JDOR Image #99: 500x500, ..."), and where Java throws an exception the
-  condition's description reads "JDOR (web): ...".  Images are
+  condition's description reads "JDOR (web): ..."; an unexpected exception
+  (a bug of the port, or a failure of the browser) is SYNTAX 98.900, as any
+  JavaScript exception in Rexx.  Images are
   OffscreenCanvases; at most once per animation frame a visible window's
   image goes to the page as an ImageBitmap.  Areas use polygon-clipping
   (MIT, wasm/web/polygon-clipping.umd.min.js), loaded on first use.
@@ -50,19 +52,22 @@ the HTML canvas, no Java involved.
 - wasm/tests/web-api.py: 13 JDOR cases.
 ---
  interpreter/package/PackageManager.cpp |    4 +-
- wasm/README.md                         |   73 +-
+ wasm/README.md                         |   76 +-
  wasm/build-web.sh                      |   22 +-
  wasm/extra-packages.cpp                |    9 +-
+ wasm/js-bridge.js                      |    3 +
+ wasm/js-realm.js                       |    2 +-
  wasm/tests/web-api.html                |   21 +-
- wasm/tests/web-api.py                  |   84 +-
- wasm/web-jdor.cpp                      |  467 +++++
- wasm/web-jdor.js                       | 2218 ++++++++++++++++++++++++
+ wasm/tests/web-api.py                  |   96 +-
+ wasm/web-jdor.cpp                      |  477 +++++
+ wasm/web-jdor.js                       | 2232 ++++++++++++++++++++++++
+ wasm/web-js.cpp                        |    8 +
  wasm/web/BSF.CLS                       |  110 ++
  wasm/web/jdor.cls                      |  124 ++
  wasm/web/ooRexx-worker.js              |   14 +-
  wasm/web/ooRexx.js                     |   19 +-
  wasm/web/polygon-clipping.umd.min.js   |   39 +
- 13 files changed, 3182 insertions(+), 22 deletions(-)
+ 16 files changed, 3233 insertions(+), 23 deletions(-)
  create mode 100644 wasm/web-jdor.cpp
  create mode 100644 wasm/web-jdor.js
  create mode 100644 wasm/web/BSF.CLS
@@ -85,10 +90,10 @@ index 786af1f..e949832 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index bcd4703..8723803 100644
+index 05ad52b..263f176 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -227,7 +227,75 @@ off, or changes the strings.
+@@ -227,7 +227,78 @@ off, or changes the strings.
  isolated (see above).  `wasm/tests/web-api.py BIN_WEB` runs assertions over the
  API in headless Chromium (Python Playwright): output, interactive and fixed
  stdin, EOF, stop, threads, files in and out, extension classes, rexxtry,
@@ -130,7 +135,10 @@ index bcd4703..8723803 100644
 +  Stroke's `getDashArray`, an Area's `isRectangular` and `isEmpty`, a
 +  Polygon's `npoints`, a PathIterator's `isDone` and `getWindingRule`.  They
 +  can be passed back by variable name, also to another handler.  Where the Java handler throws a
-+  Java exception, the ERROR condition's description reads `JDOR (web): ...`.
++  Java exception, the ERROR condition's description reads `JDOR (web): ...`;
++  an unexpected exception (not one the Java handler throws: a bug of the
++  port, or a failure of the browser) is SYNTAX 98.900, as any JavaScript
++  exception in Rexx, with the thrown object and its stack.
 +* Programs written for BSF4ooRexx also run unchanged: `web/BSF.CLS` (also
 +  `bsf.cls`; not the Java bridge, there is no Java here) provides
 +  `.bsf~new("org.oorexx.handlers.jdor.JavaDrawingHandler")`,
@@ -165,7 +173,7 @@ index bcd4703..8723803 100644
  
  ## The test suite's API groups (`wasm/build-test.sh`)
  
-@@ -481,7 +549,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -483,7 +554,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
@@ -268,6 +276,32 @@ index ebd946e..57c5181 100644
          if (orx_wasm_js_package != NULL) packages[n++] = { "js", orx_wasm_js_package() };
          packages[n] = { NULL, NULL };
          ready = true;
+diff --git a/wasm/js-bridge.js b/wasm/js-bridge.js
+index ea8b80b..cf52734 100644
+--- a/wasm/js-bridge.js
++++ b/wasm/js-bridge.js
+@@ -124,6 +124,9 @@
+     return reply;
+   }
+   const local = orxJsRealm(LOCAL, emit, syncCall);
++  // a JavaScript exception as the records of an error reply, for a command
++  // handler written in JavaScript that raises it itself (JDOR: web-jdor.js)
++  Module['orxJsThrown'] = (e) => local.thrown(e);
+ 
+   // a RexxError nobody catches (a synchronous handler's condition thrown in an
+   // event listener, which JavaScript reports instead of passing on): written
+diff --git a/wasm/js-realm.js b/wasm/js-realm.js
+index c55c498..452989b 100644
+--- a/wasm/js-realm.js
++++ b/wasm/js-realm.js
+@@ -986,6 +986,6 @@ var orxJsRealm = (function () {
+     return w.bytes();
+   }
+ 
+-  return { realm: REALM, handle: handleRequest, release, close, errorText, Reader };
++  return { realm: REALM, handle: handleRequest, release, close, errorText, Reader, thrown: errReply };
+   };
+ })();
 diff --git a/wasm/tests/web-api.html b/wasm/tests/web-api.html
 index b13d517..cb5c6fa 100644
 --- a/wasm/tests/web-api.html
@@ -321,7 +355,7 @@ index b13d517..cb5c6fa 100644
  };
  </script>
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 55223aa..a86a755 100755
+index 88dca1c..b1d59a9 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -42,7 +42,7 @@ Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP
@@ -333,7 +367,7 @@ index 55223aa..a86a755 100755
  from playwright.sync_api import sync_playwright
  
  if len(sys.argv) != 2:
-@@ -139,6 +139,88 @@ CASES = [
+@@ -139,6 +139,100 @@ CASES = [
                         '::options trace r', {},
       lambda r: r["out"].count("  worker") == 12 and "total 4\n" in r["out"] and "*-*" in r["err"]
                 and r["err"] == r["trace"] and r["errmsg"] == ""),
@@ -343,6 +377,18 @@ index 55223aa..a86a755 100755
 +     {"probe": [20, 20]}, lambda r: r["rc"] == 0 and r["jdor"] and list(r["jdor"].values())[0]["title"] == "T1"
 +                                   and list(r["jdor"].values())[0]["frames"] >= 1
 +                                   and list(r["jdor"].values())[0]["probe"] == [255, 0, 0, 255]),
++  # an unexpected exception (not one the Java handler throws): SYNTAX 98.900,
++  # with the TypeError and its stack; a JdorError is still ERROR -102
++  ("jdor unexpected", 'w = .js; saved = w~js.getStrict("OffscreenCanvas")\n'
++                      'w~js.setStrict("OffscreenCanvas", w~Function~new("throw new TypeError(\'no canvas\')"))\n'
++                      'signal on syntax name s1; address jdor "newImage 20 20"\n'
++                      's1: c = condition("O"); a = c~additional\n'
++                      'say c~code a~items a[1] "|" a[2]~js.className a[2]~message "|" (a[3]~pos("TypeError") > 0)\n'
++                      'w~js.setStrict("OffscreenCanvas", saved)\n'
++                      'call on error name e1; address jdor "fillRect X 1"; say "no error"; exit\n'
++                      'e1: say condition("C") rc\n'
++                      '::requires "jdor.cls"\n::requires "js.cls"', {"js": {"worker": True}},
++     lambda r: r["out"] == "98.900 3 JavaScript error: TypeError: no canvas | TypeError no canvas | 1\nERROR -102\n"),
 +  ("jdor results", 'address jdor\nmoveTo 3 4; moveTo 5 6; say rc\ncolor c1 1 2 3; color; '
 +                   'say rc~toString rc~red rc~getBlue\nstringBounds "Rexx"; say words(rc)\ntranslate; say rc\n'
 +                   '::requires "jdor.cls"', {},
@@ -424,10 +470,10 @@ index 55223aa..a86a755 100755
       lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
 diff --git a/wasm/web-jdor.cpp b/wasm/web-jdor.cpp
 new file mode 100644
-index 0000000..7c5a58b
+index 0000000..e7e38d7
 --- /dev/null
 +++ b/wasm/web-jdor.cpp
-@@ -0,0 +1,467 @@
+@@ -0,0 +1,477 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -677,6 +723,9 @@ index 0000000..7c5a58b
 +}
 +
 +// run one command; returns the result and tells whether a condition was raised
++// web-js.cpp: raise the SYNTAX 98.900 of a JavaScript exception (E records)
++void orxJsRaiseThrown(RexxThreadContext *c, const std::string &records);
++
 +static RexxObjectPtr runCommand(RexxExitContext *c, RexxIORedirectorContext *io, const char *address,
 +                                const std::string &command, bool &raised)
 +{
@@ -744,6 +793,13 @@ index 0000000..7c5a58b
 +                raised = true;
 +                break;
 +            }
++            case 'Q':
++                // an unexpected JavaScript exception: SYNTAX 98.900, as the
++                // JavaScript bridge raises one (web-js.cpp: E records)
++                orxJsRaiseThrown(c->threadContext, r.data);
++                raised = true;
++                result = c->threadContext->Nil();
++                break;
 +            default: break;
 +        }
 +    }
@@ -897,10 +953,10 @@ index 0000000..7c5a58b
 +}
 diff --git a/wasm/web-jdor.js b/wasm/web-jdor.js
 new file mode 100644
-index 0000000..f7e8979
+index 0000000..0455859
 --- /dev/null
 +++ b/wasm/web-jdor.js
-@@ -0,0 +1,2218 @@
+@@ -0,0 +1,2232 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -2900,6 +2956,7 @@ index 0000000..f7e8979
 +    } catch (e) {
 +      if (e instanceof NeedVar) { h.nrCommand--; throw e; }
 +      if (e instanceof Cond) { c.cond = e; if (e.label) c.write('-- ERROR (' + e.label + '): [' + command + ']'); }
++      else if (!(e instanceof JdorError) && thrownRecords(e)) { c.out.length = out0; c.thrown = e; }
 +      else {
 +        c.out.length = out0;
 +        c.write('-- ERROR (argument): [' + command + ']');
@@ -2968,6 +3025,17 @@ index 0000000..f7e8979
 +    }
 +    return vars;
 +  }
++  // an unexpected exception (not a JdorError: a bug of this port, or a failure
++  // of the browser that JDOR does not foresee) as the JavaScript bridge gives
++  // one to Rexx (js-realm.js: E message, the thrown value, S its stack), for
++  // SYNTAX 98.900 instead of the Java handler's ERROR -102; null without the
++  // bridge.  Kept per exception, so that its handle is made once
++  const thrownMemo = new WeakMap();
++  function thrownRecords(e) {
++    if (typeof Module['orxJsThrown'] !== 'function' || e === null || typeof e !== 'object') return null;
++    if (!thrownMemo.has(e)) thrownMemo.set(e, Module['orxJsThrown'](e));
++    return thrownMemo.get(e);
++  }
 +  function reply(parts) {
 +    let n = 0;
 +    for (const p of parts) n += p.length;
@@ -2981,7 +3049,8 @@ index 0000000..f7e8979
 +    for (const line of c.out) rec(parts, 'O', line);
 +    for (const [name, v] of c.setVars) { rec(parts, 'V', name); value(parts, v); }
 +    if (c.sleep > 0) rec(parts, 'Z', c.sleep);
-+    if (c.cond) rec(parts, 'C', c.cond.type + ' ' + c.cond.rc + ' ' + h.nrCommand + ' ' + c.cond.msg);
++    if (c.thrown !== undefined) parts.push(enc.encode('Q' + thrownRecords(c.thrown).length + ':'), thrownRecords(c.thrown));
++    else if (c.cond) rec(parts, 'C', c.cond.type + ' ' + c.cond.rc + ' ' + h.nrCommand + ' ' + c.cond.msg);
 +    else if (c.result !== undefined) { rec(parts, 'R', ''); value(parts, c.result); }
 +    return reply(parts);
 +  }
@@ -3084,6 +3153,7 @@ index 0000000..f7e8979
 +    return c.async.then(() => replyFor(c, h), (e) => {
 +      c.out = c.out.filter((l) => !l.startsWith(c.canonical));
 +      if (e instanceof Cond) { c.cond = e; if (e.label) c.write('-- ERROR (' + e.label + '): [' + command + ']'); return replyFor(c, h); }
++      if (!(e instanceof JdorError) && thrownRecords(e)) { c.thrown = e; return replyFor(c, h); }
 +      c.write('-- ERROR (argument): [' + command + ']');
 +      c.cond = new Cond('ERROR', '-102', e instanceof JdorError ? e.toString() : 'JDOR (web): ' + e);
 +      return replyFor(c, h);
@@ -3119,6 +3189,32 @@ index 0000000..f7e8979
 +    queue = queue.then(() => r).then(finish, fail);
 +  };
 +})();
+diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
+index f9359a6..7beadd0 100644
+--- a/wasm/web-js.cpp
++++ b/wasm/web-js.cpp
+@@ -661,6 +661,7 @@ static RexxObjectPtr toRexx(RexxThreadContext *c, const std::string &s, size_t &
+             size_t t1 = r.data.find('\t'), t2 = r.data.find('\t', t1 + 1);
+             if (jsObjectClass == NULLOBJECT || t1 == std::string::npos || t2 == std::string::npos)
+             {
++                if (t2 != std::string::npos) return c->String(r.data.substr(t2 + 1).c_str());   // without js.cls
+                 return c->String(r.data.c_str());
+             }
+             RexxArrayObject args = c->ArrayOfThree(c->String(r.data.substr(0, t1).c_str()),
+@@ -1056,6 +1057,13 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
+     return NULLOBJECT;
+ }
+ 
++// the SYNTAX 98.900 of a JavaScript exception given as its E records
++// (js-realm.js's thrown(), for JDOR: web-jdor.cpp)
++void orxJsRaiseThrown(RexxThreadContext *c, const std::string &records)
++{
++    result(c, records);
++}
++
+ static RexxObjectPtr request(RexxThreadContext *c, int op, const std::string &data)
+ {
+     releaseUnpinned(c);
 diff --git a/wasm/web/BSF.CLS b/wasm/web/BSF.CLS
 new file mode 100644
 index 0000000..59e2f82

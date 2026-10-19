@@ -32,7 +32,7 @@ end
 call check many "environments, each its own handler", good == many
 failed = ""; gone = 0
 do i = 1 to many
-  .CommandHandler~register("E" || i, .nil)
+  .CommandHandler~unregister("E" || i)
   address value "E" || i
   "WHO"
   if failed == 30 then gone += 1
@@ -120,7 +120,7 @@ unexpected:
   use arg command, context
   select case command
     when "DROPME" then do
-      .CommandHandler~register("SELF", .nil)
+      .CommandHandler~unregister("SELF")
       return "dropped"
     end
     when "REPLACE" then do

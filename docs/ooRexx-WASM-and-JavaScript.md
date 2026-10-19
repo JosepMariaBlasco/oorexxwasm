@@ -1,10 +1,10 @@
 # ooRexx/WASM and JavaScript
 
-October 17, 2026
+October 19, 2026
 
 *Version 2. [Version 1](posted/2026-10-08/ooRexx-WASM-and-JavaScript.md) was posted to the ooRexx developers' list on October 8, 2026; [Changes since version 1](#changes-since-version-1) lists what differs.*
 
-**What is new.** Version 1 described one direction, Rexx using JavaScript, and asked three questions. Version 2 answers them (see [Questions decided](#questions-decided)) and adds the other direction: Rexx objects reach JavaScript, which sends them messages; a page runs Rexx as it runs JavaScript; and a Rexx class can extend a JavaScript class. Readers of version 1 may go straight to the sections that are new, [Waiting](#waiting), [Rexx objects in JavaScript](#rexx-objects-in-javascript), [Rexx from the page](#rexx-from-the-page) and [Classes](#classes), and to the summary of changes at the end. Names changed too: the bridge's own methods now start with `js.`, and arrays count from 1.
+**What is new.** Version 1 described one direction, Rexx using JavaScript, and asked three questions. Version 2 answers them (see [Questions decided](#questions-decided)) and adds the other direction: Rexx objects reach JavaScript, which sends them messages; a page runs Rexx as it runs JavaScript; and a Rexx class can extend a JavaScript class. Readers of version 1 may go straight to the sections that are new, [Waiting](#waiting), [Rexx objects in JavaScript](#rexx-objects-in-javascript), [Rexx from the page](#rexx-from-the-page), [Classes](#classes) and [Command environments](#command-environments), and to the summary of changes at the end. Names changed too: the bridge's own methods now start with `js.`, and arrays count from 1.
 
 ## What this is
 
@@ -72,6 +72,7 @@ Errors cross the bridge both ways, and what was thrown is kept.
 - **JavaScript to Rexx.** A JavaScript exception is SYNTAX 98.900, "JavaScript error: TypeError: …". So is a rejected Promise under `~await`. `condition("O")~additional` holds `[1]` that message, `[2]` what was thrown, and `[3]` its stack, as text, when it has one (an `Error` has; `throw 42` has not).
 - **Rexx to JavaScript.** A condition in Rexx code that JavaScript called (a synchronous handler, a message to a `RexxProxy`, an override of a class made by `.js~extend`) is thrown to JavaScript as a `RexxError`, an `Error` whose message is Rexx's ("Error 41.1: …") and whose properties are the condition's, as far as it has them: `condition` ("SYNTAX"), `code` ("41.1", a string), `rc` and `line` (numbers), `errorText`, `program`, and `traceback`, the lines Rexx shows, joined by "\n". In the page, where a call gives a Promise, the Promise is rejected with it. `RexxError` is a global of the realm, for `instanceof`. (A HALT nobody traps reaches JavaScript as SYNTAX 4.1, as it reaches any caller of Rexx.)
 - **Through Rexx and back.** A JavaScript exception that goes through Rexx untrapped (JavaScript calls Rexx, which calls JavaScript, which throws) comes back to JavaScript as a `RexxError` whose `cause` is the very object thrown, so `e.cause instanceof TypeError` holds; a thrown primitive comes back as its string. A condition of Rexx's own has no `cause`.
+- **Through JavaScript and back.** A condition of Rexx that goes through JavaScript untrapped (Rexx calls JavaScript, which calls Rexx, which raises it; JavaScript lets the `RexxError` through, or catches it and throws it again) is raised in Rexx as itself: the same code, message and `additional`, not a JavaScript error. So the two round trips meet: a JavaScript exception that crosses Rexx and JavaScript any number of times is still the 98.900 with the very object thrown in `additional[2]`, and its `cause` in JavaScript. A `RexxError` that JavaScript makes itself (`new RexxError(...)`) is a JavaScript exception like any other.
 - **Nobody to tell.** When JavaScript calls Rexx on its own (a timer, a Node server) it does not wait for the answer, so a condition there is written on the standard error, and so is a `RexxError` an event listener does not pass on.
 
 ## Events
@@ -197,6 +198,7 @@ s.stop();
 | `s.eval(source, ...args)` | `source` run as a routine (`USE ARG`, `RETURN`): its result |
 | `s.routine(name, source)` | a `Routine`: `r.call(...args)` |
 | `s.loadPackage(name, source)` | a `Package`, its prolog run; without `source`, the file `name` (`'dom.cls'`) |
+| `s.addCommandEnvironment(name, fn)`, `s.removeCommandEnvironment(name)` | `.js~addCommandEnvironment(name, fn)`, `.js~removeCommandEnvironment(name)`, `fn` a function of the page (see [Command environments](#command-environments)) |
 
 A session is a run whose program, `.js~session`, hands the page a `.JSSession` and then takes events for good: the session's calls, and the events of the handlers its code sets up, run one at a time, in the order they come. What a session makes sees `js.cls`, and the public classes and routines of what it made before, as the scripts of a page see each other's globals. `s` has what `run()` returns besides (`done`, `stop`, `write`, `close`); `s.rexx` is the `.JSSession` itself.
 
@@ -244,6 +246,24 @@ say c~describe                    -- Car's describe() calls this.age(): "Seat is
 
 This needs a realm where JavaScript can wait for Rexx: the worker's and Node's. In the page, `extend` is an error.
 
+## Command environments
+
+A JavaScript function can serve an `ADDRESS` environment, as a Rexx object can with `cmdhandler.cls` (command environments written in Rexx) and as the other bridges' host functions do:
+
+```rexx
+calc = .js~Function~new("command", "ctx", "return eval(command)")
+.js~addCommandEnvironment("CALC", calc)
+address calc "6 * 7"; say rc                 -- 42
+.js~removeCommandEnvironment("CALC")         -- CALC is an unknown environment again
+```
+
+- **The call.** For each command, the function is called as `fn(command, ctx)`, on the Rexx thread that issued the command, which waits for it. What it returns is `RC` (`undefined` or `null`: 0); a Promise is waited for, and what it gives is `RC`. The function may be of any realm: one of the page's runs in the page.
+- **The context.** `ctx` is a `RexxProxy` of the command's context, valid while the command runs: `ctx.lineIn()` (the next line of `WITH INPUT`, `null` at its end), `ctx.lines()`, `ctx.output(x)` and `ctx.error(x)` (a string or an array of lines, to `WITH OUTPUT` and `WITH ERROR`; without them, to the console, as a command's own output), `ctx.isRedirected(kind)` (`"Input"`, `"Output"`, `"Error"`), `ctx.getVar(name)` (`null` when the variable has no value), `ctx.hasVar(name)`, `ctx.setVar(name, value)`, `ctx.dropVar(name)` (simple, stem and compound names), `ctx.variables()`, `ctx.environment()`, `ctx.isValid()`. The tests answer booleans. `return ctx.raiseError(rc)` and `return ctx.raiseFailure(rc)` raise ERROR and FAILURE in the code that issued the command; `RC` alone, whatever its sign, raises nothing. In the page, as every call of Rexx there, each call gives a Promise: `await ctx.getVar("X")`.
+- **Errors.** A JavaScript exception in the function (or a rejected Promise) is SYNTAX 98.900 in the code that issued the command, with `additional` as for any JavaScript exception; a condition of Rexx that it lets through, from a call of `ctx` or of any Rexx object, is raised there as itself (see [Errors](#errors)).
+- **Registering.** `.js~addCommandEnvironment(name, fn)` registers it for the interpreter instance, and registering a name again replaces its handler; `.js~removeCommandEnvironment(name)` removes it, and the name then answers FAILURE with `RC` 30, as an unknown environment. A handler that is `.nil`, or anything but a function, is an error (SYNTAX 93.900). From the page, a session has the same two (see [Rexx from the page](#rexx-from-the-page)), and `rexx.start({commandEnvironments: {CALC: fn}})` registers them before it hands the session over.
+
+This is built on `cmdhandler.cls`: a JavaScript handler is a `.CommandHandler`, and `.CommandHandler~unregister(name)` removes it too.
+
 ## Pitfalls
 
 Each of these has a way out, as in BSF4ooRexx:
@@ -260,7 +280,7 @@ Each of these has a way out, as in BSF4ooRexx:
 - Each operation runs on the thread of its realm, so any Rexx thread may use any `.JSObject`.
 - `~await` blocks only the Rexx thread that waits; meanwhile that thread runs the page's calls of Rexx, if any come.
 - Names are looked up when the message arrives, so a property added later is found.
-- What a JavaScript exception threw is kept, in `condition("O")~additional[2]`, and comes back to JavaScript as the `cause` of the `RexxError` if Rexx does not trap it.
+- What a JavaScript exception threw is kept, in `condition("O")~additional[2]`, and comes back to JavaScript as the `cause` of the `RexxError` if Rexx does not trap it; a condition of Rexx that JavaScript does not trap comes back to Rexx as itself.
 - No string is changed on its way: what is not text is an error.
 - A JavaScript boolean that goes through Rexx and back is still a boolean.
 - A `.JSObject` keeps its JavaScript object alive while Rexx holds it, and no longer.
@@ -286,10 +306,11 @@ Further replies on the list are very welcome.
 | **Names.** The bridge's own methods start with `js.` (`js.typeOf`, `js.className`, `js.instanceOf`, `js.hasProperty`, `js.propertyNames`, `js.byteString`), as BSF4ooRexx's with `bsf.`; exact names with `js.getStrict`, `js.setStrict`, `js.invokeStrict` (was `invoke`); a function is called with JavaScript's `f~call(this, args...)`; `ooRexx.js`'s global is `ooRexx` (was `OoRexx`) | Messages, Pitfalls, Rexx from the page |
 | **Arrays.** Arrays and typed arrays count from 1 with `o[i]`, `~at(i)`, `~put(v, i)` and `DO WITH`; lists keep 0; JavaScript's `at` is `o~js.invokeStrict("at", i)` | Messages, Pitfalls |
 | **Values.** undefined comes back as `.js~undefined` (was `.nil`), and a missing property reads as it; `.js~box(type, x)` with BSF4ooRexx's type indicators, and `.js~unbox(o)`; `.js~newObject(name, value, ...)`, with exact names; a string that is not text (not UTF-8, a lone surrogate) is SYNTAX 23.900 (it was changed to U+FFFD); booleans are `.Boolean` both ways (RFE #880; they came back as 1/0), and `.js~bool`, `.js~true`, `.js~false` give `.Boolean`; a multi-dimensional Array goes as nested arrays (it was flattened), and copies keep cycles and sharing (a cycle was cut at 64 levels, silently, as was any deeper nesting); a number's text follows ooRexx's `x + 0` under `NUMERIC DIGITS 17` (it followed JavaScript's `String()`: `1E-7`, `100000000000000000`), `-0` is kept (it became `0`), and NaN and the infinities are `nan`, `+infinity`, `-infinity` (they were `NaN`, `Infinity`, `-Infinity`, which `.js~num` still reads); a Rexx number out of range for a JavaScript number is a `RangeError` for `.js~num` and `.js~box` (it became an infinity or a zero, silently); subclasses of Array, Directory and StringTable are copied, read with `SUPPLIER` (they went by reference), and `.js~ref(x)` sends any object by reference (new); reading or writing past the end of a typed array is an error (it read `.js~undefined`, and a write was lost silently); an array or typed array answers `items`, `size`, `dimension`, `dimensions` and `hasIndex` as a Rexx Array (they read JavaScript properties it does not have) | Messages, Values, Pitfalls, Rexx objects in JavaScript, Guarantees |
-| **Errors.** Gathered in one section; a condition in Rexx called by JavaScript is a `RexxError` with the condition's fields (`condition`, `code`, `rc`, `errorText`, `program`, `line`, `traceback`); a JavaScript exception that goes through Rexx and back is its `cause`; `additional[3]` is a JavaScript exception's stack | Errors, Guarantees |
+| **Errors.** Gathered in one section; a condition in Rexx called by JavaScript is a `RexxError` with the condition's fields (`condition`, `code`, `rc`, `errorText`, `program`, `line`, `traceback`); a JavaScript exception that goes through Rexx and back is its `cause`; `additional[3]` is a JavaScript exception's stack; a condition of Rexx that goes through JavaScript and back is raised again as itself (it became a 98.900 "JavaScript error: RexxError: ...") | Errors, Guarantees |
 | **Handlers.** Synchronous in the worker's realm and under Node, as `.net~handler` (a comparator for `sort` works), and may use the RexxAPI there; queued in the page and with option `queued`, `latest` or `max n` (new); released when JavaScript collects their function; `.js~eventLoop` is `.js~runEventLoop`, and the event queue is explained | Events, Waiting |
 | **Waiting.** Why JavaScript cannot wait for Rexx in the page, and what to do instead | Waiting |
 | **Rexx objects in JavaScript.** Any other Rexx object goes as a `RexxProxy` (it went as its string): messages, BSF4ooRexx's `sendMessage` names, identity both ways; from the page, a call gives a Promise of the result | Values, Rexx objects in JavaScript, Rexx from the page |
 | **Rexx from the page.** Sessions, `rexx.start()`: `eval`, `routine`, `loadPackage`; and `<script type="text/rexx">`, which `?rexx-debug=1` runs under a debugger (`ooRexx-debugger.js`, `ooRexx.debugger`) | What this is, Rexx from the page |
+| **Command environments.** A JavaScript function serves an `ADDRESS` environment: `.js~addCommandEnvironment(name, fn)`, `.js~removeCommandEnvironment(name)`, and from the page `s.addCommandEnvironment` and `start({commandEnvironments})` (new) | Command environments, Rexx from the page |
 | **Classes.** A Rexx class extends a JavaScript class with `.js~extend(class, base [, names...])`, as `.net~extend`; the pairs are released by the collectors, and the class's `UNINIT` runs in its scope | Classes |
 | **Guarantees** stated, and the three questions of version 1 answered | Guarantees, Questions decided |

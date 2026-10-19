@@ -6,20 +6,23 @@ Subject: [PATCH] cmdhandler: command environments (ADDRESS) written in Rexx
 New extension package extensions/cmdhandler (cmdhandler.cpp + cmdhandler.cls),
 only public native API: .CommandHandler~register(name, object) makes an
 object whose class inherits .CommandHandler (a mixin class, COMMAND
-abstract; required) an ADDRESS environment; each command is sent as
+abstract; required) an ADDRESS environment, and ~unregister(name) removes it
+(the name then answers FAILURE RC 30, as an unknown environment; a handler
+of .nil is an error); each command is sent as
 object~command(command, .CommandContext), the result becomes RC.  The context
 gives WITH INPUT / OUTPUT / ERROR and the variables of the code that issued
 the command; ~raiseError / ~raiseFailure; SYNTAX errors reach the caller.
 Registrations are per interpreter instance, as the environments themselves:
-.local~CommandHandlers (name -> object) and .local~CommandContext.
+.local~CommandHandlers (name -> object), .local~CommandContext and
+.local~CommandHandlerNames (the native handler is added once per name).
 Native: libcmdhandler; WASM: embedded package (PackageManager table), .cls in
-bin / bin-node / bin-web.  Tests: wasm/tests/cmdhandler.rex (33 checks, also
+bin / bin-node / bin-web.  Tests: wasm/tests/cmdhandler.rex (44 checks, also
 in qualify-node-cli.sh and web-api.py); extensions/cmdhandler/tests/
 instances.cpp (two instances in one process, native).  Portable, not part
 of the posted RFE.
 ---
  CMakeLists.txt                            |  24 +-
- extensions/cmdhandler/cmdhandler.cls      | 176 ++++++++++
+ extensions/cmdhandler/cmdhandler.cls      | 192 +++++++++++
  extensions/cmdhandler/cmdhandler.cpp      | 397 ++++++++++++++++++++++
  extensions/cmdhandler/tests/ask.rex       |   2 +
  extensions/cmdhandler/tests/instances.cpp |  42 +++
@@ -27,10 +30,10 @@ of the posted RFE.
  interpreter/package/PackageManager.cpp    |   2 +
  wasm/build-node.sh                        |   2 +-
  wasm/build-web.sh                         |   2 +-
- wasm/tests/cmdhandler.rex                 | 265 +++++++++++++++
+ wasm/tests/cmdhandler.rex                 | 275 +++++++++++++++
  wasm/tests/qualify-node-cli.sh            |   4 +
  wasm/tests/web-api.py                     |   3 +
- 12 files changed, 929 insertions(+), 3 deletions(-)
+ 12 files changed, 955 insertions(+), 3 deletions(-)
  create mode 100644 extensions/cmdhandler/cmdhandler.cls
  create mode 100644 extensions/cmdhandler/cmdhandler.cpp
  create mode 100644 extensions/cmdhandler/tests/ask.rex
@@ -117,10 +120,10 @@ index 800ba2c..0f843d3 100644
  install(FILES ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/json.cls COMPONENT Core DESTINATION ${INSTALL_CLS_DIR})
 diff --git a/extensions/cmdhandler/cmdhandler.cls b/extensions/cmdhandler/cmdhandler.cls
 new file mode 100644
-index 0000000..598aee6
+index 0000000..85b65d5
 --- /dev/null
 +++ b/extensions/cmdhandler/cmdhandler.cls
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,192 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -170,12 +173,15 @@ index 0000000..598aee6
 + *    ~isValid               whether the command is still running
 + *
 + * A SYNTAX error in ~command reaches the code that issued the command.
-+ * .CommandHandler~register(name, .nil) removes the handler: the name then
-+ * behaves as an unknown environment (FAILURE, RC 30).
++ * .CommandHandler~unregister(name) removes the handler: the name then
++ * behaves as an unknown environment (FAILURE, RC 30).  A handler of .nil is
++ * an error (SYNTAX 93.900), not a way to remove one.
 + *
 + * The registrations are in .local (one set per interpreter instance, as the
 + * command environments): .local~CommandHandlers, a Directory name -> handler,
-+ * and .local~CommandContext, the context class.
++ * .local~CommandContext, the context class, and .local~CommandHandlerNames,
++ * the names whose native handler was added (once each: replacing or
++ * unregistering a handler does not add it again).
 + */
 +
 +::requires "cmdhandler" LIBRARY
@@ -184,25 +190,38 @@ index 0000000..598aee6
 +
 +::class CommandHandler public mixinclass Object
 +
-+-- the handler of ADDRESS name: an object whose class inherits .CommandHandler (.nil removes it)
++-- the handler of ADDRESS name: an object whose class inherits .CommandHandler
 +::method register class
 +  use strict arg name, handler
 +  name = name~request("String")
 +  if name == .nil | name == "" then
 +    raise syntax 93.900 array("register: the environment name must be a non-empty string")
-+  if handler \== .nil then do
-+    if \handler~isA(.CommandHandler) then
-+      raise syntax 93.900 array("register: the handler's class must inherit .CommandHandler")
-+  end
++  if handler == .nil then
++    raise syntax 93.900 array("register: the handler is .nil (to remove a handler, use .CommandHandler~unregister(name))")
++  if \handler~isA(.CommandHandler) then
++    raise syntax 93.900 array("register: the handler's class must inherit .CommandHandler")
 +  if .local~commandHandlers == .nil then do
 +    .local~commandHandlers = .directory~new
 +    .local~commandContext = .CommandContext
++    .local~commandHandlerNames = .set~new
 +  end
-+  if handler == .nil then .local~commandHandlers~remove(name~upper)
-+  else do
-+    .local~commandHandlers[name~upper] = handler
++  .local~commandHandlers[name~upper] = handler
++  -- the native handler is added once per name and instance, never again
++  -- (replacing or unregistering only changes .local~commandHandlers)
++  if \.local~commandHandlerNames~hasIndex(name~upper) then do
 +    call CmdHandler_Register name
++    .local~commandHandlerNames~put(name~upper)
 +  end
++  return
++
++-- remove the handler of ADDRESS name: the name then behaves as an unknown
++-- environment (FAILURE, RC 30); a name that has no handler is left alone
++::method unregister class
++  use strict arg name
++  name = name~request("String")
++  if name == .nil | name == "" then
++    raise syntax 93.900 array("unregister: the environment name must be a non-empty string")
++  if .local~commandHandlers \== .nil then .local~commandHandlers~remove(name~upper)
 +  return
 +
 +-- classes that inherit it implement it: use arg command, context; return RC
@@ -299,7 +318,7 @@ index 0000000..598aee6
 +  return rc
 diff --git a/extensions/cmdhandler/cmdhandler.cpp b/extensions/cmdhandler/cmdhandler.cpp
 new file mode 100644
-index 0000000..a080c79
+index 0000000..87b4b2b
 --- /dev/null
 +++ b/extensions/cmdhandler/cmdhandler.cpp
 @@ -0,0 +1,397 @@
@@ -407,7 +426,7 @@ index 0000000..a080c79
 +    RexxObjectPtr contextClass = local != NULLOBJECT ? c->DirectoryAt(local, "COMMANDCONTEXT") : NULLOBJECT;
 +    if (handler == NULLOBJECT || handler == c->Nil() || contextClass == NULLOBJECT)
 +    {
-+        // unregistered (a handler of .nil): like an unknown environment
++        // no handler (never registered, or unregistered): like an unknown environment
 +        RexxObjectPtr rc = c->WholeNumber(RXSUBCOM_NOTREG);
 +        c->RaiseCondition("FAILURE", command, NULLOBJECT, rc);
 +        return rc;
@@ -823,10 +842,10 @@ index aa24b52..93042c7 100755
  # JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
 diff --git a/wasm/tests/cmdhandler.rex b/wasm/tests/cmdhandler.rex
 new file mode 100644
-index 0000000..92f276a
+index 0000000..582ec28
 --- /dev/null
 +++ b/wasm/tests/cmdhandler.rex
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,275 @@
 +/* cmdhandler.rex: tests of cmdhandler.cls (command environments written in */
 +/* Rexx).  Portable: native and WASM builds.  Prints one line per check and */
 +/* exits 1 if any fails.                                                    */
@@ -946,10 +965,19 @@ index 0000000..92f276a
 +call check "command from another thread", msg~result == "thread ok"
 +.CommandHandler~register("t", .T2~new)
 +address t "ANYTHING";        call check "register again replaces; inherit CommandHandler", rc == "T2"
++signal on syntax name gotNilHandler
 +.CommandHandler~register("t", .nil)
++call check "register with .nil refused", .false
++afterNilHandler:
++address t "ANYTHING";        call check "still registered after the refused .nil", rc == "T2"
++.CommandHandler~unregister("t")
 +call on failure name gotFailure
 +address t "ANYTHING"
 +call check "unregistered: FAILURE RC 30", failed == 30
++.CommandHandler~unregister("nosuchname")
++call check "unregister a name with no handler: nothing happens", .true
++.CommandHandler~register("t", .T2~new)
++address t "ANYTHING";        call check "register again after unregister", rc == "T2"
 +call off failure
 +signal on syntax name gotNoCommand
 +.CommandHandler~register("v", .object~new)
@@ -970,6 +998,7 @@ index 0000000..92f276a
 +gotStale:      call check "stale context raises SYNTAX", condition("O")~code == "98.900"; signal afterStale
 +gotNoCommand:  call check "a handler not inheriting .CommandHandler refused", condition("O")~code == "93.900"; signal afterNoCommand
 +gotDuck:       call check "COMMAND alone is not enough: .CommandHandler required", condition("O")~code == "93.900"; signal afterDuck
++gotNilHandler: call check "register with .nil refused (SYNTAX 93.900)", condition("O")~code == "93.900"; signal afterNilHandler
 +
 +unexpected:
 +  say "UNEXPECTED" condition("O")~code condition("O")~message "line" sigl
@@ -1093,7 +1122,7 @@ index 0000000..92f276a
 +  address t "RETURN thread ok"
 +  return rc
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 44d65ae..524d5d8 100755
+index 72edaf7..9f1fc5e 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -416,6 +416,10 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
@@ -1108,7 +1137,7 @@ index 44d65ae..524d5d8 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index a86a755..73ee1ff 100755
+index b1d59a9..c7f72df 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -96,6 +96,9 @@ CASES = [

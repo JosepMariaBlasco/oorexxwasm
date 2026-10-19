@@ -44,15 +44,17 @@ Applied in order on top of ooRexx SVN trunk **r13275**
 | 0007 | `.JSObject`: JavaScript objects from Rexx (the worker's and the page's), events, Rexx objects in JavaScript, Rexx from the page |
 | 0008 | Node on Windows: Windows file names (written `C:/dir/file`), `;` in `PATH` lists, commands through `cmd.exe` (`ADDRESS CMD`), the RexxAPI daemon on a named pipe, `.cmd` launchers |
 | 0009 | `ADDRESS JDOR`: Rony G. Flatscher's JDOR drawing commands on the browser's canvas (an example environment) |
-| 0010 | Command environments written in Rexx (`cmdhandler`), a portable extension package that 0011 and 0012 use |
+| 0010 | Command environments written in Rexx (`cmdhandler`), a portable extension package that 0011, 0012 and 0013 use |
 | 0011 | `ADDRESS FETCH`: HTTP from Rexx commands (an example environment) |
 | 0012 | `ADDRESS DOM`: building and driving the page from Rexx commands (an example environment) |
+| 0013 | Command environments written in JavaScript: `.js~addCommandEnvironment(name, fn)`, on `cmdhandler` |
 
 0001–0008 are the RFE: the port, and `.JSObject`, which
 [`docs/ooRexx-WASM-and-JavaScript.md`](docs/ooRexx-WASM-and-JavaScript.md)
 specifies. 0009, 0011 and 0012 are example command environments built on
 them. 0010 is a separate, portable package, not WebAssembly-specific, on
-which 0011 and 0012 depend. The
+which 0011, 0012 and 0013 depend; 0013 makes JavaScript functions command
+environments, as `.JSObject`'s specification describes. The
 patches are in git format and apply with `svn patch` or `git am`;
 `patches/SHA256SUMS` lists their hashes.
 
