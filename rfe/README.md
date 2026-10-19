@@ -10,6 +10,7 @@ the test results and a link to the patches at the commit they describe.
 
 | Date | Update |
 |---|---|
+| 2026-10-19 | [The patches on trunk r13275, with the suite's results](2026-10-19/update.md) |
 | 2026-10-18 (6) | [Arrays answer `items`, `size`, `dimension`, `dimensions`, `hasIndex`](2026-10-18-6/update.md) |
 | 2026-10-18 (5) | [Past the end of a typed array is an error](2026-10-18-5/update.md) |
 | 2026-10-18 (4) | [A subclass is read by `SUPPLIER`](2026-10-18-4/update.md) |
