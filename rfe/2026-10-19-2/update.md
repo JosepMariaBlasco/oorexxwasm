@@ -70,7 +70,8 @@ for command handlers:
 - **0010** (`cmdhandler`): `.CommandHandler~unregister(name)` removes a
   handler (the name then answers FAILURE, RC 30, as an unknown
   environment), and registering `.nil` is an error (it removed the
-  handler); the native handler is added once per name.
+  handler), as is removing a name that has no handler; the native handler
+  is added once per name.
 - **0013** (new): command environments written in JavaScript,
   `.js~addCommandEnvironment(name, fn)` and
   `.js~removeCommandEnvironment(name)`, on `cmdhandler`; see

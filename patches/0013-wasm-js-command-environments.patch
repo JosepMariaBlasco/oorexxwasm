@@ -5,7 +5,8 @@ Subject: [PATCH] wasm: command environments (ADDRESS) written in JavaScript
 
 .js~addCommandEnvironment(name, fn) makes a JavaScript function, of any
 realm, an ADDRESS environment; .js~removeCommandEnvironment(name) removes
-it (the name then answers FAILURE RC 30, as an unknown environment).  Built
+it (the name then answers FAILURE RC 30, as an unknown environment; a
+name with no handler is an error).  Built
 on cmdhandler.cls: wasm/web/jscommands.cls, loaded by js.cls on first use,
 has .JSCommandHandler, a .CommandHandler whose ~command calls
 fn(command, ctx) on the Rexx thread that issued the command: what it returns
@@ -28,13 +29,13 @@ Not part of the posted RFE (it needs cmdhandler).
  wasm/README.md                 |  12 +++
  wasm/build-node.sh             |   1 +
  wasm/build-web.sh              |   1 +
- wasm/tests/js-commands.rex     | 144 +++++++++++++++++++++++++++++++++
+ wasm/tests/js-commands.rex     | 148 +++++++++++++++++++++++++++++++++
  wasm/tests/qualify-node-cli.sh |   6 ++
  wasm/tests/web-api.py          |  30 +++++++
  wasm/web/js.cls                |  29 +++++++
- wasm/web/jscommands.cls        | 110 +++++++++++++++++++++++++
- wasm/web/ooRexx.js             |  25 ++++--
- 9 files changed, 352 insertions(+), 6 deletions(-)
+ wasm/web/jscommands.cls        | 117 ++++++++++++++++++++++++++
+ wasm/web/ooRexx.js             |  26 ++++--
+ 9 files changed, 364 insertions(+), 6 deletions(-)
  create mode 100644 wasm/tests/js-commands.rex
  create mode 100644 wasm/web/jscommands.cls
 
@@ -87,10 +88,10 @@ index f4c4e38..8500088 100755
            "--preload-file" "$SRC/wasm/web/dom.cls@/usr/lib/ooRexx/dom.cls"
 diff --git a/wasm/tests/js-commands.rex b/wasm/tests/js-commands.rex
 new file mode 100644
-index 0000000..09777ca
+index 0000000..e072a36
 --- /dev/null
 +++ b/wasm/tests/js-commands.rex
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,148 @@
 +/*----------------------------------------------------------------------------*/
 +/* Command environments written in JavaScript (.js~addCommandEnvironment,    */
 +/* jscommands.cls on cmdhandler.cls), in the realm of .js: the worker's in   */
@@ -190,7 +191,11 @@ index 0000000..09777ca
 +raised = ""
 +address calc "anything"; call check "removed: FAILURE, RC 30 (an unknown environment)", raised == "FAILURE 30"
 +call off failure
-+.js~removeCommandEnvironment("calc"); call check "removed again: nothing happens", .true
++signal on syntax name s6
++.js~removeCommandEnvironment("calc")
++s6:
++call check "removed again: SYNTAX 93.900, no handler", condition("O")~code == "93.900" & -
++  condition("O")~message~pos("removeCommandEnvironment: no handler is registered for calc") > 0
 +call check ".nil: SYNTAX 93.900, removeCommandEnvironment named", refused(.nil)~pos("93.900 ") == 1 & -
 +  refused(.nil)~pos("removeCommandEnvironment") > 0
 +call check "a Rexx string: SYNTAX 93.900", refused("return 1")~word(1) == "93.900"
@@ -363,10 +368,10 @@ index 3859675..f5d83f6 100644
    if source~isA(.String) then return source~makeArray
 diff --git a/wasm/web/jscommands.cls b/wasm/web/jscommands.cls
 new file mode 100644
-index 0000000..45f078b
+index 0000000..22126e2
 --- /dev/null
 +++ b/wasm/web/jscommands.cls
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,117 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -385,6 +390,7 @@ index 0000000..45f078b
 + *    .js~addCommandEnvironment("CALC", calc)
 + *    address calc "6 * 7"; say rc                 -- 42
 + *    .js~removeCommandEnvironment("CALC")         -- CALC: FAILURE, RC 30
++ *                                                 -- (a name with no handler: an error)
 + *
 + * The handler is a JavaScript function of any realm (.js, .js~page), called
 + * as fn(command, ctx) for each command.  What it returns is RC (undefined or
@@ -421,11 +427,17 @@ index 0000000..45f078b
 +  .CommandHandler~register(name, self~new(fn))
 +  return
 +
-+-- .js~removeCommandEnvironment(name): FAILURE, RC 30, from now on
++-- .js~removeCommandEnvironment(name): FAILURE, RC 30, from now on; a name
++-- with no handler is an error
 +::method remove class
 +  use strict arg name
-+  .CommandHandler~unregister(self~environmentName("removeCommandEnvironment", name))
-+  return
++  name = self~environmentName("removeCommandEnvironment", name)
++  handlers = .local~commandHandlers
++  if handlers \== .nil then if handlers~hasIndex(name~upper) then do
++    .CommandHandler~unregister(name)
++    return
++  end
++  raise syntax 93.900 array("removeCommandEnvironment: no handler is registered for" name)
 +
 +::method environmentName class private
 +  use strict arg method, name
@@ -478,10 +490,10 @@ index 0000000..45f078b
 +  use arg name, args
 +  forward to (context) message (name) arguments (args)
 diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
-index d04bc82..4de68a1 100644
+index d04bc82..2fd6c5d 100644
 --- a/wasm/web/ooRexx.js
 +++ b/wasm/web/ooRexx.js
-@@ -145,6 +145,13 @@
+@@ -145,6 +145,14 @@
   *   routine(name, source)      a Promise of a Routine: r.call(...args)
   *   loadPackage(name, source)  a Promise of a Package (its prolog run); without
   *                              source, the file name (e.g. 'dom.cls')
@@ -489,13 +501,14 @@ index d04bc82..4de68a1 100644
 + *                              function of the page: a Promise, settled once it
 + *                              is registered (needs js: {page: true}); ctx's
 + *                              calls give Promises; the result is RC
-+ *   removeCommandEnvironment(name)   name: an unknown environment again
++ *   removeCommandEnvironment(name)   name: an unknown environment again (a
++ *                              name with no handler: rejected, a RexxError)
 + * start(opts) also takes commandEnvironments: {NAME: fn, ...}, registered
 + * before the session is handed over.
   * What these make sees js.cls and the public classes and routines of what the
   * session made before.
   *
-@@ -279,12 +286,18 @@
+@@ -279,12 +287,18 @@
        const run = this.launch(Object.assign({}, opts, { args: [SESSION_PATH], files }), ready);
        run.done.then((r) => failed(new Error('the ooRexx session ended before it started' +
          (r.error ? ': ' + r.error : r.stopped ? ' (stopped)' : ' (rc ' + r.rc + ')'))));

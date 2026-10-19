@@ -7,8 +7,8 @@ New extension package extensions/cmdhandler (cmdhandler.cpp + cmdhandler.cls),
 only public native API: .CommandHandler~register(name, object) makes an
 object whose class inherits .CommandHandler (a mixin class, COMMAND
 abstract; required) an ADDRESS environment, and ~unregister(name) removes it
-(the name then answers FAILURE RC 30, as an unknown environment; a handler
-of .nil is an error); each command is sent as
+(the name then answers FAILURE RC 30, as an unknown environment; a name
+with no handler, and a handler of .nil, are errors); each command is sent as
 object~command(command, .CommandContext), the result becomes RC.  The context
 gives WITH INPUT / OUTPUT / ERROR and the variables of the code that issued
 the command; ~raiseError / ~raiseFailure; SYNTAX errors reach the caller.
@@ -16,13 +16,13 @@ Registrations are per interpreter instance, as the environments themselves:
 .local~CommandHandlers (name -> object), .local~CommandContext and
 .local~CommandHandlerNames (the native handler is added once per name).
 Native: libcmdhandler; WASM: embedded package (PackageManager table), .cls in
-bin / bin-node / bin-web.  Tests: wasm/tests/cmdhandler.rex (44 checks, also
+bin / bin-node / bin-web.  Tests: wasm/tests/cmdhandler.rex (45 checks, also
 in qualify-node-cli.sh and web-api.py); extensions/cmdhandler/tests/
 instances.cpp (two instances in one process, native).  Portable, not part
 of the posted RFE.
 ---
  CMakeLists.txt                            |  24 +-
- extensions/cmdhandler/cmdhandler.cls      | 192 +++++++++++
+ extensions/cmdhandler/cmdhandler.cls      | 196 +++++++++++
  extensions/cmdhandler/cmdhandler.cpp      | 397 ++++++++++++++++++++++
  extensions/cmdhandler/tests/ask.rex       |   2 +
  extensions/cmdhandler/tests/instances.cpp |  42 +++
@@ -30,10 +30,10 @@ of the posted RFE.
  interpreter/package/PackageManager.cpp    |   2 +
  wasm/build-node.sh                        |   2 +-
  wasm/build-web.sh                         |   2 +-
- wasm/tests/cmdhandler.rex                 | 275 +++++++++++++++
+ wasm/tests/cmdhandler.rex                 | 283 +++++++++++++++
  wasm/tests/qualify-node-cli.sh            |   4 +
  wasm/tests/web-api.py                     |   3 +
- 12 files changed, 955 insertions(+), 3 deletions(-)
+ 12 files changed, 967 insertions(+), 3 deletions(-)
  create mode 100644 extensions/cmdhandler/cmdhandler.cls
  create mode 100644 extensions/cmdhandler/cmdhandler.cpp
  create mode 100644 extensions/cmdhandler/tests/ask.rex
@@ -120,10 +120,10 @@ index 800ba2c..0f843d3 100644
  install(FILES ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/json.cls COMPONENT Core DESTINATION ${INSTALL_CLS_DIR})
 diff --git a/extensions/cmdhandler/cmdhandler.cls b/extensions/cmdhandler/cmdhandler.cls
 new file mode 100644
-index 0000000..85b65d5
+index 0000000..881b63b
 --- /dev/null
 +++ b/extensions/cmdhandler/cmdhandler.cls
-@@ -0,0 +1,192 @@
+@@ -0,0 +1,196 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -174,7 +174,8 @@ index 0000000..85b65d5
 + *
 + * A SYNTAX error in ~command reaches the code that issued the command.
 + * .CommandHandler~unregister(name) removes the handler: the name then
-+ * behaves as an unknown environment (FAILURE, RC 30).  A handler of .nil is
++ * behaves as an unknown environment (FAILURE, RC 30); a name with no
++ * handler is an error (SYNTAX 93.900).  A handler of .nil is
 + * an error (SYNTAX 93.900), not a way to remove one.
 + *
 + * The registrations are in .local (one set per interpreter instance, as the
@@ -215,13 +216,16 @@ index 0000000..85b65d5
 +  return
 +
 +-- remove the handler of ADDRESS name: the name then behaves as an unknown
-+-- environment (FAILURE, RC 30); a name that has no handler is left alone
++-- environment (FAILURE, RC 30); a name that has no handler is an error
 +::method unregister class
 +  use strict arg name
 +  name = name~request("String")
 +  if name == .nil | name == "" then
 +    raise syntax 93.900 array("unregister: the environment name must be a non-empty string")
-+  if .local~commandHandlers \== .nil then .local~commandHandlers~remove(name~upper)
++  if .local~commandHandlers == .nil then handler = .nil
++  else handler = .local~commandHandlers~remove(name~upper)
++  if handler == .nil then
++    raise syntax 93.900 array("unregister: no handler is registered for" name)
 +  return
 +
 +-- classes that inherit it implement it: use arg command, context; return RC
@@ -842,10 +846,10 @@ index aa24b52..93042c7 100755
  # JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
 diff --git a/wasm/tests/cmdhandler.rex b/wasm/tests/cmdhandler.rex
 new file mode 100644
-index 0000000..582ec28
+index 0000000..1e8aa19
 --- /dev/null
 +++ b/wasm/tests/cmdhandler.rex
-@@ -0,0 +1,275 @@
+@@ -0,0 +1,283 @@
 +/* cmdhandler.rex: tests of cmdhandler.cls (command environments written in */
 +/* Rexx).  Portable: native and WASM builds.  Prints one line per check and */
 +/* exits 1 if any fails.                                                    */
@@ -974,8 +978,14 @@ index 0000000..582ec28
 +call on failure name gotFailure
 +address t "ANYTHING"
 +call check "unregistered: FAILURE RC 30", failed == 30
++signal on syntax name gotNoSuchName
 +.CommandHandler~unregister("nosuchname")
-+call check "unregister a name with no handler: nothing happens", .true
++call check "unregister a name with no handler refused", .false
++afterNoSuchName:
++signal on syntax name gotUnregisterTwice
++.CommandHandler~unregister("t")
++call check "unregister twice refused", .false
++afterUnregisterTwice:
 +.CommandHandler~register("t", .T2~new)
 +address t "ANYTHING";        call check "register again after unregister", rc == "T2"
 +call off failure
@@ -998,6 +1008,8 @@ index 0000000..582ec28
 +gotStale:      call check "stale context raises SYNTAX", condition("O")~code == "98.900"; signal afterStale
 +gotNoCommand:  call check "a handler not inheriting .CommandHandler refused", condition("O")~code == "93.900"; signal afterNoCommand
 +gotDuck:       call check "COMMAND alone is not enough: .CommandHandler required", condition("O")~code == "93.900"; signal afterDuck
++gotNoSuchName: call check "unregister a name with no handler refused (SYNTAX 93.900)", condition("O")~code == "93.900"; signal afterNoSuchName
++gotUnregisterTwice: call check "unregister twice refused (SYNTAX 93.900)", condition("O")~code == "93.900"; signal afterUnregisterTwice
 +gotNilHandler: call check "register with .nil refused (SYNTAX 93.900)", condition("O")~code == "93.900"; signal afterNilHandler
 +
 +unexpected:
