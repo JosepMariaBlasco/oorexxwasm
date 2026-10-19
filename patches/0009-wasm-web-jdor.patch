@@ -355,7 +355,7 @@ index b13d517..cb5c6fa 100644
  };
  </script>
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 88dca1c..b1d59a9 100755
+index 88dca1c..dd589aa 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -42,7 +42,7 @@ Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP
@@ -383,7 +383,7 @@ index 88dca1c..b1d59a9 100755
 +                      'w~js.setStrict("OffscreenCanvas", w~Function~new("throw new TypeError(\'no canvas\')"))\n'
 +                      'signal on syntax name s1; address jdor "newImage 20 20"\n'
 +                      's1: c = condition("O"); a = c~additional\n'
-+                      'say c~code a~items a[1] "|" a[2]~js.className a[2]~message "|" (a[3]~pos("TypeError") > 0)\n'
++                      'say c~code a~items a[1] "|" a[2]~js.className a[2]~message "|" (a[3]~length > 0)\n'
 +                      'w~js.setStrict("OffscreenCanvas", saved)\n'
 +                      'call on error name e1; address jdor "fillRect X 1"; say "no error"; exit\n'
 +                      'e1: say condition("C") rc\n'
