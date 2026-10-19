@@ -66,7 +66,8 @@ of Array, Directory and StringTable are copied too, read by SUPPLIER
   condition, code ("41.1"), rc, errorText, program, line, traceback; a
   JavaScript exception that went through Rexx and back is its cause, and a
   condition of Rexx that went through JavaScript and back is raised again
-  as itself.
+  as itself, with its description and result; a condition on its way to a
+  trap below a call from JavaScript (SIGNAL ON) answers that call first.
 - Strings are text both ways: a Rexx string must be UTF-8 and a JavaScript
   string well-formed (no lone surrogate), else SYNTAX 23.900, an invalid
   data string (nothing is replaced by U+FFFD); binary data goes as
@@ -144,27 +145,27 @@ of Array, Directory and StringTable are copied too, read by SUPPLIER
  wasm/build-web.sh                      |   18 +-
  wasm/extra-packages.cpp                |   66 +
  wasm/js-bridge.js                      |  241 +++
- wasm/js-realm.js                       |  991 +++++++++++++
- wasm/tests/boolean-test.rex            |   82 ++
+ wasm/js-realm.js                       |  991 ++++++++++++
+ wasm/tests/boolean-test.rex            |   82 +
  wasm/tests/js-arrays.rex               |  169 +++
  wasm/tests/js-booleans.rex             |   71 +
- wasm/tests/js-errors.rex               |  179 +++
+ wasm/tests/js-errors.rex               |  222 +++
  wasm/tests/js-extend-gc.rex            |  111 ++
  wasm/tests/js-extend.rex               |  157 ++
  wasm/tests/js-floats.rex               |  112 ++
  wasm/tests/js-proxy.rex                |  127 ++
  wasm/tests/qualify-node-cli.sh         |  216 +++
  wasm/tests/web-api.html                |    4 +-
- wasm/tests/web-api.py                  |  228 ++-
+ wasm/tests/web-api.py                  |  236 ++-
  wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 1883 ++++++++++++++++++++++++
+ wasm/web-js.cpp                        | 1924 ++++++++++++++++++++++++
  wasm/web/boolean.cls                   |  172 +++
- wasm/web/js.cls                        |  750 ++++++++++
+ wasm/web/js.cls                        |  750 +++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 +++
- 26 files changed, 6181 insertions(+), 12 deletions(-)
+ 26 files changed, 6273 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -2219,10 +2220,10 @@ index 0000000..90dc7a2
 +::requires "js.cls"
 diff --git a/wasm/tests/js-errors.rex b/wasm/tests/js-errors.rex
 new file mode 100644
-index 0000000..eaff51c
+index 0000000..a08d2c9
 --- /dev/null
 +++ b/wasm/tests/js-errors.rex
-@@ -0,0 +1,179 @@
+@@ -0,0 +1,222 @@
 +/* js-errors.rex: tests of errors and text across the JavaScript bridge      */
 +/* (wasm/js-realm.js, wasm/web-js.cpp), in the realm where Rexx runs: the    */
 +/* worker's in the browser, Node's under Node.  A Rexx condition in          */
@@ -2281,6 +2282,30 @@ index 0000000..eaff51c
 +call check "back to Rexx: a 98.900 of Rexx's own, as it was", r == "98.900 a Rexx error of its own"
 +r = errorOf(F("o", "try { o.add('lots') } catch (e) { throw e }"), .array~of(.nil, o))
 +call check "back to Rexx: caught and thrown again, still itself", r == direct
++signal on syntax name rt2
++o~descr
++rt2:
++c = condition("O"); direct = c~code "|" c~description "|" c~additional[1] "|" c~result
++signal on syntax name rt3
++F("o", "o.descr()")~call(.nil, o)
++rt3:
++c = condition("O")
++call check "back to Rexx: its description and result too", -
++  c~code "|" c~description "|" c~additional[1] "|" c~result == direct & direct == "98.900 | my description | given | 5"
++-- any other condition reaches the caller's trap as without JavaScript in between
++.local~userTrapped = ""
++call userThroughJs o
++call check "a USER condition through JavaScript: the caller's SIGNAL ON, as itself", -
++  .local~userTrapped == "USER MINE | the description | two | (none)"
++call check "... and JavaScript is not left waiting: it was told, and goes on", -
++  .js~Promise~resolve(5)~await == 5 & .js~lastSignalled~pos("went past this call") > 0
++call on user mine name callOnUser
++r = F("o", "return 'JavaScript went on: ' + o.user()")~call(.nil, o)
++call off user mine
++call check "a USER condition through JavaScript: the caller's CALL ON, then JavaScript goes on", -
++  .local~userTrapped == "CALL ON the description" & r == "JavaScript went on: 7"
++call check "an untrapped USER condition: nothing, JavaScript gets the result", -
++  F("o", "return o.user()")~call(.nil, o) == 7
 +signal on syntax name rt1
 +F("o", "o.callBack(() => { throw new TypeError('inner') })")~call(.nil, o)
 +rt1:
@@ -2361,6 +2386,21 @@ index 0000000..eaff51c
 +F: procedure                        -- F(params, body): a JavaScript function
 +  return .fn~call(.nil, arg(1), arg(2))
 +
++userThroughJs: procedure            -- SIGNAL ON USER MINE around a call of JavaScript that raises it
++  use arg o
++  signal on user mine name userSignalled
++  F("o", "try { o.user() } catch (e) { globalThis.lastSignalled = e.message; throw e }")~call(.nil, o)
++  return
++userSignalled:
++  c = condition("O")
++  r = c~result; if r == .nil then r = "(none)"
++  .local~userTrapped = c~condition "|" c~description "|" c~additional[2] "|" r
++  return
++
++callOnUser:
++  .local~userTrapped = "CALL ON" condition("D")
++  return
++
 +errorOf: procedure                  -- f~call(args...): "code message" of its condition
 +  use arg f, args
 +  signal on syntax
@@ -2392,6 +2432,10 @@ index 0000000..eaff51c
 +  signal on syntax
 +  return f~call(.nil)
 +syntax: raise propagate
++::method descr
++  raise syntax 98.900 additional ("given") description "my description" return 5
++::method user
++  raise user mine description "the description" additional ("one", "two") return 7
 +::method binary
 +  return "ff"x
 +
@@ -2934,7 +2978,7 @@ index 0000000..c89f67e
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..72edaf7 100755
+index e1c1cd8..2820fd6 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -200,6 +200,222 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
@@ -3050,7 +3094,7 @@ index e1c1cd8..72edaf7 100755
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-proxy.rex'"
 +# --- errors both ways (RexxError's fields and cause, additional[3]) and text
 +# (no U+FFFD: a string that is not UTF-8, or not well-formed, is an error)
-+check "JavaScript objects: errors both ways, and text" '^41 passed, 0 failed$' '!^FAIL ' -- \
++check "JavaScript objects: errors both ways, and text" '^46 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-errors.rex'"
 +# --- booleans: .Boolean (boolean.cls, a verbatim copy of the class proposed
 +# in RFE #880; its own tests) both ways across the bridge
@@ -3183,7 +3227,7 @@ index d544388..b13d517 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..88dca1c 100755
+index 3940711..8a9f5bf 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -49,7 +49,10 @@ if len(sys.argv) != 2:
@@ -3198,7 +3242,7 @@ index 3940711..88dca1c 100755
  srv = subprocess.Popen([sys.executable, "-c", f"""
  import os, sys
  from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
-@@ -136,6 +139,176 @@ CASES = [
+@@ -136,6 +139,184 @@ CASES = [
                         '::options trace r', {},
       lambda r: r["out"].count("  worker") == 12 and "total 4\n" in r["out"] and "*-*" in r["err"]
                 and r["err"] == r["trace"] and r["errmsg"] == ""),
@@ -3279,9 +3323,17 @@ index 3940711..88dca1c 100755
 +  # Rexx objects in JavaScript (RexxProxy), in the worker's realm: the portable test
 +  ("js proxy", open(f"{SRC}/wasm/tests/js-proxy.rex").read(), {"js": {"worker": True}},
 +     lambda r: "28 passed, 0 failed" in r["out"] and r["rc"] == 0),
++  # a USER condition in Rexx code the page calls, trapped by SIGNAL ON in the
++  # code that waits for the page: the page is answered, and goes on
++  ("js page signal", 'f = .js~page~Function~new("o", "return o.user().then(() => \'resolved\', (e) => \'told\')")\n'
++                     'signal on user mine name got; r = f~call(.nil, .Thing~new)~await; say "no trap" r; exit\n'
++                     'got: say "trapped" condition("D"); say .js~page~Math~max(1, 2)\n'
++                     '::class Thing\n::method user\n  raise user mine description "the description" return 7\n'
++                     '::requires "js.cls"', {"js": {"page": True}},
++     lambda r: r["out"] == "trapped the description\n2\n" and r["rc"] == 0),
 +  # errors both ways and text, in the worker's realm: the portable test
 +  ("js errors", open(f"{SRC}/wasm/tests/js-errors.rex").read(), {"js": {"worker": True}},
-+     lambda r: "41 passed, 0 failed" in r["out"] and r["rc"] == 0),
++     lambda r: "46 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # booleans both ways (.Boolean), in the worker's realm: the portable test
 +  ("js booleans", open(f"{SRC}/wasm/tests/js-booleans.rex").read(), {"js": {"worker": True}},
 +     lambda r: "22 passed, 0 failed" in r["out"] and r["rc"] == 0),
@@ -3375,7 +3427,7 @@ index 3940711..88dca1c 100755
  ]
  
  fails = 0; ran = 0
-@@ -157,6 +330,59 @@ with sync_playwright() as p:
+@@ -157,6 +338,59 @@ with sync_playwright() as p:
          except Exception: ok = False
          fails += not ok; ran += 1
          print(("ok  " if ok else "FAIL"), f"{name:20}", json.dumps(r, ensure_ascii=False)[:300] if not ok or os.environ.get("SHOW") else f"{r.get('ms')} ms")
@@ -3575,10 +3627,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..f9359a6
+index 0000000..b7b855a
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,1883 @@
+@@ -0,0 +1,1924 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -3734,6 +3786,7 @@ index 0000000..f9359a6
 +#include <cstdio>
 +#include <climits>
 +#include <cmath>
++#include <exception>
 +#include <pthread.h>
 +#include <thread>
 +#include <condition_variable>
@@ -3872,7 +3925,28 @@ index 0000000..f9359a6
 +static std::mutex waitersLock;
 +static std::vector<JsRequest *> waiters;
 +static int32_t queuedCalls = 0;
-+static bool runQueuedCall(RexxThreadContext *c);
++static bool runQueuedCall(RexxThreadContext *c, std::exception_ptr &escaped);
++
++// runCallback, for a call JavaScript waits for: a condition of Rexx trapped
++// below this native code (SIGNAL ON in the code that called JavaScript)
++// unwinds through here; it must not leave JavaScript waiting, nor this
++// thread's request half done (JavaScript would write into it later).  So
++// the call answers an error, and the unwinding is kept in escaped, to go on
++// when the request this thread waits for is over
++static std::string runCallbackGuarded(RexxThreadContext *c, const std::string &call, std::exception_ptr &escaped)
++{
++    try
++    {
++        return runCallback(c, call);
++    }
++    catch (...)
++    {
++        if (!escaped) escaped = std::current_exception();
++        std::string out;
++        putRec(out, 'E', "Error: a condition of Rexx went past this call, to a trap of the code that called JavaScript");
++        return out;
++    }
++}
 +
 +static void answered(SyncCall *sc)
 +{
@@ -3925,6 +3999,7 @@ index 0000000..f9359a6
 +        std::lock_guard<std::mutex> lock(waitersLock);
 +        waiters.push_back(&req);
 +    }
++    std::exception_ptr escaped;          // a condition on its way to a trap below (runCallbackGuarded)
 +    for (;;)
 +    {
 +        int32_t s = __atomic_load_n(&req.state, __ATOMIC_SEQ_CST);
@@ -3932,7 +4007,7 @@ index 0000000..f9359a6
 +        if (s == REQ_CALLBACK)
 +        {
 +            SyncCall *sc = (SyncCall *)req.sync;
-+            sc->answer = runCallback(c, sc->call);
++            sc->answer = runCallbackGuarded(c, sc->call, escaped);
 +            __atomic_store_n(&req.state, REQ_WAITING, __ATOMIC_SEQ_CST);
 +            answered(sc);
 +            continue;
@@ -3943,7 +4018,7 @@ index 0000000..f9359a6
 +            __atomic_compare_exchange_n(&req.state, &expected, REQ_WAITING, false, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
 +            continue;
 +        }
-+        if (__atomic_load_n(&queuedCalls, __ATOMIC_SEQ_CST) > 0 && runQueuedCall(c)) continue;
++        if (__atomic_load_n(&queuedCalls, __ATOMIC_SEQ_CST) > 0 && runQueuedCall(c, escaped)) continue;
 +        emscripten_futex_wait(&req.state, s, INFINITY);
 +    }
 +    {
@@ -3952,6 +4027,7 @@ index 0000000..f9359a6
 +    }
 +    std::string r(req.reply ? req.reply : "", req.replyLen);
 +    free(req.reply);
++    if (escaped) std::rethrow_exception(escaped);
 +    return r;
 +}
 +
@@ -4584,7 +4660,7 @@ index 0000000..f9359a6
 +}
 +
 +// a SYNTAX condition of Rexx (its condition object) raised again: the same
-+// code and ADDITIONAL, so the same message
++// code and ADDITIONAL, so the same message, and its DESCRIPTION and RESULT
 +static void reraise(RexxThreadContext *c, RexxObjectPtr cond)
 +{
 +    RexxObjectPtr code = cond != NULLOBJECT && c->IsDirectory(cond)
@@ -4598,6 +4674,15 @@ index 0000000..f9359a6
 +    RexxObjectPtr add = c->DirectoryAt((RexxDirectoryObject)cond, "ADDITIONAL");
 +    if (add != NULLOBJECT && c->IsArray(add)) c->RaiseException(major * 1000 + minor, (RexxArrayObject)add);
 +    else c->RaiseException0(major * 1000 + minor);
++    // the condition now raised is the one Rexx will see: give it what the
++    // original had that RaiseException does not take
++    RexxDirectoryObject raised = c->GetConditionInfo();
++    if (raised == NULLOBJECT) return;
++    for (const char *e : {"DESCRIPTION", "RESULT"})
++    {
++        RexxObjectPtr v = c->DirectoryAt((RexxDirectoryObject)cond, e);
++        if (v != NULLOBJECT) c->DirectoryPut(raised, v, e);
++    }
 +}
 +
 +// the result of a reply: its value, or a raised SYNTAX 98.900 condition
@@ -5138,13 +5223,13 @@ index 0000000..f9359a6
 +// a call from the page (C "call id" + the call): run it, and its answer goes
 +// back for the call's Promise (Module.jsCallReply, on the main runtime thread,
 +// copies it and frees it)
-+static void pageCall(RexxThreadContext *c, const std::string &ev)
++static void pageCall(RexxThreadContext *c, const std::string &ev, std::exception_ptr &escaped)
 +{
 +    size_t pos = 0;
 +    Rec r;
 +    if (!nextRec(ev, pos, r)) return;
 +    double id = strtod(r.data.c_str(), NULL);
-+    std::string answer = runCallback(c, ev.substr(pos));
++    std::string answer = runCallbackGuarded(c, ev.substr(pos), escaped);
 +    int32_t len = 0;
 +    char *copy = replyCopy(answer, &len);
 +    MAIN_THREAD_ASYNC_EM_ASM({ Module['jsCallReply']($0, $1, $2); }, id, copy, len);
@@ -5152,7 +5237,7 @@ index 0000000..f9359a6
 +
 +// a thread waiting for JavaScript: the first call from the page queued, run
 +// (false: none)
-+static bool runQueuedCall(RexxThreadContext *c)
++static bool runQueuedCall(RexxThreadContext *c, std::exception_ptr &escaped)
 +{
 +    std::string ev;
 +    {
@@ -5169,7 +5254,7 @@ index 0000000..f9359a6
 +        }
 +    }
 +    if (ev.empty()) return false;
-+    pageCall(c, ev);
++    pageCall(c, ev, escaped);
 +    return true;
 +}
 +
@@ -5209,7 +5294,15 @@ index 0000000..f9359a6
 +                if (it != pinned.end()) handler = it->second;
 +            }
 +        }
-+        if (!ev.empty() && ev[0] == 'C') { pageCall(context->threadContext, ev); continue; }
++        if (!ev.empty() && ev[0] == 'C')
++        {
++            // answered either way; a condition on its way to a trap of the
++            // code that takes events goes on now
++            std::exception_ptr escaped;
++            pageCall(context->threadContext, ev, escaped);
++            if (escaped) std::rethrow_exception(escaped);
++            continue;
++        }
 +        if (handler == NULLOBJECT) { dropEvent(ev); continue; }     // released meanwhile
 +        size_t pos = 0;
 +        Rec r;

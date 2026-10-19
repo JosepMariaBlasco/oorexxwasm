@@ -10,7 +10,7 @@ name with no handler is an error).  Built
 on cmdhandler.cls: wasm/web/jscommands.cls, loaded by js.cls on first use,
 has .JSCommandHandler, a .CommandHandler whose ~command calls
 fn(command, ctx) on the Rexx thread that issued the command: what it returns
-is RC (undefined or null: 0; a Promise is waited for), ctx the command's
+is RC (undefined or null: 0; a Promise, or any thenable, is waited for), ctx the command's
 .CommandContext as a RexxProxy whose tests (hasVar, isRedirected, isValid)
 answer booleans; in the page its calls give Promises.  A JavaScript
 exception is SYNTAX 98.900 where the command was issued (ADDITIONAL as for
@@ -19,9 +19,10 @@ through is raised there as itself.  A handler of .nil, or anything but a
 function, is SYNTAX 93.900.
 - From the page (ooRexx.js): a session's addCommandEnvironment(name, fn)
   and removeCommandEnvironment(name) (.JSSession), and
-  start({commandEnvironments: {NAME: fn}}).
+  start({commandEnvironments: {NAME: fn}}), which stops the session if one
+  fails.
 - wasm/build-node.sh, wasm/build-web.sh: jscommands.cls next to js.cls.
-- Tests: wasm/tests/js-commands.rex (34 checks, Node and the worker's
+- Tests: wasm/tests/js-commands.rex (38 checks, Node and the worker's
   realm; in qualify-node-cli.sh and web-api.py), web-api.py "js commands
   page" (a function of the page) and "session commands".
 Not part of the posted RFE (it needs cmdhandler).
@@ -29,13 +30,13 @@ Not part of the posted RFE (it needs cmdhandler).
  wasm/README.md                 |  12 +++
  wasm/build-node.sh             |   1 +
  wasm/build-web.sh              |   1 +
- wasm/tests/js-commands.rex     | 148 +++++++++++++++++++++++++++++++++
+ wasm/tests/js-commands.rex     | 186 +++++++++++++++++++++++++++++++++
  wasm/tests/qualify-node-cli.sh |   6 ++
- wasm/tests/web-api.py          |  30 +++++++
- wasm/web/js.cls                |  29 +++++++
- wasm/web/jscommands.cls        | 117 ++++++++++++++++++++++++++
- wasm/web/ooRexx.js             |  26 ++++--
- 9 files changed, 364 insertions(+), 6 deletions(-)
+ wasm/tests/web-api.py          |  44 ++++++++
+ wasm/web/js.cls                |  29 +++++
+ wasm/web/jscommands.cls        | 118 +++++++++++++++++++++
+ wasm/web/ooRexx.js             |  30 ++++--
+ 9 files changed, 421 insertions(+), 6 deletions(-)
  create mode 100644 wasm/tests/js-commands.rex
  create mode 100644 wasm/web/jscommands.cls
 
@@ -88,10 +89,10 @@ index f4c4e38..8500088 100755
            "--preload-file" "$SRC/wasm/web/dom.cls@/usr/lib/ooRexx/dom.cls"
 diff --git a/wasm/tests/js-commands.rex b/wasm/tests/js-commands.rex
 new file mode 100644
-index 0000000..e072a36
+index 0000000..5f462f1
 --- /dev/null
 +++ b/wasm/tests/js-commands.rex
-@@ -0,0 +1,148 @@
+@@ -0,0 +1,186 @@
 +/*----------------------------------------------------------------------------*/
 +/* Command environments written in JavaScript (.js~addCommandEnvironment,    */
 +/* jscommands.cls on cmdhandler.cls), in the realm of .js: the worker's in   */
@@ -108,6 +109,9 @@ index 0000000..e072a36
 +  "case 'text': return 'abc';" -
 +  "case 'number': return 6 * 7;" -
 +  "case 'promise': return Promise.resolve(7);" -
++  "case 'negative': return -3;" -
++  "case 'thenable': return { then(ok) { ok(9); } };" -
++  "case 'user': return 'JavaScript went on: ' + globalThis.thing.user();" -
 +  "case 'later': return new Promise((r) => setTimeout(() => r(8), 10));" -
 +  "case 'env': return ctx.environment();" -
 +  "case 'vars': { const x = ctx.getVar('X'); ctx.setVar('Y', 'got ' + x); ctx.setVar('S.1', 'one');" -
@@ -123,7 +127,7 @@ index 0000000..e072a36
 +  "case 'reject': return Promise.reject(new RangeError('rejected'));" -
 +  "case 'badname': return ctx.getVar('1abc');" -
 +  "case 'keep': globalThis.keptCtx = ctx; return ctx.isValid() ? 'valid' : 'not valid';" -
-+  "case 'console': ctx.output('to the console, from JavaScript'); return 0;" -
++  "case 'console': ctx.output('to the console, from JavaScript'); ctx.error('to the error stream, from JavaScript'); return 0;" -
 +  "default: return 'unknown: ' + command; }")
 +
 +.js~addCommandEnvironment("calc", calc)        -- lower case on purpose
@@ -134,6 +138,10 @@ index 0000000..e072a36
 +"number";                call check "a number: RC is it", rc == 42
 +"promise";               call check "a Promise: waited for, RC its value", rc == 7
 +"later";                 call check "a Promise settled later: waited for", rc == 8
++"thenable";              call check "a thenable (not a Promise): waited for", rc == 9
++call on error name gotError; call on failure name gotFailure; raised = ""
++"negative";              call check "a negative RC raises nothing", rc == -3 & raised == ""
++call off error; call off failure
 +"env";                   call check "ctx.environment(): the ADDRESS name", rc == "CALC"
 +x = 42; z = "gone"
 +"vars";                  call check "ctx: getVar, hasVar, setVar, dropVar", rc == "true false true" & -
@@ -148,6 +156,15 @@ index 0000000..e072a36
 +address calc "lines" with input stem i.; call check "ctx.lines(): all of WITH INPUT", rc == 2
 +address calc "redir" with input stem i. output stem o.; call check "ctx.isRedirected: booleans", rc == "truetruefalse"
 +"console";               call check "ctx.output without WITH: to the console (above)", rc == 0
++call check "ctx.error without WITH: to the error stream (above)", rc == 0
++-- a USER condition that a Rexx handler raises reaches the trap of the code
++-- that issued the command, as itself.  (Rexx code that a JavaScript handler
++-- calls cannot hand one back yet: ooRexx drops non-SYNTAX conditions at the
++-- native API, a finding with the ooRexx bugs, not worked around here)
++.CommandHandler~register("REXXH", .RaisingHandler~new)
++call userCommand "REXXH", "raise"
++call check "a Rexx handler that raises USER: the caller's SIGNAL ON, as itself", -
++  .local~userTrapped == "USER MINE | the description | two"
 +
 +call on error name gotError
 +"error";                 call check "ctx.raiseError(5): ERROR, RC 5", raised == "ERROR 5"
@@ -220,6 +237,18 @@ index 0000000..e072a36
 +gotError:   raised = condition("C") rc; return
 +gotFailure: raised = condition("C") rc; return
 +
++userCommand: procedure              -- SIGNAL ON USER MINE around ADDRESS env command
++  use arg env, command
++  signal on user mine name userSignalled
++  address value env
++  command
++  .local~userTrapped = "no trap: rc" rc
++  return
++userSignalled:
++  c = condition("O")
++  .local~userTrapped = c~condition "|" c~description "|" c~additional[2]
++  return
++
 +F: procedure                        -- F(params, body): a JavaScript function
 +  return .fn~call(.nil, arg(1), arg(2))
 +
@@ -240,8 +269,18 @@ index 0000000..e072a36
 +
 +::requires "js.cls"
 +::requires "cmdhandler.cls"
++
++::class Thing
++::method user
++  raise user mine description "the description" additional ("one", "two") return 7
++
++::class RaisingHandler subclass CommandHandler
++::method command
++  use arg command
++  if command == "raise" then raise user mine description "the description" additional ("one", "two") return 7
++  return .Thing~new~user
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 482d4c1..f8f44b8 100755
+index 25c4552..c63519b 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -420,6 +420,12 @@ check "a logic error ends the process with a non-zero status" '^Logic error: can
@@ -250,24 +289,24 @@ index 482d4c1..f8f44b8 100755
  
 +# --- command environments written in JavaScript (.js~addCommandEnvironment,
 +# wasm/web/jscommands.cls over cmdhandler.cls), portable test
-+check "command handlers in JavaScript (jscommands.cls)" '^34 passed, 0 failed$' '!^FAIL ' \
-+  '^to the console, from JavaScript$' -- \
++check "command handlers in JavaScript (jscommands.cls)" '^38 passed, 0 failed$' '!^FAIL ' \
++  '^to the console, from JavaScript$' '^to the error stream, from JavaScript$' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-commands.rex'"
 +
  # --- ADDRESS FETCH (wasm/web/fetch.cls over cmdhandler.cls and js.cls), portable test
  "$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
  FETCH_SRV=$!; sleep 0.5
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 7791050..cba0231 100755
+index 31f663e..3a3ff9b 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
-@@ -99,6 +99,19 @@ CASES = [
+@@ -99,6 +99,28 @@ CASES = [
       lambda r: "[1,2]" in r["out"].replace(" ", "")),
    ("requires rxregexp", 'm = .RegularExpression~new("a+b"); say m~match("aaab")\n::requires "rxregexp.cls"',
       {}, lambda r: r["out"] == "1\n"),
 +  # command environments written in JavaScript (jscommands.cls), in the worker's realm: the portable test
 +  ("js commands", open(f"{SRC}/wasm/tests/js-commands.rex").read(), {"js": {"worker": True}},
-+     lambda r: "34 passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
++     lambda r: "38 passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
 +  # ... and a function of the page: its ctx calls give Promises
 +  ("js commands page", 'f = .js~page~Function~new("c", "ctx", "return ctx.getVar(\'X\').then((x) => \' \' + c + \' \' + x * 2)")\n'
 +                       '.js~addCommandEnvironment("P", f); x = 21; address p "go"; say "["rc"]"\n'
@@ -276,12 +315,21 @@ index 7791050..cba0231 100755
 +                       'h = .js~page~Function~new("c", "ctx", "throw new TypeError(\'in the page\')")\n'
 +                       '.js~addCommandEnvironment("P", h); signal on syntax; address p "go"\n'
 +                       'syntax: say condition("O")~code condition("O")~additional[2]~message\n'
++                       'k = .js~page~Function~new("c", "ctx", "return ctx.getVar(\'1abc\')")\n'
++                       '.js~addCommandEnvironment("P", k); signal on syntax name s2; address p "go"\n'
++                       's2: say condition("O")~code (condition("O")~message~pos("1abc") > 0)\n'
++                       'e = .js~page~Function~new("c", "ctx", "return ctx.raiseError(5)")\n'
++                       '.js~addCommandEnvironment("P", e); call on error name e1; address p "go"; call off error\n'
++                       'n = .js~page~Function~new("c", "ctx", "return -3")\n'
++                       '.js~addCommandEnvironment("P", n); address p "go"; say "negative" rc\n'
++                       'exit\n'
++                       'e1: say condition("C") rc; return\n'
 +                       '::requires "js.cls"', {"js": {"page": True}},
-+     lambda r: r["out"] == "[ go 42]\n1\n98.900 in the page\n"),
++     lambda r: r["out"] == "[ go 42]\n1\n98.900 in the page\n93.900 1\nERROR 5\nnegative -3\n"),
    # command environments written in Rexx (extensions/cmdhandler): the portable test
    ("cmdhandler", open(f"{SRC}/wasm/tests/cmdhandler.rex").read(), {},
       lambda r: " passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
-@@ -408,6 +421,23 @@ JS_CASES = [
+@@ -423,6 +445,28 @@ JS_CASES = [
      return { r, out: out.join(''), stopped: d.stopped };
    ''', lambda v: v["r"][:9] == ['3', '42', 'undefined', '42', '150', '7', '16', 'RexxError true', 'syntax true']
         and v["r"][9] == '1,2,3,4' and v["out"] == "hi\n" and v["stopped"]),
@@ -299,9 +347,14 @@ index 7791050..cba0231 100755
 +    await s.removeCommandEnvironment('LOW');
 +    r.push(await s.eval('address low "x"; return rc'));
 +    try { await s.addCommandEnvironment('N', null); r.push('no error'); } catch (e) { r.push(e.name + ' ' + e.code); }
++    try { await s.removeCommandEnvironment('NOPE'); r.push('no error'); } catch (e) { r.push(e.name + ' ' + e.code); }
 +    s.stop();
++    let failed;
++    try { await rexxLib.start({ js: { page: true }, commandEnvironments: { BAD: 42 } }); failed = 'started'; }
++    catch (e) { failed = e.name + ' ' + e.code; }
++    r.push(failed);
 +    return r;
-+  ''', lambda v: v == ['3 hi! ABC', 'abc', '98.900 page', '30', 'RexxError 93.900']),
++  ''', lambda v: v == ['3 hi! ABC', 'abc', '98.900 page', '30', 'RexxError 93.900', 'RexxError 93.900', 'RexxError 93.900']),
    ("session page", '''
      const s = await rexxLib.start({ js: { page: true } });
      await s.eval('d = .js~page~document; b = d~createElement("button"); b~id = "rx"; d~body~appendChild(b)\\n' +
@@ -368,10 +421,10 @@ index 3859675..f5d83f6 100644
    if source~isA(.String) then return source~makeArray
 diff --git a/wasm/web/jscommands.cls b/wasm/web/jscommands.cls
 new file mode 100644
-index 0000000..22126e2
+index 0000000..a82dd37
 --- /dev/null
 +++ b/wasm/web/jscommands.cls
-@@ -0,0 +1,117 @@
+@@ -0,0 +1,118 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -394,7 +447,8 @@ index 0000000..22126e2
 + *
 + * The handler is a JavaScript function of any realm (.js, .js~page), called
 + * as fn(command, ctx) for each command.  What it returns is RC (undefined or
-+ * null: 0); a Promise is waited for, and what it gives is RC.  ctx is the
++ * null: 0); a Promise (or any thenable) is waited for, and what it gives is
++ * RC.  ctx is the
 + * command's .CommandContext (cmdhandler.cls), a RexxProxy in JavaScript
 + * whose tests answer JavaScript booleans:
 + * ctx.lineIn(), ctx.lines(), ctx.output(x), ctx.error(x), ctx.isRedirected(k),
@@ -454,15 +508,15 @@ index 0000000..22126e2
 +  expose fn
 +  return fn
 +
-+-- one command: fn(command, ctx), and what it gives (waited for if a Promise) is RC
++-- one command: fn(command, ctx), and what it gives (waited for if a Promise)
++-- is RC (a Promise of any realm or context, or any thenable)
 +::method command
 +  expose fn
 +  use arg command, context
 +  r = fn~call(.nil, command, .JSCommandContext~new(context))
 +  if r~isA(.JSObject) then do
-+    realm = .js
-+    if r~realm == "page" then realm = .js~page
-+    if r~js.instanceOf(realm~js.getStrict("Promise")) then r = r~await
++    if r~js.hasProperty("then") then if r~js.getStrict("then")~isA(.JSObject) then
++      if r~js.getStrict("then")~js.typeOf == "function" then r = r~await
 +  end
 +  if .nil == r | .js~undefined == r then return 0
 +  return r
@@ -490,10 +544,10 @@ index 0000000..22126e2
 +  use arg name, args
 +  forward to (context) message (name) arguments (args)
 diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
-index d04bc82..2fd6c5d 100644
+index d04bc82..b9e86d2 100644
 --- a/wasm/web/ooRexx.js
 +++ b/wasm/web/ooRexx.js
-@@ -145,6 +145,14 @@
+@@ -145,6 +145,15 @@
   *   routine(name, source)      a Promise of a Routine: r.call(...args)
   *   loadPackage(name, source)  a Promise of a Package (its prolog run); without
   *                              source, the file name (e.g. 'dom.cls')
@@ -504,11 +558,12 @@ index d04bc82..2fd6c5d 100644
 + *   removeCommandEnvironment(name)   name: an unknown environment again (a
 + *                              name with no handler: rejected, a RexxError)
 + * start(opts) also takes commandEnvironments: {NAME: fn, ...}, registered
-+ * before the session is handed over.
++ * before the session is handed over; one that fails stops it, and start()
++ * is rejected with its error.
   * What these make sees js.cls and the public classes and routines of what the
   * session made before.
   *
-@@ -279,12 +287,18 @@
+@@ -279,12 +288,21 @@
        const run = this.launch(Object.assign({}, opts, { args: [SESSION_PATH], files }), ready);
        run.done.then((r) => failed(new Error('the ooRexx session ended before it started' +
          (r.error ? ': ' + r.error : r.stopped ? ' (stopped)' : ' (rc ' + r.rc + ')'))));
@@ -527,7 +582,10 @@ index d04bc82..2fd6c5d 100644
 +          addCommandEnvironment: (name, fn) => rexx.addCommandEnvironment(name, fn),
 +          removeCommandEnvironment: (name) => rexx.removeCommandEnvironment(name),
 +        });
-+        for (const [name, fn] of Object.entries(opts.commandEnvironments || {})) await s.addCommandEnvironment(name, fn);
++        // a registration that fails stops the session: start() is rejected
++        try {
++          for (const [name, fn] of Object.entries(opts.commandEnvironments || {})) await s.addCommandEnvironment(name, fn);
++        } catch (e) { s.stop(); throw e; }
 +        return s;
 +      });
      }
