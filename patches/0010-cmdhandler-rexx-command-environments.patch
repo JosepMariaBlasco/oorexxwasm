@@ -16,7 +16,7 @@ matching WITH, SYNTAX 98.900), the variables of the code that issued the
 command (caller[name], caller[name] = value, with ~getVar / ~setVar as
 synonyms; a variable with no value gives its name, as in Rexx; ~hasVar,
 ~dropVar, ~variables), and ~raise(condition, rc [, description]
-[, additional]) for any condition RAISE accepts, one per command
+[, additional]) for any condition RAISE accepts, one per command, only while it runs
 (~raiseError / ~raiseFailure as shortcuts; raise("SYNTAX", code) shows at
 the caller's ADDRESS clause); SYNTAX errors in the handler reach the
 caller.
@@ -24,24 +24,24 @@ Registrations are per interpreter instance, as the environments themselves:
 .local~CommandHandlers (name -> object), .local~CommandContext and
 .local~CommandHandlerNames (the native handler is added once per name).
 Native: libcmdhandler; WASM: embedded package (PackageManager table), .cls in
-bin / bin-node / bin-web.  Tests: wasm/tests/cmdhandler.rex (64 checks, also
+bin / bin-node / bin-web.  Tests: wasm/tests/cmdhandler.rex (65 checks, also
 in qualify-node-cli.sh and web-api.py); extensions/cmdhandler/tests/
 instances.cpp (two instances in one process, native).  Portable, not part
 of the posted RFE.
 ---
  CMakeLists.txt                            |  24 +-
- extensions/cmdhandler/cmdhandler.cls      | 422 ++++++++++++++++++++++
- extensions/cmdhandler/cmdhandler.cpp      | 421 +++++++++++++++++++++
+ extensions/cmdhandler/cmdhandler.cls      | 424 +++++++++++++++++++++
+ extensions/cmdhandler/cmdhandler.cpp      | 433 ++++++++++++++++++++++
  extensions/cmdhandler/tests/ask.rex       |   2 +
  extensions/cmdhandler/tests/instances.cpp |  42 +++
  extensions/cmdhandler/tests/reg.rex       |  13 +
  interpreter/package/PackageManager.cpp    |   2 +
  wasm/build-node.sh                        |   2 +-
  wasm/build-web.sh                         |   2 +-
- wasm/tests/cmdhandler.rex                 | 413 +++++++++++++++++++++
+ wasm/tests/cmdhandler.rex                 | 418 +++++++++++++++++++++
  wasm/tests/qualify-node-cli.sh            |   4 +
  wasm/tests/web-api.py                     |   3 +
- 12 files changed, 1347 insertions(+), 3 deletions(-)
+ 12 files changed, 1366 insertions(+), 3 deletions(-)
  create mode 100644 extensions/cmdhandler/cmdhandler.cls
  create mode 100644 extensions/cmdhandler/cmdhandler.cpp
  create mode 100644 extensions/cmdhandler/tests/ask.rex
@@ -128,17 +128,17 @@ index 800ba2c..0f843d3 100644
  install(FILES ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/json.cls COMPONENT Core DESTINATION ${INSTALL_CLS_DIR})
 diff --git a/extensions/cmdhandler/cmdhandler.cls b/extensions/cmdhandler/cmdhandler.cls
 new file mode 100644
-index 0000000..8d97a86
+index 0000000..d63f092
 --- /dev/null
 +++ b/extensions/cmdhandler/cmdhandler.cls
-@@ -0,0 +1,422 @@
+@@ -0,0 +1,424 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
 +/*                                                                            */
 +/* This program and the accompanying materials are made available under       */
 +/* the terms of the Common Public License v1.0 which accompanies this         */
-+/* distribution. A copy is also available at the following address:          */
++/* distribution. A copy is also available at the following address:           */
 +/* https://www.oorexx.org/license.html                                        */
 +/*                                                                            */
 +/* Redistribution and use in source and binary forms, with or                 */
@@ -297,6 +297,7 @@ index 0000000..8d97a86
 +
 +::method isRedirected external "LIBRARY cmdhandler CmdContext_IsRedirected"
 +::method isValid external "LIBRARY cmdhandler CmdContext_IsValid"
++::method check private external "LIBRARY cmdhandler CmdContext_Check"
 +::method nativeGetVar private external "LIBRARY cmdhandler CmdContext_GetVar"
 +::method nativeHasVar private external "LIBRARY cmdhandler CmdContext_HasVar"
 +::method nativeSetVar private external "LIBRARY cmdhandler CmdContext_SetVar"
@@ -367,8 +368,6 @@ index 0000000..8d97a86
 +  use strict arg name
 +  self~nativeDropVar(self~varName(name))
 +
-+-- a variable name (simple, stem or compound), or a SYNTAX error: the native
-+-- API silently ignores names that are not variables
 +-- the name of a variable with no value, as Rexx gives it: the stem in upper
 +-- case and each tail symbol replaced by its value in the caller (constant
 +-- symbols, and variables with no value, in upper case): a.i is "A.x y" when
@@ -395,6 +394,8 @@ index 0000000..8d97a86
 +  end
 +  return derived
 +
++-- a variable name (simple, stem or compound), or a SYNTAX error: the native
++-- API silently ignores names that are not variables
 +::method varName private
 +  use strict arg name
 +  name = name~request("String")
@@ -411,6 +412,7 @@ index 0000000..8d97a86
 +::method raise
 +  expose pending
 +  use strict arg condition, rc, description = .nil, additional = .nil
++  self~check                           -- ended, or another thread: 98.900
 +  if pending \== .nil then
 +    raise syntax 93.900 array("raise: a condition was already raised for this command")
 +  condition = condition~request("String")
@@ -556,17 +558,17 @@ index 0000000..8d97a86
 +  self~flush
 diff --git a/extensions/cmdhandler/cmdhandler.cpp b/extensions/cmdhandler/cmdhandler.cpp
 new file mode 100644
-index 0000000..ee5ba35
+index 0000000..d2d2d04
 --- /dev/null
 +++ b/extensions/cmdhandler/cmdhandler.cpp
-@@ -0,0 +1,421 @@
+@@ -0,0 +1,433 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
 +/*                                                                            */
 +/* This program and the accompanying materials are made available under       */
 +/* the terms of the Common Public License v1.0 which accompanies this         */
-+/* distribution. A copy is also available at the following address:          */
++/* distribution. A copy is also available at the following address:           */
 +/* https://www.oorexx.org/license.html                                        */
 +/*                                                                            */
 +/* Redistribution and use in source and binary forms, with or                 */
@@ -938,6 +940,17 @@ index 0000000..ee5ba35
 +
 +
 +/**
++ * Nothing, or the SYNTAX error of liveState: for the methods written in
++ * Rexx that use no other native method (raise).
++ */
++RexxMethod1(int, CmdContext_Check, CSELF, self)
++{
++    liveState(context, self);
++    return 0;
++}
++
++
++/**
 + * ~isValid: whether the command is still running.
 + */
 +RexxMethod1(logical_t, CmdContext_IsValid, CSELF, self)
@@ -964,6 +977,7 @@ index 0000000..ee5ba35
 +    REXX_METHOD(CmdContext_DropVar,      CmdContext_DropVar),
 +    REXX_METHOD(CmdContext_Variables,    CmdContext_Variables),
 +    REXX_METHOD(CmdContext_IsValid,      CmdContext_IsValid),
++    REXX_METHOD(CmdContext_Check,        CmdContext_Check),
 +    REXX_LAST_METHOD()
 +};
 +
@@ -1104,10 +1118,10 @@ index aa24b52..93042c7 100755
  # JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
 diff --git a/wasm/tests/cmdhandler.rex b/wasm/tests/cmdhandler.rex
 new file mode 100644
-index 0000000..d8217fe
+index 0000000..489c8bd
 --- /dev/null
 +++ b/wasm/tests/cmdhandler.rex
-@@ -0,0 +1,413 @@
+@@ -0,0 +1,418 @@
 +/* cmdhandler.rex: tests of cmdhandler.cls (command environments written in */
 +/* Rexx).  Portable: native and WASM builds.  Prints one line per check and */
 +/* exits 1 if any fails.                                                    */
@@ -1264,6 +1278,10 @@ index 0000000..d8217fe
 +x = ctx["x"]
 +call check "stale context raises SYNTAX", .false
 +afterStale:
++signal on syntax name gotStaleRaise
++x = ctx~raise("ERROR", 1)
++call check "raise on a stale context raises SYNTAX", .false
++afterStaleRaise:
 +signal on syntax name unexpected
 +
 +-- a method that REPLYs goes on in another thread: the context refuses it there
@@ -1314,6 +1332,7 @@ index 0000000..d8217fe
 +gotFailure:    failed = rc; return
 +gotSyntax:     call check "SYNTAX in the handler reaches the caller", condition("O")~code == "42.3"; signal afterSyntax
 +gotNoSuchName: call check "unregister a name with no handler: SYNTAX 93.900", condition("O")~code == "93.900"; signal afterNoSuchName
++gotStaleRaise: call check "raise on a stale context raises SYNTAX", condition("O")~code == "98.900"; signal afterStaleRaise
 +gotStale:      call check "stale context raises SYNTAX", condition("O")~code == "98.900"; signal afterStale
 +gotStaleStream: call check "stale input stream raises SYNTAX", condition("O")~code == "98.900"; signal afterStaleStream
 +gotNotready:   call check "NOTREADY raised, RC, description", condition("C") == "NOTREADY" & rc == 4 & condition("D") == "no line"; signal afterNotready
