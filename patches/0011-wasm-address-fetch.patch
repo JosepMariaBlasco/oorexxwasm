@@ -12,7 +12,8 @@ lines), SAVE url file, HEADER name [value] / HEADER RESET, TIMEOUT
 seconds, STATUS, HEADERS [name], JSON [path] (the body as json.cls reads
 it: Directory, Array, string, .JsonBoolean, .nil; a path picks one
 value).  Words split by wasm/web/commandwords.cls (.CommandWords:
-quotes, FROM, INTO anywhere; shared with DOM); values to
+quotes, FROM, INTO anywhere; shared with DOM, as .CommandIO, which writes
+to WITH OUTPUT / WITH ERROR, or to the console without them); values to
 INTO var (a stem gets lines), else to WITH OUTPUT (a body never to the
 console).  RC 0; the HTTP status, 1 (no such JSON path) or 2 (no JSON
 body) with ERROR; -1 network error, -3 wrong command, -4 SAVE cannot
@@ -26,9 +27,9 @@ qualify-node-cli.sh and web-api.py.  Not part of the posted RFE.
  wasm/tests/fetch.rex           | 138 +++++++++++++
  wasm/tests/qualify-node-cli.sh |   7 +
  wasm/tests/web-api.py          |   6 +
- wasm/web/commandwords.cls      | 131 ++++++++++++
+ wasm/web/commandwords.cls      | 172 ++++++++++++++++
  wasm/web/fetch.cls             | 353 +++++++++++++++++++++++++++++++++
- 8 files changed, 674 insertions(+), 1 deletion(-)
+ 8 files changed, 715 insertions(+), 1 deletion(-)
  create mode 100644 wasm/tests/fetch-server.py
  create mode 100644 wasm/tests/fetch.rex
  create mode 100644 wasm/web/commandwords.cls
@@ -290,10 +291,10 @@ index 74615a0..ebdae4f 100755
       lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
 diff --git a/wasm/web/commandwords.cls b/wasm/web/commandwords.cls
 new file mode 100644
-index 0000000..6ee0c5f
+index 0000000..dd4da0d
 --- /dev/null
 +++ b/wasm/web/commandwords.cls
-@@ -0,0 +1,131 @@
+@@ -0,0 +1,172 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -319,6 +320,13 @@ index 0000000..6ee0c5f
 + *                                      -- that variable's value (.nil: unset;
 + *                                      -- context: a cmdhandler.cls context)
 + *    w~items, w[i], w~quoted(i), w~isKeyword(i, "FROM"), w~rest (an Array)
++ *
++ * .CommandIO: what both write and read.  Without WITH OUTPUT or WITH ERROR,
++ * the lines go to the console, as a command's own output would.
++ *
++ *    .CommandIO~output(context, lines)   a string or a collection of lines
++ *    .CommandIO~error(context, lines)    the same, for WITH ERROR
++ *    .CommandIO~lines(context)           the WITH INPUT lines (an Array)
 + */
 +
 +::class CommandWords public
@@ -417,7 +425,9 @@ index 0000000..6ee0c5f
 +  use strict arg context
 +  if self~isKeyword(1, "FROM") & words~items >= 2 & \self~quoted(2) then do
 +    self~take
-+    return context~getVar(self~take)
++    name = self~take
++    if \context~hasVar(name) then return .nil
++    return context[name]
 +  end
 +  return self~take
 +
@@ -425,9 +435,41 @@ index 0000000..6ee0c5f
 +::method rest
 +  expose words
 +  return words~copy
++
++
++::class CommandIO public
++
++::method output class
++  use strict arg context, lines
++  if context~isRedirected("Output") then out = context~output
++  else out = .output
++  self~write(out, lines)
++
++::method error class
++  use strict arg context, lines
++  if context~isRedirected("Error") then out = context~error
++  else out = .error
++  self~write(out, lines)
++
++::method write class private
++  use strict arg out, lines
++  if lines~isA(.String) then out~lineout(lines)
++  else do line over lines~makeArray
++    out~lineout(line~string)
++  end
++
++::method lines class
++  use strict arg context
++  if \context~isRedirected("Input") then return .array~new
++  in = context~input
++  lines = .array~new
++  do while in~lines > 0
++    lines~append(in~linein)
++  end
++  return lines
 diff --git a/wasm/web/fetch.cls b/wasm/web/fetch.cls
 new file mode 100644
-index 0000000..15ff8c1
+index 0000000..2b5b5d8
 --- /dev/null
 +++ b/wasm/web/fetch.cls
 @@ -0,0 +1,353 @@
@@ -554,22 +596,22 @@ index 0000000..15ff8c1
 +-- wrong command: the reason to the error output, FAILURE -3
 +::method bad private
 +  use strict arg context, why
-+  context~error("FETCH:" why)
++  .CommandIO~error(context, "FETCH:" why)
 +  return context~raiseFailure(-3)
 +
 +-- a value for INTO var, or to the output
 +::method give private
 +  use strict arg context, into, value
 +  if into == .nil then do
-+    if value~isA(.String) then context~output(value)
++    if value~isA(.String) then .CommandIO~output(context, value)
 +    else if value~isA(.StringTable) then do       -- headers
 +      lines = .array~new
 +      do name over value~allIndexes~sortWith(.caselessComparator~new)
 +        lines~append(name": "value[name])
 +      end
-+      context~output(lines)
++      .CommandIO~output(context, lines)
 +    end
-+    else context~output(.json~toJSON(value))
++    else .CommandIO~output(context, .json~toJSON(value))
 +    return 0
 +  end
 +  if into~right(1) == "." then do                 -- a stem: lines, as EXECIO
@@ -611,7 +653,7 @@ index 0000000..15ff8c1
 +      if body == .nil then return self~bad(context, method": the variable has no value")
 +    end
 +    else if context~isRedirected("Input") then
-+      body = context~lines~makeString("L", "0a"x)
++      body = .CommandIO~lines(context)~makeString("L", "0a"x)
 +  end
 +  if words~items > 0 then return self~bad(context, method": unexpected" words~rest~makeString("L", " "))
 +  if \self~send(method, url, body, type, context) then return context~raiseFailure(-1)
@@ -627,7 +669,7 @@ index 0000000..15ff8c1
 +      else self~give(context, into, text)
 +    end
 +    -- only to WITH OUTPUT: unasked, a body would flood the console
-+    else if lines~items > 0 & context~isRedirected("Output") then context~output(lines)
++    else if lines~items > 0 & context~isRedirected("Output") then .CommandIO~output(context, lines)
 +  end
 +  else if into \== .nil then return self~bad(context, "HEAD: no body for INTO")
 +  return self~result(context)
@@ -644,7 +686,7 @@ index 0000000..15ff8c1
 +  bytes = response~arrayBuffer~await~js.byteString
 +  s = .stream~new(file)
 +  if s~open("write replace") \== "READY:" then do
-+    context~error("FETCH SAVE: cannot write" file)
++    .CommandIO~error(context, "FETCH SAVE: cannot write" file)
 +    return context~raiseFailure(-4)
 +  end
 +  s~charout(bytes)
@@ -675,7 +717,7 @@ index 0000000..15ff8c1
 +  reason = condition("O")~message
 +  parse var reason "JavaScript error: " js
 +  if js \== "" then reason = js
-+  context~error("FETCH" method url":" reason)
++  .CommandIO~error(context, "FETCH" method url":" reason)
 +  return .false
 +
 +-- RC for the last response: 0 for 2xx, else the status (and ERROR)
@@ -727,7 +769,7 @@ index 0000000..15ff8c1
 +  name = words~take
 +  if words~items > 0 then return self~bad(context, "HEADERS [name]")
 +  if response == .nil then do
-+    context~error("FETCH HEADERS: no response yet")
++    .CommandIO~error(context, "FETCH HEADERS: no response yet")
 +    return context~raiseError(2)
 +  end
 +  if name \== .nil then do
@@ -749,7 +791,7 @@ index 0000000..15ff8c1
 +  if words~items > 0 then return self~bad(context, "JSON [path] [INTO var]")
 +  if json == .nil then do
 +    if text == .nil then do
-+      context~error("FETCH JSON: no response body")
++      .CommandIO~error(context, "FETCH JSON: no response body")
 +      return context~raiseError(2)
 +    end
 +    signal on syntax name notJson
@@ -779,8 +821,8 @@ index 0000000..15ff8c1
 +  end
 +  return self~give(context, into, value)
 +missing:
-+  context~error("FETCH JSON: no" where~substr(2) "in the response")
++  .CommandIO~error(context, "FETCH JSON: no" where~substr(2) "in the response")
 +  return context~raiseError(1)
 +notJson:
-+  context~error("FETCH JSON: the response body is not JSON")
++  .CommandIO~error(context, "FETCH JSON: the response body is not JSON")
 +  return context~raiseError(2)

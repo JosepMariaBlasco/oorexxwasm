@@ -11,8 +11,11 @@ on cmdhandler.cls: wasm/web/jscommands.cls, loaded by js.cls on first use,
 has .JSCommandHandler, a .CommandHandler whose ~command calls
 fn(command, ctx) on the Rexx thread that issued the command: what it returns
 is RC (undefined or null: 0; a Promise, or any thenable, is waited for), ctx the command's
-.CommandContext as a RexxProxy whose tests (hasVar, isRedirected, isValid)
-answer booleans; in the page its calls give Promises.  A JavaScript
+.CommandContext as a RexxProxy with a JavaScript-style API on top of
+cmdhandler's (.JSCommandContext: lineIn, lines, output and error as lines,
+to the console without WITH; getVar null for a variable with no value; the
+rest forwarded, raise included), whose tests (hasVar, isRedirected,
+isValid) answer booleans; in the page its calls give Promises.  A JavaScript
 exception is SYNTAX 98.900 where the command was issued (ADDITIONAL as for
 any JavaScript exception); a condition of Rexx that the function lets
 through is raised there as itself.  A handler of .nil, or anything but a
@@ -22,21 +25,21 @@ function, is SYNTAX 93.900.
   start({commandEnvironments: {NAME: fn}}), which stops the session if one
   fails.
 - wasm/build-node.sh, wasm/build-web.sh: jscommands.cls next to js.cls.
-- Tests: wasm/tests/js-commands.rex (38 checks, Node and the worker's
+- Tests: wasm/tests/js-commands.rex (40 checks, Node and the worker's
   realm; in qualify-node-cli.sh and web-api.py), web-api.py "js commands
   page" (a function of the page) and "session commands".
 Not part of the posted RFE (it needs cmdhandler).
 ---
- wasm/README.md                 |  12 +++
+ wasm/README.md                 |  12 ++
  wasm/build-node.sh             |   1 +
  wasm/build-web.sh              |   1 +
- wasm/tests/js-commands.rex     | 186 +++++++++++++++++++++++++++++++++
- wasm/tests/qualify-node-cli.sh |   6 ++
+ wasm/tests/js-commands.rex     | 199 +++++++++++++++++++++++++++++++++
+ wasm/tests/qualify-node-cli.sh |   6 +
  wasm/tests/web-api.py          |  44 ++++++++
  wasm/web/js.cls                |  29 +++++
- wasm/web/jscommands.cls        | 118 +++++++++++++++++++++
- wasm/web/ooRexx.js             |  30 ++++--
- 9 files changed, 421 insertions(+), 6 deletions(-)
+ wasm/web/jscommands.cls        | 158 ++++++++++++++++++++++++++
+ wasm/web/ooRexx.js             |  30 ++++-
+ 9 files changed, 474 insertions(+), 6 deletions(-)
  create mode 100644 wasm/tests/js-commands.rex
  create mode 100644 wasm/web/jscommands.cls
 
@@ -89,10 +92,10 @@ index f4c4e38..8500088 100755
            "--preload-file" "$SRC/wasm/web/dom.cls@/usr/lib/ooRexx/dom.cls"
 diff --git a/wasm/tests/js-commands.rex b/wasm/tests/js-commands.rex
 new file mode 100644
-index 0000000..5f462f1
+index 0000000..3d71c63
 --- /dev/null
 +++ b/wasm/tests/js-commands.rex
-@@ -0,0 +1,186 @@
+@@ -0,0 +1,199 @@
 +/*----------------------------------------------------------------------------*/
 +/* Command environments written in JavaScript (.js~addCommandEnvironment,    */
 +/* jscommands.cls on cmdhandler.cls), in the realm of .js: the worker's in   */
@@ -123,6 +126,8 @@ index 0000000..5f462f1
 +  "case 'redir': return ['Input', 'Output', 'Error'].map((k) => ctx.isRedirected(k)).join('');" -
 +  "case 'error': return ctx.raiseError(5);" -
 +  "case 'failure': return ctx.raiseFailure(-2);" -
++  "case 'raiseuser': return ctx.raise('USER MINE', 4, 'from JavaScript');" -
++  "case 'twice': ctx.raiseError(1); return ctx.raiseError(2);" -
 +  "case 'throw': throw new TypeError('from the handler');" -
 +  "case 'reject': return Promise.reject(new RangeError('rejected'));" -
 +  "case 'badname': return ctx.getVar('1abc');" -
@@ -172,6 +177,15 @@ index 0000000..5f462f1
 +call on failure name gotFailure
 +"failure";               call check "ctx.raiseFailure(-2): FAILURE, RC -2", raised == "FAILURE -2"
 +call off failure
++call userCommand "CALC", "raiseuser"
++call check "ctx.raise('USER MINE', 4, ...): the caller's SIGNAL ON, as itself", -
++  .local~userTrapped == "USER MINE | from JavaScript | -" & .local~userRc == 4
++signal on syntax name s0
++"twice"
++s0:
++c = condition("O")
++call check "a second ctx.raise in one command: SYNTAX 93.900", c~code == "93.900" & -
++  c~message~pos("already raised") > 0
 +
 +signal on syntax name s1
 +"throw"
@@ -246,7 +260,9 @@ index 0000000..5f462f1
 +  return
 +userSignalled:
 +  c = condition("O")
-+  .local~userTrapped = c~condition "|" c~description "|" c~additional[2]
++  if c~additional == .nil then extra = "-"; else extra = c~additional[2]
++  .local~userTrapped = c~condition "|" c~description "|" extra
++  .local~userRc = rc
 +  return
 +
 +F: procedure                        -- F(params, body): a JavaScript function
@@ -280,7 +296,7 @@ index 0000000..5f462f1
 +  if command == "raise" then raise user mine description "the description" additional ("one", "two") return 7
 +  return .Thing~new~user
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 9e31544..b2a74b2 100755
+index 9e31544..c5c35ac 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -420,6 +420,12 @@ check "a logic error ends the process with a non-zero status" '^Logic error: can
@@ -289,7 +305,7 @@ index 9e31544..b2a74b2 100755
  
 +# --- command environments written in JavaScript (.js~addCommandEnvironment,
 +# wasm/web/jscommands.cls over cmdhandler.cls), portable test
-+check "command handlers in JavaScript (jscommands.cls)" '^38 passed, 0 failed$' '!^FAIL ' \
++check "command handlers in JavaScript (jscommands.cls)" '^40 passed, 0 failed$' '!^FAIL ' \
 +  '^to the console, from JavaScript$' '^to the error stream, from JavaScript$' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-commands.rex'"
 +
@@ -297,7 +313,7 @@ index 9e31544..b2a74b2 100755
  "$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
  FETCH_SRV=$!; sleep 0.5
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 60729a4..49700f7 100755
+index 60729a4..ac82483 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -99,6 +99,28 @@ CASES = [
@@ -306,7 +322,7 @@ index 60729a4..49700f7 100755
       {}, lambda r: r["out"] == "1\n"),
 +  # command environments written in JavaScript (jscommands.cls), in the worker's realm: the portable test
 +  ("js commands", open(f"{SRC}/wasm/tests/js-commands.rex").read(), {"js": {"worker": True}},
-+     lambda r: "38 passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
++     lambda r: "40 passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
 +  # ... and a function of the page: its ctx calls give Promises
 +  ("js commands page", 'f = .js~page~Function~new("c", "ctx", "return ctx.getVar(\'X\').then((x) => \' \' + c + \' \' + x * 2)")\n'
 +                       '.js~addCommandEnvironment("P", f); x = 21; address p "go"; say "["rc"]"\n'
@@ -421,10 +437,10 @@ index 3859675..f5d83f6 100644
    if source~isA(.String) then return source~makeArray
 diff --git a/wasm/web/jscommands.cls b/wasm/web/jscommands.cls
 new file mode 100644
-index 0000000..a82dd37
+index 0000000..bfff9b6
 --- /dev/null
 +++ b/wasm/web/jscommands.cls
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,158 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -522,12 +538,52 @@ index 0000000..a82dd37
 +  return r
 +
 +
-+-- the .CommandContext as JavaScript gets it: the same methods, the tests
-+-- (hasVar, isRedirected, isValid) answering booleans (.Boolean)
++-- the .CommandContext as JavaScript gets it: a JavaScript-style API on top
++-- of cmdhandler's (caller[name], streams for WITH): the tests
++-- (hasVar, isRedirected, isValid) answering booleans (.Boolean); lineIn,
++-- lines, output and error as lines, with output and error going to the
++-- console without WITH OUTPUT / WITH ERROR; getVar giving .nil
++-- (null) for a variable with no value; the rest forwarded as it is
 +::class JSCommandContext
 +::method init
 +  expose context
 +  use strict arg context
++::method lineIn
++  expose context
++  if \context~isRedirected("Input") then return .nil
++  in = context~input
++  if in~lines == 0 then return .nil
++  return in~linein
++::method lines
++  expose context
++  lines = .array~new
++  if \context~isRedirected("Input") then return lines
++  in = context~input
++  do while in~lines > 0
++    lines~append(in~linein)
++  end
++  return lines
++::method output
++  expose context
++  use strict arg lines
++  if context~isRedirected("Output") then self~write(context~output, lines)
++  else self~write(.output, lines)
++::method error
++  expose context
++  use strict arg lines
++  if context~isRedirected("Error") then self~write(context~error, lines)
++  else self~write(.error, lines)
++::method write private
++  use strict arg out, lines
++  if lines~isA(.String) then out~lineout(lines)
++  else do line over lines~makeArray
++    out~lineout(line~string)
++  end
++::method getVar
++  expose context
++  use strict arg name
++  if \context~hasVar(name) then return .nil
++  return context[name]
 +::method hasVar
 +  expose context
 +  use strict arg name

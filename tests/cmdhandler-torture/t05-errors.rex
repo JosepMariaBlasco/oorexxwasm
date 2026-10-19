@@ -10,7 +10,7 @@ in.0 = 3; in.1 = "a"; in.2 = "b"; in.3 = "c"
 mine = "caller"
 
 -- SYNTAX after every kind of context call, caught by the caller each time
-do verb over .array~of("PLAIN", "LINEIN", "LINES", "OUTPUT", "ERROR", "GET", "SET", "HAS", "DROP", "VARS", "REDIR", "ISVALID")
+do verb over .array~of("PLAIN", "LINEIN", "LINES", "OUTPUT", "ERROR", "GET", "SET", "GETVAR", "SETVAR", "HAS", "DROP", "VARS", "REDIR", "ISVALID")
   good = 0
   do i = 1 to loops
     if syntaxOf(verb) == "42.3" then good += 1
@@ -112,12 +112,14 @@ unexpected:
   parse var command verb rest
   select case verb
     when "PLAIN"   then nop
-    when "LINEIN"  then x = context~lineIn
-    when "LINES"   then x = context~lines
-    when "OUTPUT"  then context~output("x")
-    when "ERROR"   then context~error("x")
-    when "GET"     then x = context~getVar("mine")
-    when "SET"     then context~setVar("tmp", 1)
+    when "LINEIN"  then x = context~input~linein
+    when "LINES"   then x = context~input~arrayIn
+    when "OUTPUT"  then context~output~lineout("x")
+    when "ERROR"   then context~error~lineout("x")
+    when "GET"     then x = context["mine"]
+    when "SET"     then context["tmp"] = 1
+    when "GETVAR"  then x = context~getVar("mine")
+    when "SETVAR"  then context~setVar("tmp", 1)
     when "HAS"     then x = context~hasVar("mine")
     when "DROP"    then context~dropVar("tmp")
     when "VARS"    then x = context~variables
@@ -142,7 +144,7 @@ unexpected:
     end
     when "NESTERR" then return self~nestErr(context)
     when "HALFWAY" then do
-      do i = 1 to 5; context~output("line" i); end
+      do i = 1 to 5; context~output~lineout("line" i); end
       return 1 / 0
     end
   end
@@ -159,10 +161,10 @@ inner:
 ::method selfTrap private
   use arg context
   signal on syntax name trapped
-  context~output(context~lines)
+  context~output~arrayOut(context~input~arrayIn)
   context~setVar("mine", "set before")
   return 1 / 0
 trapped:
-  context~output("after")
+  context~output~lineout("after")
   context~setVar("mine", "set after")
   return 7

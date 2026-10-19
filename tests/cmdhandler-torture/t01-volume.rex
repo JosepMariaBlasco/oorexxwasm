@@ -48,10 +48,9 @@ unexpected:
     return n
   end
   -- COPY: the input to the output, and one line to the error
-  do forever
-    l = context~lineIn
-    if l == .nil then leave
-    context~output(l)
+  in = context~input; out = context~output
+  do while in~lines > 0
+    out~lineout(in~linein)
   end
-  context~error("done")
+  context~error~lineout("done")
   return 0

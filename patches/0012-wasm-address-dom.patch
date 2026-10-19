@@ -25,9 +25,9 @@ part of the posted RFE.
  wasm/tests/dom.rex      |  259 ++++++++++
  wasm/tests/web-api.html |    2 +-
  wasm/tests/web-api.py   |   11 +
- wasm/web/dom.cls        | 1046 +++++++++++++++++++++++++++++++++++++++
+ wasm/web/dom.cls        | 1047 +++++++++++++++++++++++++++++++++++++++
  wasm/web/ooRexx.js      |   14 +-
- 6 files changed, 1333 insertions(+), 3 deletions(-)
+ 6 files changed, 1334 insertions(+), 3 deletions(-)
  create mode 100644 wasm/tests/dom.rex
  create mode 100644 wasm/web/dom.cls
 
@@ -352,10 +352,10 @@ index ebdae4f..60729a4 100755
       lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
 diff --git a/wasm/web/dom.cls b/wasm/web/dom.cls
 new file mode 100644
-index 0000000..e7341a3
+index 0000000..3119ca4
 --- /dev/null
 +++ b/wasm/web/dom.cls
-@@ -0,0 +1,1046 @@
+@@ -0,0 +1,1047 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -532,7 +532,7 @@ index 0000000..e7341a3
 +  current = root
 +  return .true
 +noPage:
-+  context~error("DOM: there is no page (the page must grant it: js: {page: true})")
++  .CommandIO~error(context, "DOM: there is no page (the page must grant it: js: {page: true})")
 +  return .false
 +
 +::method command
@@ -553,7 +553,7 @@ index 0000000..e7341a3
 +      -- a target alone is a LOCATE: not found is RC 2, as LOCATE's
 +      if words~items = 0 | (words~items = 2 & words~isKeyword(1, "INTO")) then
 +        return context~raiseError(2)
-+      context~error("DOM: not a command, and no element:" ref)
++      .CommandIO~error(context, "DOM: not a command, and no element:" ref)
 +      return context~raiseFailure(-4)
 +    end
 +  end
@@ -614,7 +614,7 @@ index 0000000..e7341a3
 +  reason = condition("O")~message
 +  parse var reason "JavaScript error: " js
 +  if js \== "" then reason = js
-+  context~error("DOM" verb":" reason)
++  .CommandIO~error(context, "DOM" verb":" reason)
 +  return context~raiseFailure(-5)
 +
 +-- ---- helpers ---------------------------------------------------------------
@@ -629,31 +629,31 @@ index 0000000..e7341a3
 +::method badNick private
 +  use strict arg nick, context, verb
 +  if \self~isCommand(nick) then return .false
-+  self~bad(context, verb": a command name cannot be a nickname:" nick)
-+  return .true
++  .CommandIO~error(context, "DOM:" verb": a command name cannot be a nickname:" nick)
++  return .true                          -- the caller raises FAILURE
 +
 +::method bad private
 +  use strict arg context, why
-+  context~error("DOM:" why)
++  .CommandIO~error(context, "DOM:" why)
 +  return context~raiseFailure(-3)
 +
 +::method noRoot private
 +  use strict arg context
-+  context~error("DOM: no root and no current element: NEW, or ROOT PAGE, first")
++  .CommandIO~error(context, "DOM: no root and no current element: NEW, or ROOT PAGE, first")
 +  return context~raiseFailure(-2)
 +
 +-- no more words expected
 +::method noMore private
 +  use strict arg words, context, usage
 +  if words~items = 0 then return .true
-+  context~error("DOM: unexpected" words~rest~makeString("L", " ")"; usage:" usage)
++  .CommandIO~error(context, "DOM: unexpected" words~rest~makeString("L", " ")"; usage:" usage)
 +  return .false
 +
 +-- a value for INTO var, or to the output
 +::method give private
 +  use strict arg context, into, value
 +  if into == .nil then do
-+    context~output(value~string)
++    .CommandIO~output(context, value~string)
 +    return 0
 +  end
 +  if into~right(1) == "." then do              -- a stem: lines, as EXECIO
@@ -683,7 +683,7 @@ index 0000000..e7341a3
 +  signal on syntax name badSelector
 +  return root~querySelector(ref)
 +badSelector:
-+  context~error("DOM: not a nickname, and not a CSS selector:" ref)
++  .CommandIO~error(context, "DOM: not a nickname, and not a CSS selector:" ref)
 +  return ""
 +
 +-- the nickname of an element, or .nil
@@ -723,7 +723,7 @@ index 0000000..e7341a3
 +  use strict arg words, context
 +  fromVar = words~isKeyword(1, "FROM")
 +  value = words~takeValue(context)
-+  if value == .nil & fromVar then context~error("DOM: FROM: the variable has no value")
++  if value == .nil & fromVar then .CommandIO~error(context, "DOM: FROM: the variable has no value")
 +  return value
 +
 +-- ---- root and navigation ---------------------------------------------------
@@ -772,7 +772,7 @@ index 0000000..e7341a3
 +    el = self~find(ref, context)
 +    if el == "" then return context~raiseFailure(-3)
 +    if el == .nil then do
-+      context~error("DOM: no element" ref)
++      .CommandIO~error(context, "DOM: no element" ref)
 +      return context~raiseFailure(-4)
 +    end
 +  end
@@ -1018,16 +1018,17 @@ index 0000000..e7341a3
 +    if \words~isKeyword(1, "FROM") | words~items < 2 then signal wrong
 +    words~take
 +    name = words~take
-+    data = context~getVar(name)
++    if context~hasVar(name) then data = context[name]
++    else data = .nil
 +    if data == .nil then do
-+      context~error("DOM: FROM" name": the variable has no value")
++      .CommandIO~error(context, "DOM: FROM" name": the variable has no value")
 +      return .nil
 +    end
 +    if words~items > 0 then signal wrong
 +  end
-+  else if context~isRedirected("Input") then data = context~lines
++  else if context~isRedirected("Input") then data = .CommandIO~lines(context)
 +  else do
-+    context~error("DOM: rows are needed: FROM var, or WITH INPUT")
++    .CommandIO~error(context, "DOM: rows are needed: FROM var, or WITH INPUT")
 +    return .nil
 +  end
 +  if data~isA(.Stem) then do
@@ -1047,7 +1048,7 @@ index 0000000..e7341a3
 +  end
 +  return rows
 +wrong:
-+  context~error("DOM: FROM var, or the WITH INPUT lines")
++  .CommandIO~error(context, "DOM: FROM var, or the WITH INPUT lines")
 +  return .nil
 +
 +::method table private
@@ -1119,7 +1120,7 @@ index 0000000..e7341a3
 +    if rules == .nil then return context~raiseFailure(-3)
 +    if \self~noMore(words, context, "CSS [rules] (in quotes, or FROM var)") then return context~raiseFailure(-3)
 +  end
-+  else if context~isRedirected("Input") then rules = context~lines~makeString("L", "0a"x)
++  else if context~isRedirected("Input") then rules = .CommandIO~lines(context)~makeString("L", "0a"x)
 +  else return self~bad(context, "CSS: rules are needed (a value, or WITH INPUT)")
 +  style = self~styleFor(root)
 +  style["textContent"] = style["textContent"] || "0a"x || rules

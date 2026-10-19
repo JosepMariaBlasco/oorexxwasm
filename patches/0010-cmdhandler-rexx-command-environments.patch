@@ -10,30 +10,38 @@ abstract; required) an ADDRESS environment, and ~unregister(name) removes it
 (the name then answers FAILURE RC 30, as an unknown environment; a name
 with no handler, and a handler of .nil, are errors); each command is sent as
 object~command(command, .CommandContext), the result becomes RC.  The context
-gives WITH INPUT / OUTPUT / ERROR and the variables of the code that issued
-the command; ~raiseError / ~raiseFailure; SYNTAX errors reach the caller.
+(the parameter called caller) gives WITH INPUT / OUTPUT / ERROR as streams
+(~input an .InputStream, ~output and ~error .OutputStreams; without the
+matching WITH, SYNTAX 98.900), the variables of the code that issued the
+command (caller[name], caller[name] = value, with ~getVar / ~setVar as
+synonyms; a variable with no value gives its name, as in Rexx; ~hasVar,
+~dropVar, ~variables), and ~raise(condition, rc [, description]
+[, additional]) for any condition RAISE accepts, one per command
+(~raiseError / ~raiseFailure as shortcuts; raise("SYNTAX", code) shows at
+the caller's ADDRESS clause); SYNTAX errors in the handler reach the
+caller.
 Registrations are per interpreter instance, as the environments themselves:
 .local~CommandHandlers (name -> object), .local~CommandContext and
 .local~CommandHandlerNames (the native handler is added once per name).
 Native: libcmdhandler; WASM: embedded package (PackageManager table), .cls in
-bin / bin-node / bin-web.  Tests: wasm/tests/cmdhandler.rex (45 checks, also
+bin / bin-node / bin-web.  Tests: wasm/tests/cmdhandler.rex (64 checks, also
 in qualify-node-cli.sh and web-api.py); extensions/cmdhandler/tests/
 instances.cpp (two instances in one process, native).  Portable, not part
 of the posted RFE.
 ---
  CMakeLists.txt                            |  24 +-
- extensions/cmdhandler/cmdhandler.cls      | 196 +++++++++++
- extensions/cmdhandler/cmdhandler.cpp      | 397 ++++++++++++++++++++++
+ extensions/cmdhandler/cmdhandler.cls      | 422 ++++++++++++++++++++++
+ extensions/cmdhandler/cmdhandler.cpp      | 421 +++++++++++++++++++++
  extensions/cmdhandler/tests/ask.rex       |   2 +
  extensions/cmdhandler/tests/instances.cpp |  42 +++
  extensions/cmdhandler/tests/reg.rex       |  13 +
  interpreter/package/PackageManager.cpp    |   2 +
  wasm/build-node.sh                        |   2 +-
  wasm/build-web.sh                         |   2 +-
- wasm/tests/cmdhandler.rex                 | 283 +++++++++++++++
+ wasm/tests/cmdhandler.rex                 | 413 +++++++++++++++++++++
  wasm/tests/qualify-node-cli.sh            |   4 +
  wasm/tests/web-api.py                     |   3 +
- 12 files changed, 967 insertions(+), 3 deletions(-)
+ 12 files changed, 1347 insertions(+), 3 deletions(-)
  create mode 100644 extensions/cmdhandler/cmdhandler.cls
  create mode 100644 extensions/cmdhandler/cmdhandler.cpp
  create mode 100644 extensions/cmdhandler/tests/ask.rex
@@ -120,10 +128,10 @@ index 800ba2c..0f843d3 100644
  install(FILES ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/json.cls COMPONENT Core DESTINATION ${INSTALL_CLS_DIR})
 diff --git a/extensions/cmdhandler/cmdhandler.cls b/extensions/cmdhandler/cmdhandler.cls
 new file mode 100644
-index 0000000..881b63b
+index 0000000..8d97a86
 --- /dev/null
 +++ b/extensions/cmdhandler/cmdhandler.cls
-@@ -0,0 +1,196 @@
+@@ -0,0 +1,422 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -133,50 +141,93 @@ index 0000000..881b63b
 +/* distribution. A copy is also available at the following address:          */
 +/* https://www.oorexx.org/license.html                                        */
 +/*                                                                            */
++/* Redistribution and use in source and binary forms, with or                 */
++/* without modification, are permitted provided that the following            */
++/* conditions are met:                                                        */
++/*                                                                            */
++/* Redistributions of source code must retain the above copyright             */
++/* notice, this list of conditions and the following disclaimer.              */
++/* Redistributions in binary form must reproduce the above copyright          */
++/* notice, this list of conditions and the following disclaimer in            */
++/* the documentation and/or other materials provided with the distribution.   */
++/*                                                                            */
++/* Neither the name of Rexx Language Association nor the names                */
++/* of its contributors may be used to endorse or promote products             */
++/* derived from this software without specific prior written permission.      */
++/*                                                                            */
++/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
++/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
++/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
++/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
++/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
++/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
++/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
++/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
++/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
++/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
++/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
++/*                                                                            */
 +/*----------------------------------------------------------------------------*/
 +/*
 + * cmdhandler.cls: command environments (ADDRESS) written in Rexx.
 + *
-+ *    ::requires "cmdhandler.cls"
-+ *    .CommandHandler~register("DEMO", .Demo~new)
-+ *    address demo "UPPER" with input stem in. output stem out.
++ *    .CommandHandler~register("UPPER", .Upper~new)
++ *    address upper "" with input stem in. output stem out.
++ *    ...
 + *
-+ *    ::class Demo subclass CommandHandler      -- or: subclass X inherit CommandHandler
++ *    ::requires "cmdhandler.cls"               -- directives follow the prolog
++ *
++ *    ::class Upper inherit CommandHandler       -- or: subclass CommandHandler
 + *    ::method command
-+ *      use arg command, context                -- a .CommandContext
-+ *      ...
-+ *      return 0                                -- becomes RC
++ *      use arg command, caller                  -- caller: a .CommandContext
++ *      in = caller~input; out = caller~output
++ *      do while in~lines > 0
++ *        out~lineout(in~linein~upper)
++ *      end
++ *      return 0                                 -- becomes RC
 + *
 + * The handler is an object of a class that inherits .CommandHandler, a mixin
-+ * class whose COMMAND method is abstract.  For every command the handler
-+ * object gets ~command(command, context).
-+ * Its result is RC (0 when it returns nothing).  The .CommandContext, valid
-+ * only while that command runs and only on its thread (not after a REPLY,
-+ * nor from another thread: SYNTAX 98.900), gives:
++ * class whose COMMAND method is abstract.  For every command the handler gets
++ * ~command(command, caller): the command (a String) and a .CommandContext.
++ * Its result is RC (0 when it returns nothing).  The .CommandContext is valid
++ * only while that command runs and only on its thread (afterwards, or from
++ * another thread: SYNTAX 98.900).  It gives:
 + *
-+ *    ~lineIn                next line of WITH INPUT, .nil at the end
-+ *    ~lines                 all the remaining input lines (an Array)
-+ *    ~output(lines)         a string or a collection of lines to WITH OUTPUT
-+ *    ~error(lines)          the same to WITH ERROR
-+ *                           (not redirected: to .output / .error, as a
-+ *                           command's own output would go to the console)
++ *    ~input                 WITH INPUT as an .InputStream (linein, lines,
++ *                           charin, chars, arrayIn); at the end linein
++ *                           returns "" and raises NOTREADY
++ *    ~output, ~error        WITH OUTPUT / WITH ERROR as .OutputStreams
++ *                           (lineout, charout, arrayOut)
++ *                           (without the matching WITH, these three are a
++ *                           SYNTAX 98.900 error: check isRedirected first,
++ *                           and use .input~current, .output, .error instead)
 + *    ~isRedirected(which)   "Input", "Output", "Error" or "Same"
-+ *    ~getVar(name)          a variable of the code that issued the command
-+ *                           (.nil when it has no value), ~hasVar(name)
-+ *    ~setVar(name, value)   assigns it (simple, stem or compound; the tail of
-+ *                           a compound name is resolved there, as in Rexx)
-+ *    ~dropVar(name)         drops it
-+ *    ~variables             a Directory with all of them
-+ *    ~raiseError(rc)        the command raises ERROR with this RC (returns
-+ *    ~raiseFailure(rc)      rc: "return context~raiseFailure(-1)")
++ *    caller[name]           a variable of the code that issued the command
++ *                           (simple, stem or compound, the tail resolved
++ *                           there; with no value, its name, as in Rexx:
++ *                           FOO, A.x y; hasVar tells)
++ *    caller[name] = value   assigns it
++ *    ~getVar(name), ~setVar(name, value)   the same, by name
++ *    ~hasVar(name), ~dropVar(name), ~variables (a Directory of all of them)
++ *    ~raise(condition, rc [, description] [, additional])
++ *                           the command raises this condition (any that
++ *                           RAISE accepts but SYNTAX) with this RC, when
++ *                           COMMAND returns; returns rc; only one per
++ *                           command (a second one is SYNTAX 93.900)
++ *    ~raise("SYNTAX", code [, additional])
++ *                           a SYNTAX error at the caller's ADDRESS clause,
++ *                           without the handler's frames (for an error of the
++ *                           handler itself, use RAISE SYNTAX in it)
++ *    ~raiseError(rc), ~raiseFailure(rc)   shortcuts
 + *    ~environment           the ADDRESS name the command was sent to
 + *    ~isValid               whether the command is still running
 + *
-+ * A SYNTAX error in ~command reaches the code that issued the command.
++ * Idiom: "return caller~raise(...)".  A SYNTAX error in ~command reaches the
++ * code that issued the command.
 + * .CommandHandler~unregister(name) removes the handler: the name then
-+ * behaves as an unknown environment (FAILURE, RC 30); a name with no
-+ * handler is an error (SYNTAX 93.900).  A handler of .nil is
-+ * an error (SYNTAX 93.900), not a way to remove one.
++ * behaves as an unknown environment (FAILURE, RC 30); a name with no handler
++ * is an error (SYNTAX 93.900).  A handler of .nil is an error too (SYNTAX
++ * 93.900), not a way to remove one.
 + *
 + * The registrations are in .local (one set per interpreter instance, as the
 + * command environments): .local~CommandHandlers, a Directory name -> handler,
@@ -216,83 +267,101 @@ index 0000000..881b63b
 +  return
 +
 +-- remove the handler of ADDRESS name: the name then behaves as an unknown
-+-- environment (FAILURE, RC 30); a name that has no handler is an error
++-- environment (FAILURE, RC 30); a name that has no handler is left alone
 +::method unregister class
 +  use strict arg name
 +  name = name~request("String")
 +  if name == .nil | name == "" then
 +    raise syntax 93.900 array("unregister: the environment name must be a non-empty string")
-+  if .local~commandHandlers == .nil then handler = .nil
-+  else handler = .local~commandHandlers~remove(name~upper)
-+  if handler == .nil then
-+    raise syntax 93.900 array("unregister: no handler is registered for" name)
++  handlers = .local~commandHandlers
++  if handlers == .nil then handlers = .directory~new
++  if \handlers~hasIndex(name~upper) then
++    raise syntax 93.900 array("unregister: there is no command handler named" name)
++  handlers~remove(name~upper)
 +  return
 +
-+-- classes that inherit it implement it: use arg command, context; return RC
++-- classes that inherit it implement it: use arg command, caller; return RC
 +::method command abstract
 +
 +
 +::class CommandContext public
 +
 +::attribute environment get
-+::attribute condition get
++-- for the native handler: the condition asked for with ~raise, or .nil
++::attribute pending get
 +
 +::method init
-+  expose cself environment condition
++  expose cself environment pending input output error
 +  use strict arg cself, environment
-+  condition = .nil
++  pending = .nil; input = .nil; output = .nil; error = .nil
 +
-+::method lineIn  external "LIBRARY cmdhandler CmdContext_LineIn"
 +::method isRedirected external "LIBRARY cmdhandler CmdContext_IsRedirected"
 +::method isValid external "LIBRARY cmdhandler CmdContext_IsValid"
-+::method write private external "LIBRARY cmdhandler CmdContext_Write"
 +::method nativeGetVar private external "LIBRARY cmdhandler CmdContext_GetVar"
 +::method nativeHasVar private external "LIBRARY cmdhandler CmdContext_HasVar"
 +::method nativeSetVar private external "LIBRARY cmdhandler CmdContext_SetVar"
 +::method nativeDropVar private external "LIBRARY cmdhandler CmdContext_DropVar"
 +::method variables external "LIBRARY cmdhandler CmdContext_Variables"
 +
-+::method lines
-+  lines = .array~new
-+  do forever
-+    line = self~lineIn
-+    if line == .nil then leave
-+    lines~append(line)
++-- WITH INPUT / OUTPUT / ERROR as streams; only with that redirection
++::method input
++  expose cself input
++  if input == .nil then do
++    if \self~isRedirected("Input") then
++      raise syntax 98.900 array("the command was not given WITH INPUT; check isRedirected(""Input"") first")
++    input = .CommandInput~new(cself)
 +  end
-+  return lines
++  return input
 +
 +::method output
-+  use strict arg lines
-+  self~send("O", lines)
++  expose cself output
++  if output == .nil then do
++    if \self~isRedirected("Output") then
++      raise syntax 98.900 array("the command was not given WITH OUTPUT; check isRedirected(""Output"") first")
++    output = .CommandOutput~new(cself, "O")
++  end
++  return output
 +
 +::method error
-+  use strict arg lines
-+  self~send("E", lines)
-+
-+-- write a string or each item of a collection to the output or the error
-+::method send private
-+  use strict arg stream, lines
-+  if lines~isA(.String) then lines = .array~of(lines)
-+  else lines = lines~makeArray
-+  if stream == "O" then redirected = self~isRedirected("Output")
-+  else redirected = self~isRedirected("Error")
-+  do line over lines
-+    if redirected then self~write(stream, line~string)
-+    else if stream == "O" then .output~lineout(line~string)
-+    else .error~lineout(line~string)
++  expose cself error
++  if error == .nil then do
++    if \self~isRedirected("Error") then
++      raise syntax 98.900 array("the command was not given WITH ERROR; check isRedirected(""Error"") first")
++    error = .CommandOutput~new(cself, "E")
 +  end
++  return error
 +
++-- for the native handler, when COMMAND returns: write what charout left
++::method finish
++  expose output error
++  if output \== .nil then output~flush
++  if error \== .nil then error~flush
++
++-- the caller's variables: caller[name], caller[name] = value
++::method "[]"
++  use strict arg name
++  name = self~varName(name)
++  value = self~nativeGetVar(name)
++  if value \== .nil then return value
++  if self~hasVar(name) then return value  -- its value is .nil
++  return self~derivedName(name)        -- no value: its name, as in Rexx
++
++::method "[]="
++  use strict arg value, name
++  self~nativeSetVar(self~varName(name), value)
++
++-- exact synonyms of [] and []=, the names the host bridges' contexts use
 +::method getVar
 +  use strict arg name
-+  return self~nativeGetVar(self~varName(name))
++  return self[name]
++
++::method setVar
++  use strict arg name, value
++  self[name] = value
 +
 +::method hasVar
 +  use strict arg name
 +  return self~nativeHasVar(self~varName(name))
-+
-+::method setVar
-+  use strict arg name, value
-+  self~nativeSetVar(self~varName(name), value)
 +
 +::method dropVar
 +  use strict arg name
@@ -300,6 +369,32 @@ index 0000000..881b63b
 +
 +-- a variable name (simple, stem or compound), or a SYNTAX error: the native
 +-- API silently ignores names that are not variables
++-- the name of a variable with no value, as Rexx gives it: the stem in upper
++-- case and each tail symbol replaced by its value in the caller (constant
++-- symbols, and variables with no value, in upper case): a.i is "A.x y" when
++-- i = "x y"
++::method derivedName private
++  use strict arg name
++  p = name~pos(".")
++  if p == 0 then return name~upper
++  derived = name~left(p)~upper
++  rest = name~substr(p + 1)
++  do forever
++    p = rest~pos(".")
++    if p == 0 then elem = rest
++    else elem = rest~left(p - 1)
++    if elem == "" then nop
++    else if elem~left(1)~dataType("W") then derived ||= elem~upper
++    else do
++      if self~hasVar(elem) then derived ||= self~nativeGetVar(elem)~string
++      else derived ||= elem~upper
++    end
++    if p == 0 then leave
++    derived ||= "."
++    rest = rest~substr(p + 1)
++  end
++  return derived
++
 +::method varName private
 +  use strict arg name
 +  name = name~request("String")
@@ -309,23 +404,162 @@ index 0000000..881b63b
 +  end
 +  raise syntax 93.900 array("not a Rexx variable name:" name)
 +
-+::method raiseError
-+  expose condition
-+  use strict arg rc
-+  condition = "ERROR"
++-- the condition the command raises when COMMAND returns (see the comment at
++-- the top); only one per command: a second call is an error (unlike the
++-- native RaiseCondition, where the last one wins: two are almost surely a
++-- mistake, and it is easier to allow them later than to forbid them)
++::method raise
++  expose pending
++  use strict arg condition, rc, description = .nil, additional = .nil
++  if pending \== .nil then
++    raise syntax 93.900 array("raise: a condition was already raised for this command")
++  condition = condition~request("String")
++  if condition == .nil then
++    raise syntax 93.900 array("raise: the condition must be a string")
++  parse upper value condition~space with name rest
++  if name == "SYNTAX" then do
++    -- raise("SYNTAX", code [, additional]): the third argument is additional
++    if rest \== "" | arg(4, "E") then
++      raise syntax 93.900 array("raise: SYNTAX takes an error code and an optional array of substitutions")
++    additional = description
++    if \rc~dataType("N") | rc~pos(".") == 0 then
++      raise syntax 93.900 array("raise: the SYNTAX error code must be major.minor, as 98.900; found" rc)
++    parse var rc major "." minor
++    if \major~dataType("W") | \minor~dataType("W") | major < 1 | major > 99 | minor < 1 | minor > 999 then
++      raise syntax 93.900 array("raise: the SYNTAX error code must be major.minor, as 98.900; found" rc)
++    if additional == .nil then additional = .array~new
++    else if \additional~isA(.Array) then additional = .array~of(additional)
++    pending = .array~of("SYNTAX", major * 1000 + minor, .nil, additional)
++    return rc
++  end
++  if name == "USER" then do
++    if rest == "" | rest~words > 1 then
++      raise syntax 93.900 array("raise: USER needs a condition name, as ""USER NAME""")
++    name = name rest
++  end
++  else if rest \== "" | wordpos(name, "ERROR FAILURE HALT LOSTDIGITS NOMETHOD NOSTRING NOTREADY NOVALUE") == 0 then
++    raise syntax 93.900 array("raise: not a condition RAISE accepts:" condition)
++  pending = .array~of(name, rc, description, additional)
 +  return rc
 +
-+::method raiseFailure
-+  expose condition
++::method raiseError
 +  use strict arg rc
-+  condition = "FAILURE"
-+  return rc
++  return self~raise("ERROR", rc)
++
++::method raiseFailure
++  use strict arg rc
++  return self~raise("FAILURE", rc)
++
++
++-- WITH INPUT as an .InputStream (one per command; see .CommandContext~input)
++::class CommandInput public inherit InputStream
++
++::method init
++  expose cself buffer more
++  use strict arg cself
++  buffer = ""        -- characters read but not given yet (charin)
++  more = .nil        -- a line read ahead (lines), or .nil
++
++::method readLine private external "LIBRARY cmdhandler CmdContext_LineIn"
++
++-- the next line, read ahead if needed; .nil at the end
++::method nextLine private
++  expose more
++  if more \== .nil then do
++    line = more; more = .nil
++    return line
++  end
++  return self~readLine
++
++::method linein
++  expose buffer
++  use strict arg start = .nil, count = 1
++  if arg(1, "E") then raise syntax 93.963      -- no positioning
++  if count == 0 then return ""
++  if count \== 1 then raise syntax 93.963
++  if buffer \== "" then do                      -- the rest of what charin read
++    parse var buffer line (.endOfLine) buffer
++    return line
++  end
++  line = self~nextLine
++  if line == .nil then raise notready return ""
++  return line
++
++::method lines
++  expose buffer more
++  if buffer \== "" then return 1
++  if more == .nil then more = self~readLine
++  return more \== .nil
++
++::method charin
++  expose buffer
++  use strict arg start = .nil, count = 1
++  if arg(1, "E") then raise syntax 93.963      -- no positioning
++  do while buffer~length < count
++    line = self~nextLine
++    if line == .nil then leave
++    buffer ||= line || .endOfLine
++  end
++  chars = buffer~left(min(count, buffer~length))
++  buffer = buffer~substr(chars~length + 1)
++  if chars~length < count then raise notready return (chars)
++  return chars
++
++::method chars
++  expose buffer more
++  if buffer \== "" then return buffer~length
++  if more == .nil then more = self~readLine
++  if more == .nil then return 0
++  return more~length + .endOfLine~length
++
++
++-- WITH OUTPUT or WITH ERROR as an .OutputStream (see .CommandContext~output)
++::class CommandOutput public inherit OutputStream
++
++::method init
++  expose cself which partial
++  use strict arg cself, which
++  partial = ""       -- charout without a line end yet
++
++::method write private external "LIBRARY cmdhandler CmdContext_Write"
++
++::method lineout
++  expose which partial
++  use strict arg line = .nil
++  if arg(1, "O") then do                         -- lineout(): flush, as a close
++    self~flush
++    return 0
++  end
++  self~write(which, partial || line~string)
++  partial = ""
++  return 0
++
++::method charout
++  expose which partial
++  use strict arg string = "", start = .nil
++  if arg(2, "E") then raise syntax 93.963        -- no positioning
++  partial ||= string~string
++  -- whole lines go out now; the rest waits for lineout or the command's end
++  do while partial~pos(.endOfLine) > 0
++    parse var partial line (.endOfLine) partial
++    self~write(which, line)
++  end
++  return 0
++
++-- write what charout left (the native handler calls it when COMMAND returns)
++::method flush
++  expose which partial
++  if partial \== "" then self~write(which, partial)
++  partial = ""
++
++::method close
++  self~flush
 diff --git a/extensions/cmdhandler/cmdhandler.cpp b/extensions/cmdhandler/cmdhandler.cpp
 new file mode 100644
-index 0000000..87b4b2b
+index 0000000..ee5ba35
 --- /dev/null
 +++ b/extensions/cmdhandler/cmdhandler.cpp
-@@ -0,0 +1,397 @@
+@@ -0,0 +1,421 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -448,6 +682,11 @@ index 0000000..87b4b2b
 +        return NULLOBJECT;
 +    }
 +    RexxObjectPtr result = c->SendMessage2(handler, "COMMAND", command, context);
++    if (!c->CheckCondition())
++    {
++        // write what the output streams' charout left, while still valid
++        c->SendMessage0(context, "FINISH");
++    }
 +    state->valid = false;               // the context is dead from now on
 +    if (c->CheckCondition())
 +    {
@@ -455,12 +694,31 @@ index 0000000..87b4b2b
 +        return NULLOBJECT;
 +    }
 +
-+    // did the handler ask for ERROR or FAILURE?
-+    RexxObjectPtr condition = c->SendMessage0(context, "CONDITION");
-+    if (condition != NULLOBJECT && condition != c->Nil())
++    // did the handler ask for a condition (caller~raise)?
++    RexxObjectPtr pending = c->SendMessage0(context, "PENDING");
++    if (pending != NULLOBJECT && pending != c->Nil() && c->IsArray(pending))
 +    {
-+        RexxObjectPtr rc = result != NULLOBJECT ? result : c->WholeNumber(0);
-+        c->RaiseCondition(c->ObjectToStringValue(condition), command, NULLOBJECT, rc);
++        RexxArrayObject request = (RexxArrayObject)pending;
++        CSTRING name = c->ObjectToStringValue(c->ArrayAt(request, 1));
++        RexxObjectPtr rc = c->ArrayAt(request, 2);
++        RexxObjectPtr description = c->ArrayAt(request, 3);
++        RexxObjectPtr additional = c->ArrayAt(request, 4);
++        if (strcmp(name, "SYNTAX") == 0)
++        {
++            // raised here, so it shows at the caller's ADDRESS clause, without
++            // the handler's frames; rc is the error number (major * 1000 + minor)
++            wholenumber_t code = 0;
++            c->ObjectToWholeNumber(rc, &code);
++            c->RaiseException((size_t)code, (RexxArrayObject)additional);
++            return NULLOBJECT;
++        }
++        RexxStringObject text = (description != NULLOBJECT && description != c->Nil())
++            ? c->ObjectToString(description) : command;
++        if (additional == c->Nil())
++        {
++            additional = NULLOBJECT;
++        }
++        c->RaiseCondition(name, text, additional, rc);
 +        return rc;
 +    }
 +    return result != NULLOBJECT ? result : c->WholeNumber(0);
@@ -527,8 +785,8 @@ index 0000000..87b4b2b
 +
 +
 +/**
-+ * ~lineIn: the next line of the redirected input, .nil at its end (or when
-+ * the command has no WITH INPUT).
++ * The next line of the redirected input, .nil at its end (the .CommandInput
++ * stream's readLine).
 + */
 +RexxMethod1(RexxObjectPtr, CmdContext_LineIn, CSELF, self)
 +{
@@ -550,8 +808,8 @@ index 0000000..87b4b2b
 +
 +
 +/**
-+ * ~write(stream, line): one line to the redirected output ("O") or error
-+ * ("E").  The .cls writes to .output / .error when not redirected.
++ * write(stream, line): one line to the redirected output ("O") or error
++ * ("E") (the .CommandOutput streams').
 + */
 +RexxMethod3(RexxObjectPtr, CmdContext_Write, CSTRING, stream, RexxStringObject, line, CSELF, self)
 +{
@@ -599,7 +857,7 @@ index 0000000..87b4b2b
 +
 +
 +/**
-+ * ~getVar(name): the caller's variable, or .nil when it has no value.
++ * caller[name]: the caller's variable, or .nil when it has no value.
 + */
 +RexxMethod2(RexxObjectPtr, CmdContext_GetVar, CSTRING, name, CSELF, self)
 +{
@@ -631,7 +889,7 @@ index 0000000..87b4b2b
 +
 +
 +/**
-+ * ~setVar(name, value): assigns the caller's variable (simple, stem or
++ * caller[name] = value: assigns the caller's variable (simple, stem or
 + * compound; a compound's tail is resolved in the caller, as Rexx does).
 + */
 +RexxMethod3(RexxObjectPtr, CmdContext_SetVar, CSTRING, name, RexxObjectPtr, value, CSELF, self)
@@ -846,10 +1104,10 @@ index aa24b52..93042c7 100755
  # JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
 diff --git a/wasm/tests/cmdhandler.rex b/wasm/tests/cmdhandler.rex
 new file mode 100644
-index 0000000..1e8aa19
+index 0000000..d8217fe
 --- /dev/null
 +++ b/wasm/tests/cmdhandler.rex
-@@ -0,0 +1,283 @@
+@@ -0,0 +1,413 @@
 +/* cmdhandler.rex: tests of cmdhandler.cls (command environments written in */
 +/* Rexx).  Portable: native and WASM builds.  Prints one line per check and */
 +/* exits 1 if any fails.                                                    */
@@ -867,17 +1125,26 @@ index 0000000..1e8aa19
 +
 +-- the caller's variables
 +address t "SET greeting hola mundo"
-+call check "setVar simple", greeting == "hola mundo"
++call check "caller[name] = value", greeting == "hola mundo"
 +i = 3
 +address t "SET a.i tres"
-+call check "setVar compound, tail resolved in the caller", a.3 == "tres"
++call check "caller[] compound, tail resolved in the caller", a.3 == "tres"
 +address t "SET s. 0"
-+call check "setVar stem (default value)", s.xyz == 0
++call check "caller[] stem (default value)", s.xyz == 0
 +drop nope
 +address t "HAS nope";        call check "hasVar unset", rc == 0
-+address t "GET nope";        call check "getVar unset is .nil", rc == "The NIL object"
++address t "GET nope";        call check "caller[] with no value: its name", rc == "NOPE"
++k = "x y"
++address t "GET nope.k.1";    call check "caller[] with no value: the derived name", rc == "NOPE.x y.1"
++nilvar = .nil; t = .nil
++address t "GET nilvar";      call check "caller[] of a variable whose value is .nil: .nil", rc == "The NIL object"
++address t "GET nope.t";      call check "caller[] with no value, tail whose value is .nil", rc == "NOPE.The NIL object"
++drop t
++address t "SYNONYMS"
++call check "getVar/setVar: exact synonyms of [] and []=", rc == "1 NOPE2" & syn.k == 7
 +address t "HAS greeting";    call check "hasVar set", rc == 1
-+address t "GET greeting";    call check "getVar", rc == "hola mundo"
++address t "GET greeting";    call check "caller[name]", rc == "hola mundo"
++address t "GET GrEeTiNg";    call check "caller[] names are not case-sensitive", rc == "hola mundo"
 +address t "DROP greeting";   call check "dropVar", symbol("greeting") == "LIT"
 +mine = "x"
 +address t "VARS";            call check "variables: the caller's, not the handler's", rc == "1 0"
@@ -890,15 +1157,27 @@ index 0000000..1e8aa19
 +call check "WITH INPUT / OUTPUT stems", out.0 == 2 & out.1 == "UNO" & out.2 == "DOS"
 +arr = .array~of("a", "b", "c")
 +address t "LINES" with input using (arr) output stem out.
-+call check "~lines and ~output(array)", out.0 == 2 & out.1 == 3 & out.2 == "a b c"
++call check "input~arrayIn and output~arrayOut", out.0 == 2 & out.1 == 3 & out.2 == "a b c"
++address t "CHARS" with input stem in. output stem out.
++call check "charin, chars, charout, the rest by linein", out.0 == 2 & out.1 == "u|no" & out.2 == "4 dos"
++address t "CHAROUT" with output stem out.
++call check "charout without a line end: written when COMMAND returns", out.0 == 2 & out.1 == "ab" & out.2 == "cd"
++address t "EOF" with input stem in. output stem out.
++call check "linein at the end: NOTREADY and """"", out.0 == 1 & out.1 == "NOTREADY ''"
++address t "STREAMS" with input stem in. output stem out.
++call check "the streams are .InputStream / .OutputStream", out.1 == "1 1"
 +address t "ERR oops" with error stem err.
 +call check "WITH ERROR", err.0 == 1 & err.1 == "oops"
 +address t "REDIR" with input stem in. output stem out.
 +call check "isRedirected", rc == "1 1 0 0"
 +address t "REDIR" with output stem both. error stem both.
 +call check "isRedirected Same", rc == "0 1 1 1"
-+address t "LINEIN"
-+call check "no WITH INPUT: ~lineIn is .nil", rc == 1
++address t "NOWITH input"
++call check "no WITH INPUT: caller~input is SYNTAX 98.900", rc == "98.900"
++address t "NOWITH output" with input stem in.
++call check "no WITH OUTPUT: caller~output is SYNTAX 98.900", rc == "98.900"
++address t "NOWITH error" with output stem out.
++call check "no WITH ERROR: caller~error is SYNTAX 98.900", rc == "98.900"
 +
 +-- conditions
 +signal on error name gotError
@@ -913,6 +1192,34 @@ index 0000000..1e8aa19
 +address t "RAISE ERROR 9"                      -- untrapped: just RC
 +call check "untrapped ERROR sets RC", rc == 9
 +
++signal on notready name gotNotready
++address t "RAISE NOTREADY 4"
++call check "NOTREADY raised", .false
++afterNotready:
++signal off notready
++signal on user boom name gotUser
++address t "RAISE USER BOOM 1"
++call check "USER BOOM raised", .false
++afterUser:
++signal off user boom
++address t "RAISE USER BOOM 2"                  -- untrapped: just RC
++call check "untrapped USER sets RC", rc == 2
++call on failure name gotSecond
++address t "TWICE"
++call check "a second raise is SYNTAX 93.900; the first stands", second == "FAILURE 5" & twice == "93.900"
++call off failure
++address t "BADRAISE"
++call check "raise: unknown condition, bad SYNTAX code: SYNTAX 93.900 inside", rc == "93.900 93.900 93.900"
++
++signal on syntax name gotRaisedSyntax
++address t "SYNTAXRAISE"
++call check "raise SYNTAX reaches the caller", .false
++afterRaisedSyntax:
++
++signal on syntax name gotHandlerSyntax
++address t "SYNTAXINSIDE"
++call check "RAISE SYNTAX in the handler reaches the caller", .false
++afterHandlerSyntax:
 +signal on syntax name gotSyntax
 +address t "DIVIDE"
 +call check "SYNTAX in the handler reaches the caller", .false
@@ -934,23 +1241,27 @@ index 0000000..1e8aa19
 +  s~lineout('::requires "cmdhandler.cls"')
 +  s~lineout('::class T subclass CommandHandler')
 +  s~lineout('::method command')
-+  s~lineout('  use arg command, context')
-+  s~lineout('  context~setVar("x", 1)')
++  s~lineout('  use arg command, caller')
++  s~lineout('  caller["x"] = 1')
 +  s~lineout('  return 1 / 0')
 +  s~close
 +  address system '"'exe'" "'child'"' with output stem co. error stem ce.
 +  all = ""; do k = 1 to ce.0; all ||= ce.k" "; end; do k = 1 to co.0; all ||= co.k" "; end
-+  if all = "" then say "skip  untrapped SYNTAX after setVar (no processes here)"
-+  else call check "untrapped SYNTAX after setVar: the error, not a crash", all~pos("Error 42") > 0
++  if all = "" then say "skip  untrapped SYNTAX after caller[]= (no processes here)"
++  else call check "untrapped SYNTAX after caller[]=: the error, not a crash", all~pos("Error 42") > 0
 +  call SysFileDelete child
 +end
 +
 +-- stale context
-+address t "KEEP"
++address t "KEEP" with input stem in.
 +ctx = .local~kept
 +call check "context invalid after its command", ctx~isValid == 0
++signal on syntax name gotStaleStream
++x = .local~keptIn~linein
++call check "stale input stream raises SYNTAX", .false
++afterStaleStream:
 +signal on syntax name gotStale
-+x = ctx~lineIn
++x = ctx["x"]
 +call check "stale context raises SYNTAX", .false
 +afterStale:
 +signal on syntax name unexpected
@@ -980,12 +1291,9 @@ index 0000000..1e8aa19
 +call check "unregistered: FAILURE RC 30", failed == 30
 +signal on syntax name gotNoSuchName
 +.CommandHandler~unregister("nosuchname")
-+call check "unregister a name with no handler refused", .false
++call check "unregister a name with no handler: SYNTAX 93.900", .false
 +afterNoSuchName:
-+signal on syntax name gotUnregisterTwice
-+.CommandHandler~unregister("t")
-+call check "unregister twice refused", .false
-+afterUnregisterTwice:
++signal on syntax name unexpected
 +.CommandHandler~register("t", .T2~new)
 +address t "ANYTHING";        call check "register again after unregister", rc == "T2"
 +call off failure
@@ -1005,11 +1313,23 @@ index 0000000..1e8aa19
 +gotError:      call check "ERROR raised", condition("C") == "ERROR" & rc == 5; signal afterError
 +gotFailure:    failed = rc; return
 +gotSyntax:     call check "SYNTAX in the handler reaches the caller", condition("O")~code == "42.3"; signal afterSyntax
++gotNoSuchName: call check "unregister a name with no handler: SYNTAX 93.900", condition("O")~code == "93.900"; signal afterNoSuchName
 +gotStale:      call check "stale context raises SYNTAX", condition("O")~code == "98.900"; signal afterStale
++gotStaleStream: call check "stale input stream raises SYNTAX", condition("O")~code == "98.900"; signal afterStaleStream
++gotNotready:   call check "NOTREADY raised, RC, description", condition("C") == "NOTREADY" & rc == 4 & condition("D") == "no line"; signal afterNotready
++gotUser:       call check "USER BOOM raised, RC, description, additional", condition("C") == "USER BOOM" & rc == 1 & condition("D") == "RAISE USER BOOM 1" & condition("A") == "extra"; signal afterUser
++gotSecond:     second = condition("C") rc; return
++gotRaisedSyntax:
++  c = condition("O")
++  call check "raise SYNTAX: code and message", c~code == "98.900" & c~message == "the command is wrong."
++  call check "raise SYNTAX: at the ADDRESS clause, no frames of the handler", c~traceback~items == 1
++  signal afterRaisedSyntax
++gotHandlerSyntax:
++  c = condition("O")
++  call check "RAISE SYNTAX in the handler: its frames are shown", c~code == "88.900" & c~traceback~items > 1
++  signal afterHandlerSyntax
 +gotNoCommand:  call check "a handler not inheriting .CommandHandler refused", condition("O")~code == "93.900"; signal afterNoCommand
 +gotDuck:       call check "COMMAND alone is not enough: .CommandHandler required", condition("O")~code == "93.900"; signal afterDuck
-+gotNoSuchName: call check "unregister a name with no handler refused (SYNTAX 93.900)", condition("O")~code == "93.900"; signal afterNoSuchName
-+gotUnregisterTwice: call check "unregister twice refused (SYNTAX 93.900)", condition("O")~code == "93.900"; signal afterUnregisterTwice
 +gotNilHandler: call check "register with .nil refused (SYNTAX 93.900)", condition("O")~code == "93.900"; signal afterNilHandler
 +
 +unexpected:
@@ -1039,7 +1359,7 @@ index 0000000..1e8aa19
 +
 +::class T subclass CommandHandler
 +::method command
-+  use arg cmd, ctx
++  use arg cmd, ctx                         -- the documentation calls it caller
 +  parse var cmd verb rest
 +  select
 +    when verb = "RETURN"  then return rest
@@ -1047,10 +1367,14 @@ index 0000000..1e8aa19
 +    when verb = "ENV"     then return ctx~environment
 +    when verb = "SET"     then do
 +      parse var rest name value
-+      ctx~setVar(name, value)
++      ctx[name] = value
++    end
++    when verb = "SYNONYMS" then do
++      ctx~setVar("syn.k", 7)
++      return (ctx~getVar("syn.k") == ctx["syn.k"]) ctx~getVar("nope2")
 +    end
 +    when verb = "HAS"     then return ctx~hasVar(rest)
-+    when verb = "GET"     then return ctx~getVar(rest)~string
++    when verb = "GET"     then return ctx[rest]~string
 +    when verb = "DROP"    then ctx~dropVar(rest)
 +    when verb = "VARS"    then do
 +      handlerLocal = 1
@@ -1059,33 +1383,59 @@ index 0000000..1e8aa19
 +    end
 +    when verb = "BADNAME" then return self~badName(ctx)
 +    when verb = "UPPER"   then do
-+      do forever
-+        line = ctx~lineIn
-+        if line == .nil then leave
-+        ctx~output(line~upper)
++      in = ctx~input; out = ctx~output
++      do while in~lines > 0
++        out~lineout(in~linein~upper)
 +      end
 +    end
 +    when verb = "LINES"   then do
-+      lines = ctx~lines
-+      ctx~output(.array~of(lines~items, lines~makeString("L", " ")))
++      lines = ctx~input~arrayIn
++      ctx~output~arrayOut(.array~of(lines~items, lines~makeString("L", " ")))
 +    end
-+    when verb = "ERR"     then ctx~error(rest)
++    when verb = "CHARS"   then do
++      in = ctx~input; out = ctx~output
++      out~charout(in~charin)               -- "u"
++      out~charout("|")
++      out~lineout(in~linein)               -- the rest of line 1: "no"
++      n = in~chars                         -- "dos" and a line end
++      out~lineout(n - .endOfLine~length + 1 in~linein)
++    end
++    when verb = "CHAROUT" then do
++      out = ctx~output
++      out~charout("ab" || .endOfLine || "c")
++      out~charout("d")                     -- no line end: flushed at the end
++    end
++    when verb = "EOF"     then return self~eof(ctx)
++    when verb = "STREAMS" then
++      ctx~output~lineout(ctx~input~isA(.InputStream) ctx~output~isA(.OutputStream))
++    when verb = "NOWITH"  then return self~noWith(ctx, rest)
++    when verb = "ERR"     then ctx~error~lineout(rest)
 +    when verb = "REDIR"   then
 +      return ctx~isRedirected("Input") ctx~isRedirected("Output"),
 +             ctx~isRedirected("Error") ctx~isRedirected("Same")
-+    when verb = "LINEIN"  then return ctx~lineIn == .nil
 +    when verb = "RAISE"   then do
 +      parse var rest kind code
 +      if kind = "ERROR" then return ctx~raiseError(code)
-+      return ctx~raiseFailure(code)
++      if kind = "FAILURE" then return ctx~raiseFailure(code)
++      if kind = "NOTREADY" then return ctx~raise("notready", code, "no line")
++      parse var code name code
++      return ctx~raise("user" name, code, , "extra")
 +    end
++    when verb = "TWICE"   then do
++      x = ctx~raise("FAILURE", 5)
++      ctx["twice"] = self~oneRaise(ctx, .array~of("ERROR", 6))
++      return x
++    end
++    when verb = "BADRAISE"    then return self~badRaise(ctx)
++    when verb = "SYNTAXRAISE" then return ctx~raise("SYNTAX", 98.900, .array~of("the command is wrong"))
++    when verb = "SYNTAXINSIDE" then raise syntax 88.900 array("the handler failed")
 +    when verb = "DIVIDE"  then return 1 / 0
-+    when verb = "SETDIVIDE"  then do; ctx~setVar("x", 1); return 1 / 0; end
-+    when verb = "GETDIVIDE"  then do; x = ctx~getVar("x"); return 1 / 0; end
++    when verb = "SETDIVIDE"  then do; ctx["x"] = 1; return 1 / 0; end
++    when verb = "GETDIVIDE"  then do; x = ctx["x"]; return 1 / 0; end
 +    when verb = "VARSDIVIDE" then do; x = ctx~variables; return 1 / 0; end
-+    when verb = "INDIVIDE"   then do; x = ctx~lineIn; return 1 / 0; end
-+    when verb = "OUTDIVIDE"  then do; ctx~output("o"); return 1 / 0; end
-+    when verb = "KEEP"    then .local~kept = ctx
++    when verb = "INDIVIDE"   then do; x = ctx~input~linein; return 1 / 0; end
++    when verb = "OUTDIVIDE"  then do; ctx~output~lineout("o"); return 1 / 0; end
++    when verb = "KEEP"    then do; .local~kept = ctx; .local~keptIn = ctx~input; end
 +    when verb = "REPLY"   then do
 +      reply 0
 +      .local~replied = self~afterReply(ctx)
@@ -1102,7 +1452,7 @@ index 0000000..1e8aa19
 +::method afterReply
 +  use arg ctx
 +  signal on syntax name refused
-+  x = ctx~getVar("x")
++  x = ctx["x"]
 +  return "no error"
 +refused:
 +  return condition("O")~code
@@ -1110,7 +1460,45 @@ index 0000000..1e8aa19
 +::method badName
 +  use arg ctx
 +  signal on syntax name bad
-+  ctx~setVar("1abc", 1)
++  ctx["1abc"] = 1
++  return "no error"
++bad:
++  return condition("O")~code
++
++::method eof
++  use arg ctx
++  in = ctx~input
++  do while in~lines > 0; x = in~linein; end
++  x = "unset"; seen = "no NOTREADY"
++  call on notready name eof               -- CALL ON: linein still returns
++  x = in~linein
++  ctx~output~lineout(seen "'" || x || "'")
++  return 0
++eof:
++  seen = condition("C")
++  return
++
++::method noWith
++  use arg ctx, which
++  signal on syntax name refused
++  x = ctx~send(which)
++  return "no error"
++refused:
++  return condition("O")~code
++
++-- three wrong raises, each caught: an unknown condition, a SYNTAX code that
++-- is not major.minor, and USER without a name
++::method badRaise
++  use arg ctx
++  codes = ""
++  do try over .array~of(.array~of("FOO", 1), .array~of("SYNTAX", 98), .array~of("USER", 1))
++    codes = codes self~oneRaise(ctx, try)
++  end
++  return codes~strip
++::method oneRaise
++  use arg ctx, try
++  signal on syntax name bad
++  x = ctx~raise(try[1], try[2])
 +  return "no error"
 +bad:
 +  return condition("O")~code

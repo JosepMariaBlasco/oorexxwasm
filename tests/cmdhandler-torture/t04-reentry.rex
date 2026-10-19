@@ -59,20 +59,22 @@ unexpected:
     return rc
   end
   -- NEST level: check the caller's own LEVEL variable (one more than ours, or none at the top)
-  callers = context~getVar("level")
+  if context~hasVar("level") then callers = context["level"]
+  else callers = .nil
   okHere = callers == .nil | callers == level + 1
-  lines = context~lines
+  lines = context~input~arrayIn
+  out = context~output
   if level = 0 then do
-    context~output(lines)
-    context~output("L0")
+    out~arrayOut(lines)
+    out~lineout("L0")
     if okHere then return "ok"; else return "bad at 0"
   end
   fwd. = ""; fwd.0 = lines~items
   do i = 1 to lines~items; fwd.i = lines[i]; end
   address deep "NEST" level - 1 with input stem fwd. output stem back.
   below = rc
-  do i = 1 to back.0; context~output(back.i); end
-  context~output("L" || level)
+  do i = 1 to back.0; out~lineout(back.i); end
+  out~lineout("L" || level)
   if \okHere then return "bad at" level
   return below
 

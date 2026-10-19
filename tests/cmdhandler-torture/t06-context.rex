@@ -12,7 +12,7 @@ address c "KEEP"
 ctx = .local~kept
 call check "isValid after the command", ctx~isValid == 0
 good = 0
-calls = .array~of("lineIn", "lines", "output", "error", "isRedirected", "getVar", "hasVar", "setVar", "dropVar", "variables")
+calls = .array~of("input", "output", "error", "isRedirected", "[]", "[]=", "getVar", "hasVar", "setVar", "dropVar", "variables")
 do m over calls
   if stale(ctx, m) == "98.900" then good += 1
   else call note m "on a dead context:" stale(ctx, m)
@@ -71,7 +71,8 @@ stale: procedure
   signal on syntax name staleSyntax
   -- through .Message: the context's own (private) SEND would hide Object's
   select case m
-    when "output", "error", "getVar", "hasVar", "dropVar" then args = .array~of("x")
+    when "[]", "getVar", "hasVar", "dropVar" then args = .array~of("x")
+    when "[]=" then args = .array~of(1, "x")
     when "isRedirected" then args = .array~of("Input")
     when "setVar" then args = .array~of("x", 1)
     otherwise args = .array~new
@@ -125,9 +126,9 @@ unexpected:
 ::routine try public
   use arg context
   signal on syntax name failed
-  x = context~getVar("x")
-  context~setVar("y", 1)
-  context~output("o")
+  x = context["x"]
+  context["y"] = 1
+  context~output~lineout("o")
   return "ok"
 failed:
   return condition("O")~code

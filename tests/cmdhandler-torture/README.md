@@ -26,7 +26,7 @@ pointers itself, and `-fsanitize=vptr` cannot be used with it).
 | Case | What it does (scale 1) |
 |---|---|
 | `t01-volume` | 1,000,000 commands, each reading and setting a caller's variable; 200,000 with input, output and error redirected; resident memory must reach a plateau |
-| `t02-redirect` | 200,000-line stems through `~lineIn` and `~lines`; 20 lines of 1 MB; output and error interleaved into one stem; APPEND; arrays and a stream; the handler changing the input and output stems under the redirection; a 10 MB command, the empty command, binary characters |
+| `t02-redirect` | 200,000-line stems through `caller~input` (`linein`, `arrayIn`) and `caller~output`; 20 lines of 1 MB; output and error interleaved into one stem; APPEND; arrays and a stream; the handler changing the input and output stems under the redirection; a 10 MB command, the empty command, binary characters |
 | `t03-threads` | 32 threads × 2,000 commands to a guarded handler, an unguarded one and one of their own, each seeing its own variables; one thread registering and removing an environment while 8 others send commands to it |
 | `t04-reentry` | 50 levels of handlers issuing commands with redirection, each checking its caller's variables; two handlers calling each other; recursion through the handler until Error 11, 20 times, then everything still works |
 | `t05-errors` | SYNTAX after every kind of context call, 2,000 times each; SYNTAX from 1 to 10 levels down; trapped inside the handler with the context still in use; ERROR / FAILURE with CALL ON and SIGNAL ON; USER, HALT, NOTREADY raised in a handler; SYNTAX halfway through the output |

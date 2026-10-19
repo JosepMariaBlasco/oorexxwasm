@@ -75,17 +75,25 @@ to ooRexx as an optional extension, and moved to the core later if wanted.
   sets one variable per column, or ISPF's tables and panels, do not follow
   one. (FETCH and DOM happen to touch only FROM / INTO / stem names.)
 
-`.CommandContext` (valid only while its command runs; afterwards SYNTAX
-98.900): `~lineIn` (.nil at end / no WITH INPUT), `~lines`, `~output(s|coll)`,
-`~error(s|coll)` (to .output / .error when not redirected, like a real
-command's console output), `~isRedirected("Input"|"Output"|"Error"|"Same")`,
-`~getVar` (.nil if unset), `~hasVar`, `~setVar`, `~dropVar` (simple, stem,
-compound; tails resolved in the caller; bad names raise SYNTAX 93.900, since
-the API silently ignores them), `~variables` (Directory), `~raiseError(rc)` /
+`.CommandContext` (the second API, the one proposed upstream; valid only
+while its command runs, afterwards SYNTAX 98.900): `~input` (an
+`.InputStream`), `~output`, `~error` (`.OutputStream`s), which exist only
+with the matching `WITH` (else SYNTAX 98.900);
+`~isRedirected("Input"|"Output"|"Error"|"Same")`; `caller[name]`,
+`caller[name] = value` (and `~getVar`, `~setVar` as synonyms: simple, stem,
+compound; tails resolved in the caller; a variable with no value gives its
+name, as in Rexx; bad names raise SYNTAX 93.900, since the API silently
+ignores them), `~hasVar`, `~dropVar`, `~variables` (Directory);
+`~raise(condition, rc [, description] [, additional])`, `~raiseError(rc)`,
 `~raiseFailure(rc)` (return rc; the native handler raises the condition
-after the method returns, with RC), `~environment`, `~isValid`. A SYNTAX
-error in `~command` reaches the caller. Unregistered name: FAILURE RC 30
-(RXSUBCOM_NOTREG, as the core does for an unknown environment).
+after the method returns, with RC; one per command, a second is SYNTAX
+93.900); `~environment`, `~isValid`. A SYNTAX error in `~command` reaches
+the caller. Unregistered name: FAILURE RC 30 (RXSUBCOM_NOTREG, as the core
+does for an unknown environment). FETCH and DOM write their messages and
+values through `.CommandIO` (`commandwords.cls`): to `WITH OUTPUT` / `WITH
+ERROR` when given, otherwise to the console, as a real command would. (The
+first API had line methods, `~lineIn`, `~lines`, `~output(lines)`,
+`~error(lines)`, and `~getVar` gave .nil for a variable with no value.)
 
 Registrations are per interpreter instance, as the environments themselves:
 they are kept in `.local~CommandHandlers` (Directory name -> object), with

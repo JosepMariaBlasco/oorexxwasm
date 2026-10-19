@@ -42,7 +42,7 @@ fs~close
 call check n(200) "commands with TRACE I in the caller and TRACE R in the handler", i > n(200)
 lines = .stream~new(f)~arrayIn
 call check "the trace has the caller's command and the handler's clauses", -
-  lines~items > n(200) * 4 & lines~makeString~pos('"TRACED"') > 0 & lines~makeString~pos("context~lineIn") > 0
+  lines~items > n(200) * 4 & lines~makeString~pos('"TRACED"') > 0 & lines~makeString~pos("in~linein") > 0
 call SysFileDelete f
 exit finish()
 
@@ -77,10 +77,9 @@ unexpected:
     when "TRACED" then do
       trace r
       n = 0
-      do forever
-        l = context~lineIn
-        if l == .nil then leave
-        context~output(l~upper)
+      in = context~input; out = context~output
+      do while in~lines > 0
+        out~lineout(in~linein~upper)
         n += 1
       end
       return n

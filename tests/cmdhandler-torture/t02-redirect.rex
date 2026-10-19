@@ -5,10 +5,10 @@ signal on syntax name unexpected
 k = n(200000)
 do i = 1 to k; in.i = "line" i; end; in.0 = k
 address r "COPY" with input stem in. output stem out.
-call check k "lines through ~lineIn and ~output", sameStem(k)
+call check k "lines through input~linein and output~lineout", sameStem(k)
 drop out.
 address r "LINES" with input stem in. output stem out.
-call check k "lines through ~lines and ~output(array)", sameStem(k)
+call check k "lines through input~arrayIn and output~arrayOut", sameStem(k)
 
 big = "x"~copies(n(1000000))
 b.0 = n(20); do i = 1 to b.0; b.i = big || i; end
@@ -76,32 +76,34 @@ unexpected:
   use arg command, context
   parse var command verb rest
   select case verb
-    when "COPY" then do forever
-      l = context~lineIn
-      if l == .nil then return 0
-      context~output(l)
+    when "COPY" then do
+      in = context~input; out = context~output
+      do while in~lines > 0
+        out~lineout(in~linein)
+      end
+      return 0
     end
     when "LINES" then do
-      context~output(context~lines)
+      context~output~arrayOut(context~input~arrayIn)
       return 0
     end
     when "BOTH" then do
       do i = 1 to rest
-        context~output("o" i)
-        context~error("e" i)
+        context~output~lineout("o" i)
+        context~error~lineout("e" i)
       end
       return 0
     end
     when "MESS" then do
-      first = context~lineIn
-      context~setVar("in.0", 1)          -- shorten the input under the reader
-      context~setVar("in.2", "changed")
+      in = context~input; out = context~output
+      first = in~linein
+      context["in.0"] = 1                -- shorten the input under the reader
+      context["in.2"] = "changed"
       context~dropVar("out.")           -- the output stem goes away
       do i = 1 to 100
-        l = context~lineIn
-        if l == .nil then leave
-        context~output(l)
-        if i = 50 then context~setVar("out.0", "not a number")
+        if in~lines == 0 then leave
+        out~lineout(in~linein)
+        if i = 50 then context["out.0"] = "not a number"
       end
       return "messed"
     end

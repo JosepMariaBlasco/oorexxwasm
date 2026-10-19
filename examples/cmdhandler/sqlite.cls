@@ -17,7 +17,7 @@
  * symbols), and the rows also go to WITH OUTPUT as tab-separated lines.
  *
  * RC: 0; 100 when a SELECT finds no rows (ERROR); -1 an SQL error, whose
- * message goes to WITH ERROR, -2 no connection or a host variable with no
+ * message goes to WITH ERROR (or to the console), -2 no connection or a host variable with no
  * value (FAILURE).
  *
  * An example, not a database interface: each command runs sqlite3 once.
@@ -45,7 +45,7 @@
     return 0
   end
   if db == .nil then do
-    context~error("SQLITE: not connected")
+    self~complain(context, "SQLITE: not connected")
     return context~raiseFailure(-2)
   end
 
@@ -58,7 +58,7 @@
   address system "sqlite3 -ascii -header" self~shellQuote(db) -
     with input using (input) output using (out) error using (err)
   if rc \= 0 | err~items > 0 then do
-    context~error(err)
+    self~complain(context, err)
     return context~raiseFailure(-1)
   end
 
@@ -69,15 +69,15 @@
   end
   columns = rows[1]~makeArray("1f"x)
   do c over columns
-    context~setVar(c".0", rows~items - 1)
+    context[c".0"] = rows~items - 1
   end
   do i = 2 to rows~items
     fields = rows[i]~makeArray("1f"x)
     do j = 1 to columns~items
-      context~setVar(columns[j] || "." || (i - 1), fields[j])
+      context[columns[j] || "." || (i - 1)] = fields[j]
     end
     if context~isRedirected("Output") then
-      context~output(fields~makeString("L", "09"x))
+      context~output~lineout(fields~makeString("L", "09"x))
   end
   return 0
 
@@ -98,11 +98,11 @@
       if j == 0 then j = sql~length + 1
       name = sql~substr(i + 1, j - i - 1)~strip("T", ".")
       if name \== "" then do
-        value = context~getVar(name)
-        if value == .nil then do
-          context~error("SQLITE: host variable" name~upper "has no value")
+        if \context~hasVar(name) then do
+          self~complain(context, "SQLITE: host variable" name~upper "has no value")
           return .nil
         end
+        value = context[name]
         result ||= "'"value~changeStr("'", "''")"'"
         i += 1 + name~length
         iterate
@@ -116,3 +116,11 @@
 ::method shellQuote private
   use arg s
   return "'"s~changeStr("'", "'\''")"'"
+
+-- a message: to WITH ERROR, or to the console without it
+::method complain private
+  use arg context, lines
+  if context~isRedirected("Error") then err = context~error
+  else err = .error
+  if lines~isA(.String) then lines = .array~of(lines)
+  err~arrayOut(lines)
