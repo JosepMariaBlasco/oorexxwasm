@@ -36,25 +36,25 @@ qualify-node-cli.sh and web-api.py.  Not part of the posted RFE.
  create mode 100644 wasm/web/fetch.cls
 
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index 6c0287f..9b81a72 100755
+index 7e480c8..3e4113a 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
-@@ -82,7 +82,7 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+@@ -83,7 +83,7 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
             csvStream/csvStream.cls dateparser/dateparser.cls cmdhandler/cmdhandler.cls; do
    cp "$SRC/extensions/$cls" "$OUT/"
  done
 -cp "$SRC/wasm/web/js.cls" "$OUT/"
 +cp "$SRC/wasm/web/js.cls" "$SRC/wasm/web/commandwords.cls" "$SRC/wasm/web/fetch.cls" "$OUT/"
- cp "$SRC/wasm/web/boolean.cls" "$OUT/"          # .Boolean, for js.cls (RFE #880)
  
  launcher() {   # launcher NAME [rexx.js option]
+   cat > "$OUT/$1" <<SH
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index 93042c7..0286547 100755
+index 3c33670..7f9fb76 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
-@@ -79,6 +79,8 @@ done
+@@ -79,6 +79,8 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+ done
  # JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
- PRELOAD+=("--preload-file" "$SRC/wasm/web/boolean.cls@/usr/lib/ooRexx/boolean.cls")   # .Boolean, for js.cls (RFE #880)
  PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls"
 +          "--preload-file" "$SRC/wasm/web/commandwords.cls@/usr/lib/ooRexx/commandwords.cls"
 +          "--preload-file" "$SRC/wasm/web/fetch.cls@/usr/lib/ooRexx/fetch.cls"
@@ -248,10 +248,10 @@ index 0000000..01451f3
 +
 +::requires "fetch.cls"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index ddda4af..9e31544 100755
+index 111f75e..09753e8 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -420,6 +420,13 @@ check "a logic error ends the process with a non-zero status" '^Logic error: can
+@@ -417,6 +417,13 @@ check "a logic error ends the process with a non-zero status" '^Logic error: can
  check "command handlers in Rexx (cmdhandler.cls)" '^[0-9]+ passed, 0 failed$' '!^FAIL ' -- \
    "$X '$(cd "$(dirname "$0")" && pwd)/cmdhandler.rex'"
  
@@ -266,7 +266,7 @@ index ddda4af..9e31544 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 74615a0..ebdae4f 100755
+index a120f93..aa3d6c9 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -67,6 +67,9 @@ class H(SimpleHTTPRequestHandler):

@@ -30,8 +30,8 @@ say left("12345678901234567890 * 10 (DIGITS 9)", 40) k~call(.nil, 12345678901234
 say left("5 (an integer object inside Rexx)", 40) k~call(.nil, 5)
 say left(".true / .false", 40) k~call(.nil, .true) k~call(.nil, .false)
 say left(".js~true / .js~false / .js~bool(0)", 40) k~call(.nil, js~true) k~call(.nil, js~false) k~call(.nil, js~bool(0))
-say left(".Boolean~true / .Boolean~false", 40) k~call(.nil, .Boolean~true) k~call(.nil, .Boolean~false)
-say left(".js~true == .Boolean~true (same object)", 40) (js~true == .Boolean~true) (js~true~identityHash == .Boolean~true~identityHash)
+say left(".LogicalWrapper~true / ~false", 40) k~call(.nil, .LogicalWrapper~true) k~call(.nil, .LogicalWrapper~false)
+say left(".js~true == .LogicalWrapper~true (same)", 40) (js~true == .LogicalWrapper~true) (js~true~identityHash == .LogicalWrapper~true~identityHash)
 say left(".js~num: '007' '3.14' '1E3' '-0'", 40) k~call(.nil, js~num("007")) k~call(.nil, js~num("3.14")) k~call(.nil, js~num("1E3")) k~call(.nil, js~num("-0"))
 say left(".js~num('abc')", 40) tryNum("abc")
 say left(".js~bigint(12345678901234567890123)", 40) k~call(.nil, js~bigint(12345678901234567890123))
@@ -78,7 +78,7 @@ do while e \= ""
   say left(x, 40) show(r)
 end
 r = F~new("return true")~call(.nil)
-say left("true: class / is .Boolean~true / r + 1", 40) r~class~id (r~identityHash == .Boolean~true~identityHash) (r + 1)
+say left("true: class / is LW~true / r + 1", 40) r~class~id (r~identityHash == .LogicalWrapper~true~identityHash) (r + 1)
 say left("false through Rexx and back", 40) k~call(.nil, F~new("return false")~call(.nil))
 r = F~new("return new Uint8Array([97,255])")~call(.nil)
 say left("Uint8Array~js.byteString", 40) "'"c2x(r~js.byteString)"'x"

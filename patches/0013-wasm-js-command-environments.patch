@@ -44,10 +44,10 @@ Not part of the posted RFE (it needs cmdhandler).
  create mode 100644 wasm/web/jscommands.cls
 
 diff --git a/wasm/README.md b/wasm/README.md
-index 263f176..c25114c 100644
+index e01ffd1..2eea883 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -529,6 +529,18 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -528,6 +528,18 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    `prepare`, `attach`, `instrument`; see `web/ooRexx.js`).  Tests:
    `tests/web-api.py` (session eval, session page, rexx scripts with
    `tests/web-scripts.html`, the debugger hook with `tests/web-debugger.js`).
@@ -67,24 +67,24 @@ index 263f176..c25114c 100644
    are native, so errors point at the caller's line); each operation is
    passed synchronously to the main runtime thread, where `js-bridge.js` (a
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index 9b81a72..b6dfc38 100755
+index 3e4113a..d725d9a 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
-@@ -83,6 +83,7 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+@@ -84,6 +84,7 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
    cp "$SRC/extensions/$cls" "$OUT/"
  done
  cp "$SRC/wasm/web/js.cls" "$SRC/wasm/web/commandwords.cls" "$SRC/wasm/web/fetch.cls" "$OUT/"
 +cp "$SRC/wasm/web/jscommands.cls" "$OUT/"      # command environments in JavaScript (on cmdhandler.cls)
- cp "$SRC/wasm/web/boolean.cls" "$OUT/"          # .Boolean, for js.cls (RFE #880)
  
  launcher() {   # launcher NAME [rexx.js option]
+   cat > "$OUT/$1" <<SH
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index f4c4e38..8500088 100755
+index be073fb..e29ada0 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
 @@ -80,6 +80,7 @@ done
+ # js.cls and what is built on it (FETCH, DOM), JDOR's classes; BSF.CLS (also as
  # bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
- PRELOAD+=("--preload-file" "$SRC/wasm/web/boolean.cls@/usr/lib/ooRexx/boolean.cls")   # .Boolean, for js.cls (RFE #880)
  PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls"
 +          "--preload-file" "$SRC/wasm/web/jscommands.cls@/usr/lib/ooRexx/jscommands.cls"
            "--preload-file" "$SRC/wasm/web/commandwords.cls@/usr/lib/ooRexx/commandwords.cls"
@@ -296,10 +296,10 @@ index 0000000..57e3254
 +  if command == "raise" then raise user mine description "the description" additional ("one", "two") return 7
 +  return .Thing~new~user
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 9e31544..c5c35ac 100755
+index 09753e8..ac8abea 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -420,6 +420,12 @@ check "a logic error ends the process with a non-zero status" '^Logic error: can
+@@ -417,6 +417,12 @@ check "a logic error ends the process with a non-zero status" '^Logic error: can
  check "command handlers in Rexx (cmdhandler.cls)" '^[0-9]+ passed, 0 failed$' '!^FAIL ' -- \
    "$X '$(cd "$(dirname "$0")" && pwd)/cmdhandler.rex'"
  
@@ -313,7 +313,7 @@ index 9e31544..c5c35ac 100755
  "$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
  FETCH_SRV=$!; sleep 0.5
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 60729a4..ac82483 100755
+index 4983f1b..999dbc1 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -99,6 +99,28 @@ CASES = [
@@ -375,10 +375,10 @@ index 60729a4..ac82483 100755
      const s = await rexxLib.start({ js: { page: true } });
      await s.eval('d = .js~page~document; b = d~createElement("button"); b~id = "rx"; d~body~appendChild(b)\\n' +
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
-index 3859675..f5d83f6 100644
+index 9e602ed..137ec54 100644
 --- a/wasm/web/js.cls
 +++ b/wasm/web/js.cls
-@@ -217,6 +217,13 @@
+@@ -218,6 +218,13 @@
   * UNINIT, and its class's UNINIT runs when the pair is over).  For instances
   * JavaScript makes itself, the base's members run.
   *
@@ -392,7 +392,7 @@ index 3859675..f5d83f6 100644
   * Sessions (the browser): ooRexx.js's start() runs .js~session, which hands
   * the page a .JSSession (a RexxProxy there) and takes events for good, so
   * the page's calls run one at a time, in order:
-@@ -224,6 +231,8 @@
+@@ -225,6 +232,8 @@
   *    s~eval(source, args...)        -- source as a routine (USE ARG, RETURN): its result
   *    s~routine(name, source)        -- a Routine (r.call(args...) in JavaScript)
   *    s~loadPackage(name [, source]) -- a Package (its prolog run): from source, or a file
@@ -437,7 +437,7 @@ index 3859675..f5d83f6 100644
    if source~isA(.String) then return source~makeArray
 diff --git a/wasm/web/jscommands.cls b/wasm/web/jscommands.cls
 new file mode 100644
-index 0000000..bdcc98d
+index 0000000..3c1ab12
 --- /dev/null
 +++ b/wasm/web/jscommands.cls
 @@ -0,0 +1,158 @@
@@ -540,7 +540,7 @@ index 0000000..bdcc98d
 +
 +-- the .CommandContext as JavaScript gets it: a JavaScript-style API on top
 +-- of cmdhandler's (caller[name], streams for WITH): the tests
-+-- (hasVar, isRedirected, isValid) answering booleans (.Boolean); lineIn,
++-- (hasVar, isRedirected, isValid) answering booleans (.LogicalWrapper); lineIn,
 +-- lines, output and error as lines, with output and error going to the
 +-- console without WITH OUTPUT / WITH ERROR; getVar giving .nil
 +-- (null) for a variable with no value; the rest forwarded as it is

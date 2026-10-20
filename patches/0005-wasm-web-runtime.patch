@@ -41,14 +41,14 @@ onInput}) -> {write, close, stop, done}.
  common/platform/unix/SysProcess.cpp  |   9 ++
  interpreter/concurrency/Activity.cpp |  54 +++++++
  wasm/README.md                       |  70 +++++++++
- wasm/build-web.sh                    |  96 +++++++++++++
+ wasm/build-web.sh                    |  97 +++++++++++++
  wasm/tests/web-api.html              |  76 ++++++++++
  wasm/tests/web-api.py                | 163 +++++++++++++++++++++
  wasm/web-pre.js                      | 205 ++++++++++++++++++++++++++
  wasm/web-stdin.cpp                   | 157 ++++++++++++++++++++
  wasm/web/ooRexx-worker.js            | 127 ++++++++++++++++
  wasm/web/ooRexx.js                   | 207 +++++++++++++++++++++++++++
- 10 files changed, 1164 insertions(+)
+ 10 files changed, 1165 insertions(+)
  create mode 100755 wasm/build-web.sh
  create mode 100644 wasm/tests/web-api.html
  create mode 100755 wasm/tests/web-api.py
@@ -253,10 +253,10 @@ index a69251d..cfa0ef9 100644
  * WebSocket transport (browser, and the MEMFS build under Node): listening
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
 new file mode 100755
-index 0000000..36dea45
+index 0000000..e72bb77
 --- /dev/null
 +++ b/wasm/build-web.sh
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,97 @@
 +#!/usr/bin/env bash
 +#/*----------------------------------------------------------------------------*/
 +#/*                                                                            */
@@ -319,6 +319,7 @@ index 0000000..36dea45
 +PRELOAD=()
 +for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp.cls \
 +           rxftp/rxftp.cls rxregexp/rxregexp.cls json/json.cls yaml/yaml.cls \
++           logicalwrapper/logicalwrapper.cls \
 +           csvStream/csvStream.cls dateparser/dateparser.cls; do
 +  PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
 +done

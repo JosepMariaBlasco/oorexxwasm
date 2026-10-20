@@ -90,7 +90,7 @@ index 786af1f..e949832 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index 05ad52b..263f176 100644
+index 204f4a5..e01ffd1 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -227,7 +227,78 @@ off, or changes the strings.
@@ -173,7 +173,7 @@ index 05ad52b..263f176 100644
  
  ## The test suite's API groups (`wasm/build-test.sh`)
  
-@@ -483,7 +554,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -482,7 +553,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
@@ -184,7 +184,7 @@ index 05ad52b..263f176 100644
    in the MEMFS runtime of the CMake build (`bin/`).
  * Maximum recursion depth is set by the JS engine's native stack (internal
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index ead2dd7..aa24b52 100755
+index 331ea1d..392b3fd 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
 @@ -48,6 +48,7 @@
@@ -209,14 +209,13 @@ index ead2dd7..aa24b52 100755
  for f in web-js extra-packages; do
    "$EMXX" -O3 -std=gnu++11 -pthread -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0 -DHAVE_CONFIG_H -DOPSYS_EMSCRIPTEN \
      -I"$SRC/api" -I"$SRC/api/platform/unix" -I"$BUILD" -c "$SRC/wasm/$f.cpp" -o "$BUILD/$f.o"
-@@ -72,9 +76,12 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+@@ -73,8 +77,11 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
             csvStream/csvStream.cls dateparser/dateparser.cls; do
    PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
  done
 -# the JavaScript bridge's classes
-+# JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
- PRELOAD+=("--preload-file" "$SRC/wasm/web/boolean.cls@/usr/lib/ooRexx/boolean.cls")   # .Boolean, for js.cls (RFE #880)
 -PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls")
++# JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
 +PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls"
 +          "--preload-file" "$SRC/wasm/web/jdor.cls@/usr/lib/ooRexx/jdor.cls"
 +          "--preload-file" "$SRC/wasm/web/BSF.CLS@/usr/lib/ooRexx/BSF.CLS"
@@ -291,7 +290,7 @@ index ea8b80b..cf52734 100644
    // a RexxError nobody catches (a synchronous handler's condition thrown in an
    // event listener, which JavaScript reports instead of passing on): written
 diff --git a/wasm/js-realm.js b/wasm/js-realm.js
-index c55c498..452989b 100644
+index fb1cba9..5acf0f8 100644
 --- a/wasm/js-realm.js
 +++ b/wasm/js-realm.js
 @@ -986,6 +986,6 @@ var orxJsRealm = (function () {
@@ -355,7 +354,7 @@ index b13d517..cb5c6fa 100644
  };
  </script>
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index d0b71b7..383f8bd 100755
+index f38168f..b6fa129 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -42,7 +42,7 @@ Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP
@@ -3201,7 +3200,7 @@ index 0000000..63aa1a9
 +  };
 +})();
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
-index 9b87789..2e6cef1 100644
+index 3e7a78a..668ad17 100644
 --- a/wasm/web-js.cpp
 +++ b/wasm/web-js.cpp
 @@ -695,6 +695,7 @@ static RexxObjectPtr toRexx(RexxThreadContext *c, const std::string &s, size_t &

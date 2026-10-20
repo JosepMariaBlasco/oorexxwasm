@@ -35,8 +35,8 @@
 5 (an integer object inside Rexx)        string:"5"
 .true / .false                           string:"1" string:"0"
 .js~true / .js~false / .js~bool(0)       boolean:true boolean:false boolean:false
-.Boolean~true / .Boolean~false           boolean:true boolean:false
-.js~true == .Boolean~true (same object)  1 1
+.LogicalWrapper~true / ~false            boolean:true boolean:false
+.js~true == .LogicalWrapper~true (same)  1 1
 .js~num: '007' '3.14' '1E3' '-0'         number:7 number:3.14 number:1000 number:-0
 .js~num('abc')                           abc
 .js~bigint(12345678901234567890123)      bigint:12345678901234567890123
@@ -88,7 +88,7 @@ new Set([1])                             JSObject:Set
 new Uint8Array([97,255])                 JSObject:Uint8Array
 new Number(5)                            JSObject:Number
 Symbol('s')                              JSObject:Symbol(s)
-true: class / is .Boolean~true / r + 1   Boolean 1 2
+true: class / is LW~true / r + 1         LogicalWrapper 1 2
 false through Rexx and back              boolean:false
 Uint8Array~js.byteString                 '61FF'x
 datatype(1e21 / 1e-7 / NaN, 'N')         1 1 0

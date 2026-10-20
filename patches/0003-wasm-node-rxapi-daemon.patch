@@ -1267,7 +1267,7 @@ index 7ae0127..e704208 100644
      ./wasm/tests/qualify-node-cli.sh /tmp/oorexx-wasm-build/bin-node
  
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index c30f77e..e693ea1 100755
+index bc6b47b..90cbc5d 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
 @@ -37,13 +37,14 @@
@@ -1287,7 +1287,7 @@ index c30f77e..e693ea1 100755
  set -euo pipefail
  SRC=$(cd "$(dirname "$0")/.." && pwd)
  BUILD=$(cd "${1:-$SRC/build-wasm}" && pwd)
-@@ -78,7 +79,7 @@ SH
+@@ -79,7 +80,7 @@ SH
  }
  launcher rexx
  # multi-call tools of the same rexx.js/rexx.wasm (see wasm/rexxc-main.cpp)

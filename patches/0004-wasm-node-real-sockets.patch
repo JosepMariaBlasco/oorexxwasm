@@ -352,7 +352,7 @@ index e704208..a69251d 100644
  * Maximum recursion depth is set by the JS engine's native stack (internal
    CALL / internal function calls / method calls): Node about 7,100 / 5,400 /
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index e693ea1..9aca691 100755
+index 90cbc5d..6be72d9 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
 @@ -37,8 +37,10 @@

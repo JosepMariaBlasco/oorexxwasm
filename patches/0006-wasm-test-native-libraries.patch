@@ -94,7 +94,7 @@ index cfa0ef9..d6f2caf 100644
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index 9aca691..47b554f 100755
+index 6be72d9..f153370 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
 @@ -45,6 +45,8 @@
@@ -320,7 +320,7 @@ index 0000000..eda1d7c
 +  EXTRA_OBJECTS="${objects[*]}" "$SRC/wasm/build-web.sh" "$BUILD" "$BUILD/bin-web-test"
 +fi
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index 36dea45..585e5ca 100755
+index e72bb77..84df5f7 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
 @@ -45,6 +45,8 @@
@@ -332,7 +332,7 @@ index 36dea45..585e5ca 100755
  # Output: OUTDIR/{rexx.js,rexx.wasm,rexx.data,ooRexx.js,ooRexx-worker.js}
  set -euo pipefail
  SRC=$(cd "$(dirname "$0")/.." && pwd)
-@@ -84,7 +86,7 @@ wasm,websocket,mainScriptUrlOrBlob]"
+@@ -85,7 +87,7 @@ wasm,websocket,mainScriptUrlOrBlob]"
  cmd=$(cat "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
  cmd=$(sed -E 's/--preload-file [^ ]+//g; s/-sENVIRONMENT=[^ ]+//' <<<"$cmd")
  cmd=${cmd//-o bin\/rexx.js/-o $OUT\/rexx.js}

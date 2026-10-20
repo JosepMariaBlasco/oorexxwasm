@@ -14,7 +14,7 @@ VERSION=${1:?usage: npm-package.sh VERSION [BIN_NODE] [OUT]}
 BIN=$(cd "${2:-$WORK/build-wasm/bin-node}" && pwd)
 OUT=${3:-$WORK/npm-out}
 OOREXX=${OOREXX:-$WORK/oorexx}
-REV=${OOREXX_REV:-13275}
+REV=${OOREXX_REV:-13278}
 
 PKG=$OUT/package
 rm -rf "$PKG"; mkdir -p "$PKG/bin" "$PKG/lib"

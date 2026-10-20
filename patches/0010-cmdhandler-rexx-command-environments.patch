@@ -1091,26 +1091,26 @@ index e949832..c16231d 100644
  };
  
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index c898ece..6c0287f 100755
+index 9525374..7e480c8 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
-@@ -79,7 +79,7 @@ cp "$SRC/samples/rexxtry.rex" "$OUT/"
- # not ncurses (no native library here)
+@@ -80,7 +80,7 @@ cp "$SRC/samples/rexxtry.rex" "$OUT/"
  for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp.cls \
             rxftp/rxftp.cls rxregexp/rxregexp.cls json/json.cls yaml/yaml.cls \
+            logicalwrapper/logicalwrapper.cls \
 -           csvStream/csvStream.cls dateparser/dateparser.cls; do
 +           csvStream/csvStream.cls dateparser/dateparser.cls cmdhandler/cmdhandler.cls; do
    cp "$SRC/extensions/$cls" "$OUT/"
  done
  cp "$SRC/wasm/web/js.cls" "$OUT/"
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index aa24b52..93042c7 100755
+index 392b3fd..3c33670 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
-@@ -73,7 +73,7 @@ done
- PRELOAD=()
+@@ -74,7 +74,7 @@ PRELOAD=()
  for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp.cls \
             rxftp/rxftp.cls rxregexp/rxregexp.cls json/json.cls yaml/yaml.cls \
+            logicalwrapper/logicalwrapper.cls \
 -           csvStream/csvStream.cls dateparser/dateparser.cls; do
 +           csvStream/csvStream.cls dateparser/dateparser.cls cmdhandler/cmdhandler.cls; do
    PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
@@ -1541,10 +1541,10 @@ index 0000000..54ebe1e
 +  address t "RETURN thread ok"
 +  return rc
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 76718be..ddda4af 100755
+index d07cce2..111f75e 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -416,6 +416,10 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
+@@ -413,6 +413,10 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
  check "a logic error ends the process with a non-zero status" '^Logic error: cannot locate startup image' '^status=[1-9]' -- \
    "mkdir noimg && cp '$NB/rexx.js' '$NB/rexx.wasm' noimg/ && cd noimg && PATH=/usr/bin:/bin '$(command -v node)' rexx.js -e 'say 1'; echo status=\$?"
  
@@ -1556,7 +1556,7 @@ index 76718be..ddda4af 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 383f8bd..74615a0 100755
+index b6fa129..a120f93 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -96,6 +96,9 @@ CASES = [

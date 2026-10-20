@@ -2,7 +2,7 @@
 
 `edges.rex` sends edge values across the JavaScript bridge (`.JSObject`) in
 both directions and prints, one per line, what was sent and what arrived:
-numbers and strings that look like numbers, `.Boolean`, `.nil`, Arrays,
+numbers and strings that look like numbers, `.LogicalWrapper`, `.nil`, Arrays,
 Directories, Rexx objects as RexxProxy, binary strings, errors.
 `edges.out` is its expected output.
 

@@ -32,17 +32,16 @@ part of the posted RFE.
  create mode 100644 wasm/web/dom.cls
 
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index 0286547..f4c4e38 100755
+index 7f9fb76..be073fb 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
-@@ -76,11 +76,13 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+@@ -77,10 +77,12 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
             csvStream/csvStream.cls dateparser/dateparser.cls cmdhandler/cmdhandler.cls; do
    PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
  done
 -# JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
 +# js.cls and what is built on it (FETCH, DOM), JDOR's classes; BSF.CLS (also as
 +# bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
- PRELOAD+=("--preload-file" "$SRC/wasm/web/boolean.cls@/usr/lib/ooRexx/boolean.cls")   # .Boolean, for js.cls (RFE #880)
  PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls"
            "--preload-file" "$SRC/wasm/web/commandwords.cls@/usr/lib/ooRexx/commandwords.cls"
            "--preload-file" "$SRC/wasm/web/fetch.cls@/usr/lib/ooRexx/fetch.cls"
@@ -329,7 +328,7 @@ index cb5c6fa..f56ea5d 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); }, onJdor,
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index ebdae4f..60729a4 100755
+index aa3d6c9..4983f1b 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -249,6 +249,17 @@ CASES = [

@@ -36,12 +36,12 @@ command-line ooRexx that sees the host file system and environment
  interpreter/streamLibrary/StreamNative.cpp   |  20 +-
  utilities/rexx/platform/unix/rexx.cpp        |  13 +
  wasm/README.md                               |  21 +-
- wasm/build-node.sh                           |  84 ++++++
+ wasm/build-node.sh                           |  85 ++++++
  wasm/build-wasm.sh                           |   4 +-
  wasm/node-pre.js                             |  78 ++++++
  wasm/rexxc-main.cpp                          |  46 ++++
  wasm/tests/qualify-node-cli.sh               | 105 ++++++++
- 16 files changed, 863 insertions(+), 35 deletions(-)
+ 16 files changed, 864 insertions(+), 35 deletions(-)
  create mode 100755 wasm/build-node.sh
  create mode 100644 wasm/node-pre.js
  create mode 100644 wasm/rexxc-main.cpp
@@ -932,10 +932,10 @@ index b0942ef..7ae0127 100644
    4,000; browser workers about 900 / 700 / 500 in Chromium, 1,300 / 900 / 700
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
 new file mode 100755
-index 0000000..c30f77e
+index 0000000..bc6b47b
 --- /dev/null
 +++ b/wasm/build-node.sh
-@@ -0,0 +1,84 @@
+@@ -0,0 +1,85 @@
 +#!/usr/bin/env bash
 +#/*----------------------------------------------------------------------------*/
 +#/*                                                                            */
@@ -1001,6 +1001,7 @@ index 0000000..c30f77e
 +# not ncurses (no native library here)
 +for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp.cls \
 +           rxftp/rxftp.cls rxregexp/rxregexp.cls json/json.cls yaml/yaml.cls \
++           logicalwrapper/logicalwrapper.cls \
 +           csvStream/csvStream.cls dateparser/dateparser.cls; do
 +  cp "$SRC/extensions/$cls" "$OUT/"
 +done
