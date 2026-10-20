@@ -57,7 +57,7 @@ to ooRexx as an optional extension, and moved to the core later if wanted.
 
 ```rexx
 ::requires "cmdhandler.cls"
-.CommandHandler~register("DEMO", obj)    -- obj isA .CommandHandler; ~unregister(name) removes
+.CommandHandler~register("DEMO", obj)    -- obj isA .CommandHandler; ~deregister(name) removes
 -- each command: obj~command(command, context) -> RC (0 if nothing returned)
 ```
 
@@ -107,7 +107,7 @@ process, interleaved, one terminated, and a new one (RC 30), natively.
 Tests: `wasm/tests/cmdhandler.rex`, 33 checks (RC, variables incl. compound
 tails / stems / procedures, the three redirections, Same, ERROR / FAILURE
 trapped and untrapped, SYNTAX propagation, stale context, nested handlers,
-another thread, re-register, unregister, refusal of objects that are not
+another thread, re-register, deregister, refusal of objects that are not
 `.CommandHandler`s even when they understand COMMAND). Also native: all
 pass.
 

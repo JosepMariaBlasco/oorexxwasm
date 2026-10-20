@@ -35,7 +35,7 @@ end
 .local~flipping = .false
 call check "register/remove under fire: RC 1 or FAILURE 30, nothing else", sum.other == 0
 if .local~odd \== .nil then call note "odd outcomes:" .local~odd~makeString("L", "; ")
-call note sum.ok "answered," sum.failure "unregistered (FAILURE 30) while flipping" flipper~result "times"
+call note sum.ok "answered," sum.failure "deregistered (FAILURE 30) while flipping" flipper~result "times"
 exit finish()
 
 unexpected:
@@ -112,7 +112,7 @@ unexpected:
   h = .Counter~new
   do i = 1 to flips while .local~flipping
     .CommandHandler~register("FLIP", h)
-    .CommandHandler~unregister("FLIP")
+    .CommandHandler~deregister("FLIP")
   end
   return i - 1
 

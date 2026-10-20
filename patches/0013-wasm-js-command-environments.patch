@@ -92,7 +92,7 @@ index f4c4e38..8500088 100755
            "--preload-file" "$SRC/wasm/web/dom.cls@/usr/lib/ooRexx/dom.cls"
 diff --git a/wasm/tests/js-commands.rex b/wasm/tests/js-commands.rex
 new file mode 100644
-index 0000000..3d71c63
+index 0000000..57e3254
 --- /dev/null
 +++ b/wasm/tests/js-commands.rex
 @@ -0,0 +1,199 @@
@@ -238,10 +238,10 @@ index 0000000..3d71c63
 +-- the same through cmdhandler.cls: a JavaScript handler is a .CommandHandler
 +.js~addCommandEnvironment("calc", calc)
 +call check "a .JSCommandHandler is a .CommandHandler", .local~commandHandlers["CALC"]~isA(.CommandHandler)
-+.CommandHandler~unregister("calc")
++.CommandHandler~deregister("calc")
 +raised = ""
 +call on failure name gotFailure
-+address calc "none"; call check ".CommandHandler~unregister removes it too", raised == "FAILURE 30"
++address calc "none"; call check ".CommandHandler~deregister removes it too", raised == "FAILURE 30"
 +call off failure
 +
 +say
@@ -437,7 +437,7 @@ index 3859675..f5d83f6 100644
    if source~isA(.String) then return source~makeArray
 diff --git a/wasm/web/jscommands.cls b/wasm/web/jscommands.cls
 new file mode 100644
-index 0000000..bfff9b6
+index 0000000..bdcc98d
 --- /dev/null
 +++ b/wasm/web/jscommands.cls
 @@ -0,0 +1,158 @@
@@ -504,7 +504,7 @@ index 0000000..bfff9b6
 +  name = self~environmentName("removeCommandEnvironment", name)
 +  handlers = .local~commandHandlers
 +  if handlers \== .nil then if handlers~hasIndex(name~upper) then do
-+    .CommandHandler~unregister(name)
++    .CommandHandler~deregister(name)
 +    return
 +  end
 +  raise syntax 93.900 array("removeCommandEnvironment: no handler is registered for" name)

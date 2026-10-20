@@ -6,7 +6,7 @@ Subject: [PATCH] cmdhandler: command environments (ADDRESS) written in Rexx
 New extension package extensions/cmdhandler (cmdhandler.cpp + cmdhandler.cls),
 only public native API: .CommandHandler~register(name, object) makes an
 object whose class inherits .CommandHandler (a mixin class, COMMAND
-abstract; required) an ADDRESS environment, and ~unregister(name) removes it
+abstract; required) an ADDRESS environment, and ~deregister(name) removes it
 (the name then answers FAILURE RC 30, as an unknown environment; a name
 with no handler, and a handler of .nil, are errors); each command is sent as
 object~command(command, .CommandContext), the result becomes RC.  The context
@@ -128,7 +128,7 @@ index 800ba2c..0f843d3 100644
  install(FILES ${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/json.cls COMPONENT Core DESTINATION ${INSTALL_CLS_DIR})
 diff --git a/extensions/cmdhandler/cmdhandler.cls b/extensions/cmdhandler/cmdhandler.cls
 new file mode 100644
-index 0000000..d63f092
+index 0000000..6fb8f45
 --- /dev/null
 +++ b/extensions/cmdhandler/cmdhandler.cls
 @@ -0,0 +1,424 @@
@@ -224,7 +224,7 @@ index 0000000..d63f092
 + *
 + * Idiom: "return caller~raise(...)".  A SYNTAX error in ~command reaches the
 + * code that issued the command.
-+ * .CommandHandler~unregister(name) removes the handler: the name then
++ * .CommandHandler~deregister(name) removes the handler: the name then
 + * behaves as an unknown environment (FAILURE, RC 30); a name with no handler
 + * is an error (SYNTAX 93.900).  A handler of .nil is an error too (SYNTAX
 + * 93.900), not a way to remove one.
@@ -233,7 +233,7 @@ index 0000000..d63f092
 + * command environments): .local~CommandHandlers, a Directory name -> handler,
 + * .local~CommandContext, the context class, and .local~CommandHandlerNames,
 + * the names whose native handler was added (once each: replacing or
-+ * unregistering a handler does not add it again).
++ * deregistering a handler does not add it again).
 + */
 +
 +::requires "cmdhandler" LIBRARY
@@ -249,7 +249,7 @@ index 0000000..d63f092
 +  if name == .nil | name == "" then
 +    raise syntax 93.900 array("register: the environment name must be a non-empty string")
 +  if handler == .nil then
-+    raise syntax 93.900 array("register: the handler is .nil (to remove a handler, use .CommandHandler~unregister(name))")
++    raise syntax 93.900 array("register: the handler is .nil (to remove a handler, use .CommandHandler~deregister(name))")
 +  if \handler~isA(.CommandHandler) then
 +    raise syntax 93.900 array("register: the handler's class must inherit .CommandHandler")
 +  if .local~commandHandlers == .nil then do
@@ -259,7 +259,7 @@ index 0000000..d63f092
 +  end
 +  .local~commandHandlers[name~upper] = handler
 +  -- the native handler is added once per name and instance, never again
-+  -- (replacing or unregistering only changes .local~commandHandlers)
++  -- (replacing or deregistering only changes .local~commandHandlers)
 +  if \.local~commandHandlerNames~hasIndex(name~upper) then do
 +    call CmdHandler_Register name
 +    .local~commandHandlerNames~put(name~upper)
@@ -268,15 +268,15 @@ index 0000000..d63f092
 +
 +-- remove the handler of ADDRESS name: the name then behaves as an unknown
 +-- environment (FAILURE, RC 30); a name that has no handler is left alone
-+::method unregister class
++::method deregister class
 +  use strict arg name
 +  name = name~request("String")
 +  if name == .nil | name == "" then
-+    raise syntax 93.900 array("unregister: the environment name must be a non-empty string")
++    raise syntax 93.900 array("deregister: the environment name must be a non-empty string")
 +  handlers = .local~commandHandlers
 +  if handlers == .nil then handlers = .directory~new
 +  if \handlers~hasIndex(name~upper) then
-+    raise syntax 93.900 array("unregister: there is no command handler named" name)
++    raise syntax 93.900 array("deregister: there is no command handler named" name)
 +  handlers~remove(name~upper)
 +  return
 +
@@ -558,7 +558,7 @@ index 0000000..d63f092
 +  self~flush
 diff --git a/extensions/cmdhandler/cmdhandler.cpp b/extensions/cmdhandler/cmdhandler.cpp
 new file mode 100644
-index 0000000..d2d2d04
+index 0000000..074fb2c
 --- /dev/null
 +++ b/extensions/cmdhandler/cmdhandler.cpp
 @@ -0,0 +1,433 @@
@@ -666,7 +666,7 @@ index 0000000..d2d2d04
 +    RexxObjectPtr contextClass = local != NULLOBJECT ? c->DirectoryAt(local, "COMMANDCONTEXT") : NULLOBJECT;
 +    if (handler == NULLOBJECT || handler == c->Nil() || contextClass == NULLOBJECT)
 +    {
-+        // no handler (never registered, or unregistered): like an unknown environment
++        // no handler (never registered, or deregistered): like an unknown environment
 +        RexxObjectPtr rc = c->WholeNumber(RXSUBCOM_NOTREG);
 +        c->RaiseCondition("FAILURE", command, NULLOBJECT, rc);
 +        return rc;
@@ -1118,7 +1118,7 @@ index aa24b52..93042c7 100755
  # JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
 diff --git a/wasm/tests/cmdhandler.rex b/wasm/tests/cmdhandler.rex
 new file mode 100644
-index 0000000..489c8bd
+index 0000000..54ebe1e
 --- /dev/null
 +++ b/wasm/tests/cmdhandler.rex
 @@ -0,0 +1,418 @@
@@ -1303,17 +1303,17 @@ index 0000000..489c8bd
 +call check "register with .nil refused", .false
 +afterNilHandler:
 +address t "ANYTHING";        call check "still registered after the refused .nil", rc == "T2"
-+.CommandHandler~unregister("t")
++.CommandHandler~deregister("t")
 +call on failure name gotFailure
 +address t "ANYTHING"
-+call check "unregistered: FAILURE RC 30", failed == 30
++call check "deregistered: FAILURE RC 30", failed == 30
 +signal on syntax name gotNoSuchName
-+.CommandHandler~unregister("nosuchname")
-+call check "unregister a name with no handler: SYNTAX 93.900", .false
++.CommandHandler~deregister("nosuchname")
++call check "deregister a name with no handler: SYNTAX 93.900", .false
 +afterNoSuchName:
 +signal on syntax name unexpected
 +.CommandHandler~register("t", .T2~new)
-+address t "ANYTHING";        call check "register again after unregister", rc == "T2"
++address t "ANYTHING";        call check "register again after deregister", rc == "T2"
 +call off failure
 +signal on syntax name gotNoCommand
 +.CommandHandler~register("v", .object~new)
@@ -1331,7 +1331,7 @@ index 0000000..489c8bd
 +gotError:      call check "ERROR raised", condition("C") == "ERROR" & rc == 5; signal afterError
 +gotFailure:    failed = rc; return
 +gotSyntax:     call check "SYNTAX in the handler reaches the caller", condition("O")~code == "42.3"; signal afterSyntax
-+gotNoSuchName: call check "unregister a name with no handler: SYNTAX 93.900", condition("O")~code == "93.900"; signal afterNoSuchName
++gotNoSuchName: call check "deregister a name with no handler: SYNTAX 93.900", condition("O")~code == "93.900"; signal afterNoSuchName
 +gotStaleRaise: call check "raise on a stale context raises SYNTAX", condition("O")~code == "98.900"; signal afterStaleRaise
 +gotStale:      call check "stale context raises SYNTAX", condition("O")~code == "98.900"; signal afterStale
 +gotStaleStream: call check "stale input stream raises SYNTAX", condition("O")~code == "98.900"; signal afterStaleStream
