@@ -10,6 +10,7 @@ the test results and a link to the patches at the commit they describe.
 
 | Date | Update |
 |---|---|
+| 2026-10-20 | [On r13278, booleans are ooRexx's `.LogicalWrapper`](2026-10-20/update.md) |
 | 2026-10-19 (4) | [No Rexx runs while a condition goes past JavaScript](2026-10-19-4/update.md) |
 | 2026-10-19 (3) | [Conditions through JavaScript: description, result, and SIGNAL ON](2026-10-19-3/update.md) |
 | 2026-10-19 (2) | [A Rexx condition through JavaScript comes back as itself](2026-10-19-2/update.md) |
