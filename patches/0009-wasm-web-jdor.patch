@@ -50,6 +50,7 @@ the HTML canvas, no Java involved.
 - wasm/web/ooRexx.js: run({onJdor, screen}) and run.jdorEvent(); the page
   decides how to show the windows (ooRexx-worker.js relays the messages).
 - wasm/tests/web-api.py: 13 JDOR cases.
+- ooRexx #2122: IsInstanceOf is never asked of the String family.
 ---
  interpreter/package/PackageManager.cpp |    4 +-
  wasm/README.md                         |   76 +-
@@ -59,7 +60,7 @@ the HTML canvas, no Java involved.
  wasm/js-realm.js                       |    2 +-
  wasm/tests/web-api.html                |   21 +-
  wasm/tests/web-api.py                  |  103 +-
- wasm/web-jdor.cpp                      |  477 +++++
+ wasm/web-jdor.cpp                      |  487 ++++++
  wasm/web-jdor.js                       | 2236 ++++++++++++++++++++++++
  wasm/web-js.cpp                        |    8 +
  wasm/web/BSF.CLS                       |  110 ++
@@ -67,7 +68,7 @@ the HTML canvas, no Java involved.
  wasm/web/ooRexx-worker.js              |   14 +-
  wasm/web/ooRexx.js                     |   19 +-
  wasm/web/polygon-clipping.umd.min.js   |   39 +
- 16 files changed, 3244 insertions(+), 23 deletions(-)
+ 16 files changed, 3254 insertions(+), 23 deletions(-)
  create mode 100644 wasm/web-jdor.cpp
  create mode 100644 wasm/web-jdor.js
  create mode 100644 wasm/web/BSF.CLS
@@ -476,10 +477,10 @@ index f38168f..b6fa129 100755
       lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
 diff --git a/wasm/web-jdor.cpp b/wasm/web-jdor.cpp
 new file mode 100644
-index 0000000..e7e38d7
+index 0000000..4b4785f
 --- /dev/null
 +++ b/wasm/web-jdor.cpp
-@@ -0,0 +1,477 @@
+@@ -0,0 +1,487 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -671,12 +672,21 @@ index 0000000..e7e38d7
 +    }
 +}
 +
++// ooRexx #2122: IsInstanceOf (a non-blocking API call) asked of a number
++// with no string value yet makes that string without the kernel lock, which
++// corrupts the heap when other threads run Rexx.  Never ask it of the
++// String family: IsString only compares the class, IsOfType takes the lock.
++static bool isStringFamily(RexxThreadContext *c, RexxObjectPtr v)
++{
++    return c->IsString(v) || c->IsOfType(v, "STRING");
++}
++
 +// encode the value of a Rexx variable for JavaScript
 +static void fromRexx(RexxThreadContext *c, std::string &out, RexxObjectPtr v)
 +{
 +    if (v == NULLOBJECT) { putRec(out, 'U', ""); return; }
 +    if (v == c->Nil()) { putRec(out, 'N', ""); return; }
-+    if (jdorClass != NULLOBJECT && c->IsInstanceOf(v, (RexxClassObject)jdorClass))
++    if (jdorClass != NULLOBJECT && !isStringFamily(c, v) && c->IsInstanceOf(v, (RexxClassObject)jdorClass))
 +    {
 +        putRec(out, 'J', c->ObjectToStringValue(c->SendMessage0(v, "JDORREF")));
 +        return;
@@ -867,7 +877,8 @@ index 0000000..e7e38d7
 +RexxRoutine2(int, JdorAddEnvironment, CSTRING, name, RexxObjectPtr, handler)
 +{
 +    std::string ref;
-+    if (jdorClass != NULLOBJECT && context->IsInstanceOf(handler, (RexxClassObject)jdorClass))
++    if (jdorClass != NULLOBJECT && !isStringFamily(context->threadContext, handler) &&
++        context->IsInstanceOf(handler, (RexxClassObject)jdorClass))
 +    {
 +        ref = context->ObjectToStringValue(context->SendMessage0(handler, "JDORREF"));
 +    }
@@ -3200,7 +3211,7 @@ index 0000000..63aa1a9
 +  };
 +})();
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
-index 3e7a78a..668ad17 100644
+index a1454f4..3b277ab 100644
 --- a/wasm/web-js.cpp
 +++ b/wasm/web-js.cpp
 @@ -695,6 +695,7 @@ static RexxObjectPtr toRexx(RexxThreadContext *c, const std::string &s, size_t &
@@ -3211,7 +3222,7 @@ index 3e7a78a..668ad17 100644
                  return c->String(r.data.c_str());
              }
              RexxArrayObject args = c->ArrayOfThree(c->String(r.data.substr(0, t1).c_str()),
-@@ -1099,6 +1100,13 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
+@@ -1115,6 +1116,13 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
      return NULLOBJECT;
  }
  
