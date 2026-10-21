@@ -144,6 +144,11 @@ of Array, Directory and StringTable are copied too, read by SUPPLIER
   the conversion of a Rexx value checks the String family first, once
   (IsString, then IsOfType, which takes the lock), and only asks
   IsInstanceOf of other objects.
+- A HALT is given back as a HALT: a SYNTAX 4.1 of Rexx (a HALT that the
+  Rexx code JavaScript called did not trap) that JavaScript lets through
+  is, back in Rexx, HaltThread(), and the call gives .nil (SIGNAL ON HALT
+  traps it, CALL ON HALT after the next clause, untrapped it is SYNTAX
+  4.1, as a Ctrl-C).  js-errors.rex: 50 checks.
 ---
  interpreter/package/PackageManager.cpp |   16 +
  wasm/README.md                         |  225 +++
@@ -154,7 +159,7 @@ of Array, Directory and StringTable are copied too, read by SUPPLIER
  wasm/js-realm.js                       |  991 ++++++++++++
  wasm/tests/js-arrays.rex               |  169 ++
  wasm/tests/js-booleans.rex             |   78 +
- wasm/tests/js-errors.rex               |  225 +++
+ wasm/tests/js-errors.rex               |  264 ++++
  wasm/tests/js-extend-gc.rex            |  111 ++
  wasm/tests/js-extend.rex               |  157 ++
  wasm/tests/js-floats.rex               |  112 ++
@@ -165,11 +170,11 @@ of Array, Directory and StringTable are copied too, read by SUPPLIER
  wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 1950 ++++++++++++++++++++++++
+ wasm/web-js.cpp                        | 1971 ++++++++++++++++++++++++
  wasm/web/js.cls                        |  750 +++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 +++
- 24 files changed, 6049 insertions(+), 12 deletions(-)
+ 24 files changed, 6109 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -2138,10 +2143,10 @@ index 0000000..00d441e
 +::requires "json.cls"
 diff --git a/wasm/tests/js-errors.rex b/wasm/tests/js-errors.rex
 new file mode 100644
-index 0000000..cfffc39
+index 0000000..60cb43e
 --- /dev/null
 +++ b/wasm/tests/js-errors.rex
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,264 @@
 +/* js-errors.rex: tests of errors and text across the JavaScript bridge      */
 +/* (wasm/js-realm.js, wasm/web-js.cpp), in the realm where Rexx runs: the    */
 +/* worker's in the browser, Node's under Node.  A Rexx condition in          */
@@ -2226,6 +2231,13 @@ index 0000000..cfffc39
 +  .local~userTrapped == "CALL ON the description" & r == "JavaScript went on: 7"
 +call check "an untrapped USER condition: nothing, JavaScript gets the result", -
 +  F("o", "return o.user()")~call(.nil, o) == 7
++-- a HALT that the Rexx code JavaScript called does not trap reaches
++-- JavaScript as SYNTAX 4.1; let through, it is a HALT again (HaltThread)
++halts = F("o", "o.halts(); return 'JavaScript went on'")
++call check "a HALT through JavaScript: the caller's SIGNAL ON HALT", haltSignalOn(halts, o) == "HALT"
++call check "... the caller's CALL ON HALT, after the next clause (the call gave .nil)", -
++  haltCallOn(halts, o) == "HALT The NIL object"
++call check "... untrapped: SYNTAX 4.1", haltUntrapped(halts, o) == "4.1"
 +signal on syntax name rt1
 +F("o", "o.callBack(() => { throw new TypeError('inner') })")~call(.nil, o)
 +rt1:
@@ -2322,6 +2334,33 @@ index 0000000..cfffc39
 +  .local~userTrapped = "CALL ON" condition("D")
 +  return
 +
++haltSignalOn: procedure            -- SIGNAL ON HALT around f~call(.nil, o)
++  use arg f, o
++  signal on halt name hs
++  signal on syntax name hx
++  r = f~call(.nil, o)
++  return "no condition:" r
++hs: return condition("C")
++hx: return "SYNTAX" condition("O")~code
++
++haltCallOn: procedure              -- CALL ON HALT: the handler runs after the next clause
++  use arg f, o
++  .local~halted = ""
++  call on halt name hc
++  signal on syntax name hy
++  r = f~call(.nil, o)
++  nop
++  return .local~halted r
++hc: .local~halted = condition("C"); return
++hy: return "SYNTAX" condition("O")~code
++
++haltUntrapped: procedure           -- only SYNTAX trapped
++  use arg f, o
++  signal on syntax name hz
++  r = f~call(.nil, o)
++  return "no condition:" r
++hz: return condition("O")~code
++
 +errorOf: procedure                  -- f~call(args...): "code message" of its condition
 +  use arg f, args
 +  signal on syntax
@@ -2338,6 +2377,8 @@ index 0000000..cfffc39
 +  return
 +
 +::class Thing
++::method halts                      -- a HALT in a routine: it does not reach the caller's traps
++  call haltsHere
 +::method add
 +  use arg n
 +  return 1 + n
@@ -2367,6 +2408,9 @@ index 0000000..cfffc39
 +  return "ab" || "ff"x
 +
 +::requires "js.cls"
++
++::routine haltsHere
++  raise halt description "h"
 diff --git a/wasm/tests/js-extend-gc.rex b/wasm/tests/js-extend-gc.rex
 new file mode 100644
 index 0000000..d84307a
@@ -2899,7 +2943,7 @@ index 0000000..c89f67e
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..d07cce2 100755
+index e1c1cd8..8ed1b07 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -200,6 +200,219 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
@@ -3015,7 +3059,7 @@ index e1c1cd8..d07cce2 100755
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-proxy.rex'"
 +# --- errors both ways (RexxError's fields and cause, additional[3]) and text
 +# (no U+FFFD: a string that is not UTF-8, or not well-formed, is an error)
-+check "JavaScript objects: errors both ways, and text" '^47 passed, 0 failed$' '!^FAIL ' -- \
++check "JavaScript objects: errors both ways, and text" '^50 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-errors.rex'"
 +# --- booleans: .LogicalWrapper (logicalwrapper.cls) both ways across the bridge
 +check "JavaScript objects: booleans both ways (.LogicalWrapper)" '^25 passed, 0 failed$' '!^FAIL ' -- \
@@ -3145,7 +3189,7 @@ index d544388..b13d517 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..f38168f 100755
+index 3940711..d5cfa88 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -49,7 +49,10 @@ if len(sys.argv) != 2:
@@ -3251,7 +3295,7 @@ index 3940711..f38168f 100755
 +     lambda r: r["out"] == "trapped the description\n2\n" and r["rc"] == 0),
 +  # errors both ways and text, in the worker's realm: the portable test
 +  ("js errors", open(f"{SRC}/wasm/tests/js-errors.rex").read(), {"js": {"worker": True}},
-+     lambda r: "47 passed, 0 failed" in r["out"] and r["rc"] == 0),
++     lambda r: "50 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # booleans both ways (.LogicalWrapper), in the worker's realm: the portable test
 +  ("js booleans", open(f"{SRC}/wasm/tests/js-booleans.rex").read(), {"js": {"worker": True}},
 +     lambda r: "25 passed, 0 failed" in r["out"] and r["rc"] == 0),
@@ -3545,10 +3589,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..a1454f4
+index 0000000..faba9be
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,1950 @@
+@@ -0,0 +1,1971 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -4603,6 +4647,15 @@ index 0000000..a1454f4
 +    }
 +}
 +
++// a condition object of SYNTAX 4.1 ("Program interrupted with HALT
++// condition"): a HALT that nobody trapped
++static bool isHaltSyntax(RexxThreadContext *c, RexxObjectPtr cond)
++{
++    if (cond == NULLOBJECT || !c->IsDirectory(cond)) return false;
++    RexxObjectPtr code = c->DirectoryAt((RexxDirectoryObject)cond, "CODE");
++    return code != NULLOBJECT && strcmp(c->ObjectToStringValue(code), "4.1") == 0;
++}
++
 +// a SYNTAX condition of Rexx (its condition object) raised again: the same
 +// code and ADDITIONAL, so the same message, and its DESCRIPTION and RESULT
 +static void reraise(RexxThreadContext *c, RexxObjectPtr cond)
@@ -4645,10 +4698,22 @@ index 0000000..a1454f4
 +        return NULLOBJECT;
 +    }
 +    // J: a RexxError that JavaScript let through, of a SYNTAX condition of
-+    // Rexx (see conditionFields()): that condition, raised again as itself
++    // Rexx (see conditionFields()): that condition, raised again as itself;
++    // but a SYNTAX 4.1, what ooRexx makes of a HALT nobody trapped, is a
++    // HALT again, as a Ctrl-C would be: HaltThread, not RaiseCondition (an
++    // untrapped HALT from RaiseCondition is ignored).  SIGNAL ON HALT traps
++    // it at the end of the clause, CALL ON HALT after it (the call gives
++    // .nil meanwhile, so that the clause can go on), and untrapped it ends
++    // as SYNTAX 4.1, as in plain Rexx
 +    if (r.tag == 'J')
 +    {
-+        reraise(c, toRexx(c, reply, pos));
++        RexxObjectPtr cond = toRexx(c, reply, pos);
++        if (isHaltSyntax(c, cond))
++        {
++            c->HaltThread();
++            return c->Nil();
++        }
++        reraise(c, cond);
 +        return NULLOBJECT;
 +    }
 +    // E: the message, then the thrown value (a .JSObject for an Error), and
