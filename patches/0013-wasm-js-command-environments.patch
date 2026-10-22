@@ -44,10 +44,10 @@ Not part of the posted RFE (it needs cmdhandler).
  create mode 100644 wasm/web/jscommands.cls
 
 diff --git a/wasm/README.md b/wasm/README.md
-index e01ffd1..2eea883 100644
+index e2460df..eeb1fa5 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -528,6 +528,18 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -536,6 +536,18 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    `prepare`, `attach`, `instrument`; see `web/ooRexx.js`).  Tests:
    `tests/web-api.py` (session eval, session page, rexx scripts with
    `tests/web-scripts.html`, the debugger hook with `tests/web-debugger.js`).
@@ -341,10 +341,10 @@ index 0000000..865dc4d
 +::routine haltsHere
 +  raise halt
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 4442d1b..d872fe4 100755
+index 78e615b..a09d280 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -421,6 +421,12 @@ check "command handlers in Rexx: a HALT is given back as a HALT" '^9 passed, 0 f
+@@ -449,6 +449,12 @@ check "command handlers in Rexx: a HALT is given back as a HALT" '^9 passed, 0 f
  check "command handlers in Rexx: nested and recursive commands" '^10 passed, 0 failed$' '!^FAIL ' -- \
    "$X '$(cd "$(dirname "$0")/../../extensions/cmdhandler/tests" && pwd)/nested.rex'"
  

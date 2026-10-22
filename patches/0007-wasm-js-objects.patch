@@ -226,10 +226,10 @@ index 9324d0b..786af1f 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index d6f2caf..17ec24c 100644
+index 5cf608a..76b9b81 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -239,6 +239,229 @@ from the test suite's directory:
+@@ -244,6 +244,229 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -459,7 +459,7 @@ index d6f2caf..17ec24c 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -247,6 +470,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -252,6 +475,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).
@@ -2943,10 +2943,10 @@ index 0000000..c89f67e
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e1c1cd8..8ed1b07 100755
+index b44ba2b..bac7b7d 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -200,6 +200,219 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
+@@ -228,6 +228,219 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
  check "name resolution (host resolver)" '^localhost=1 127\.0\.0\.1$' '^invalid=0$' '^reverse=1 ' "^hostname=$(hostname)\$" '^hostid=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' -- \
    "$X dns.rex"
  

@@ -248,10 +248,10 @@ index 0000000..01451f3
 +
 +::requires "fetch.cls"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index aac9878..4442d1b 100755
+index a7f36f5..78e615b 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -421,6 +421,13 @@ check "command handlers in Rexx: a HALT is given back as a HALT" '^9 passed, 0 f
+@@ -449,6 +449,13 @@ check "command handlers in Rexx: a HALT is given back as a HALT" '^9 passed, 0 f
  check "command handlers in Rexx: nested and recursive commands" '^10 passed, 0 failed$' '!^FAIL ' -- \
    "$X '$(cd "$(dirname "$0")/../../extensions/cmdhandler/tests" && pwd)/nested.rex'"
  

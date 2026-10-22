@@ -273,7 +273,7 @@ index fd47f6b..b459669 100644
      // set the errno information
      setErrno(context, rc >= 0);
 diff --git a/wasm/README.md b/wasm/README.md
-index e704208..a69251d 100644
+index 7b90a2e..155575d 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -6,7 +6,8 @@ This development port compiles the ooRexx interpreter and API statically to
@@ -317,7 +317,7 @@ index e704208..a69251d 100644
  `bin-node/rexx` and `bin-node/rexxc` are launchers; `rexxc` is a multi-call
  entry of the same `rexx.js` (`wasm/rexxc-main.cpp`).  Error numbers seen by
  Rexx programs (RC of CD, stream `ERROR:n`, SysMkDir, ...) are the Linux ones,
-@@ -117,6 +121,16 @@ event loop), not on the JS main thread, so that the RexxAPI keeps working
+@@ -122,6 +126,16 @@ event loop), not on the JS main thread, so that the RexxAPI keeps working
  while that thread waits for a Rexx thread.
  `bin-node/rxqueue` and `bin-node/rxsubcom` are multi-call entries as well.
  
@@ -334,7 +334,7 @@ index e704208..a69251d 100644
      ./wasm/build-node.sh /tmp/oorexx-wasm-build
      ./wasm/tests/qualify-node-cli.sh /tmp/oorexx-wasm-build/bin-node
  
-@@ -134,11 +148,11 @@ browser; see the limits below).
+@@ -139,11 +153,11 @@ browser; see the limits below).
  
  ## Known limitations / deliberate non-claims
  
@@ -580,10 +580,10 @@ index 0000000..adbabc1
 +  };
 +}]);
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 82124b9..e1c1cd8 100755
+index 351b211..b44ba2b 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -109,6 +109,96 @@ check "rxapi daemon: session queue parent -> child" '^child got=parent$' -- "$X
+@@ -137,6 +137,96 @@ check "rxapi daemon: session queue parent -> child" '^child got=parent$' -- "$X
  check "in-process RexxAPI (ORX_WASM_RXAPI=inprocess)" '^2$' -- \
    "ORX_WASM_RXAPI=inprocess $X -e 'push 1; queue 2; say queued()'"
  

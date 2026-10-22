@@ -21,27 +21,34 @@ command-line ooRexx that sees the host file system and environment
   ioctl(FIONREAD), which Emscripten answers 0 without writing the count;
   node-pre.js answers it (a file: the bytes left; a terminal, /dev/null:
   0; a pipe: read ahead), the same results as native;
+- SIGINT (Ctrl-C), SIGTERM and SIGHUP raise HALT in the running program,
+  as natively, instead of ending the Node process: node-pre.js calls
+  orxWasmSignal(), which does what the native signal handler does; a
+  SysSleep in progress ends at once (EINTR, result 4);
 - samples/rexxtry.rex copied next to rexx (`rexx rexxtry`);
 - wasm/tests/qualify-node-cli.sh: qualification of the Node command-line
   build, with assertions.
 ---
- CMakeLists.txt                               |   4 +
- common/platform/unix/SysFile.hpp             |  13 +
- common/platform/unix/SysProcess.cpp          | 230 ++++++++++++++++-
- common/platform/unix/SysProcess.hpp          |   4 +
- common/platform/windows/SysFile.hpp          |   3 +
- interpreter/platform/unix/SysRexxUtil.cpp    |   9 +-
- interpreter/platform/unix/SystemCommands.cpp | 256 ++++++++++++++++++-
- interpreter/runtime/RexxUtilCommon.cpp       |   8 +-
- interpreter/streamLibrary/StreamNative.cpp   |  20 +-
- utilities/rexx/platform/unix/rexx.cpp        |  13 +
- wasm/README.md                               |  21 +-
- wasm/build-node.sh                           |  85 ++++++
- wasm/build-wasm.sh                           |   4 +-
- wasm/node-pre.js                             |  78 ++++++
- wasm/rexxc-main.cpp                          |  46 ++++
- wasm/tests/qualify-node-cli.sh               | 105 ++++++++
- 16 files changed, 864 insertions(+), 35 deletions(-)
+ CMakeLists.txt                                |   4 +
+ common/platform/unix/SysFile.hpp              |  13 +
+ common/platform/unix/SysProcess.cpp           | 230 +++++++++++++++-
+ common/platform/unix/SysProcess.hpp           |   4 +
+ common/platform/unix/SysThread.cpp            |  38 +++
+ common/platform/unix/SysThread.hpp            |   3 +
+ common/platform/windows/SysFile.hpp           |   3 +
+ interpreter/platform/unix/SysRexxUtil.cpp     |   9 +-
+ interpreter/platform/unix/SystemCommands.cpp  | 256 +++++++++++++++++-
+ .../platform/unix/SystemInterpreter.cpp       |  26 ++
+ interpreter/runtime/RexxUtilCommon.cpp        |  10 +-
+ interpreter/streamLibrary/StreamNative.cpp    |  20 +-
+ utilities/rexx/platform/unix/rexx.cpp         |  13 +
+ wasm/README.md                                |  26 +-
+ wasm/build-node.sh                            |  85 ++++++
+ wasm/build-wasm.sh                            |   4 +-
+ wasm/node-pre.js                              | 101 +++++++
+ wasm/rexxc-main.cpp                           |  46 ++++
+ wasm/tests/qualify-node-cli.sh                | 133 +++++++++
+ 19 files changed, 988 insertions(+), 36 deletions(-)
  create mode 100755 wasm/build-node.sh
  create mode 100644 wasm/node-pre.js
  create mode 100644 wasm/rexxc-main.cpp
@@ -368,6 +375,76 @@ index d683ad9..28f0600 100644
       static const char* getLibraryLocation();
       static void beep(int frequency, int duration);
  
+diff --git a/common/platform/unix/SysThread.cpp b/common/platform/unix/SysThread.cpp
+index b5e76bc..da76ee3 100644
+--- a/common/platform/unix/SysThread.cpp
++++ b/common/platform/unix/SysThread.cpp
+@@ -51,6 +51,25 @@
+ #include <unistd.h>
+ #include <errno.h>
+ 
++#if defined(__EMSCRIPTEN__)
++#include <emscripten/emscripten.h>
++#include <emscripten/threading.h>
++#include <limits.h>
++
++// WebAssembly has no signals: the Node runtime turns SIGINT, SIGTERM and
++// SIGHUP into a HALT itself (orxWasmSignal(), SystemInterpreter.cpp).
++// Natively such a signal also ends a nanosleep() with EINTR, so that SysSleep
++// returns at once; here longSleep() waits on this counter instead, and
++// interruptSleeps() wakes every sleeper.
++static volatile uint32_t sleepInterrupts = 0;
++
++void SysThread::interruptSleeps()
++{
++    __atomic_add_fetch(&sleepInterrupts, 1, __ATOMIC_SEQ_CST);
++    emscripten_futex_wake((void *)&sleepInterrupts, INT_MAX);
++}
++#endif
++
+ // attach an activity to an existing thread
+ void SysThread::attachThread()
+ {
+@@ -194,6 +213,25 @@ int SysThread::longSleep(uint64_t microseconds)
+     long secs = (long)microseconds / 1000000;
+     long nanoseconds = (long)(microseconds % 1000000) * 1000;
+ 
++#if defined(__EMSCRIPTEN__)
++    // ended early, with EINTR, by interruptSleeps() (see above)
++    uint32_t seen = __atomic_load_n(&sleepInterrupts, __ATOMIC_SEQ_CST);
++    double end = emscripten_get_now() + microseconds / 1000.0;
++    for (;;)
++    {
++        double left = end - emscripten_get_now();
++        if (left <= 0)
++        {
++            return 0;
++        }
++        emscripten_futex_wait((void *)&sleepInterrupts, seen, left);
++        if (__atomic_load_n(&sleepInterrupts, __ATOMIC_SEQ_CST) != seen)
++        {
++            return EINTR;
++        }
++    }
++#endif
++
+ #if defined( HAVE_NANOSLEEP )
+     struct timespec    Rqtp, Rmtp;
+     Rqtp.tv_sec = secs;
+diff --git a/common/platform/unix/SysThread.hpp b/common/platform/unix/SysThread.hpp
+index 22ebea2..3e04a87 100644
+--- a/common/platform/unix/SysThread.hpp
++++ b/common/platform/unix/SysThread.hpp
+@@ -81,6 +81,9 @@ public:
+ 
+     static void sleep(int msecs);
+     static int longSleep(uint64_t microseconds);
++#if defined(__EMSCRIPTEN__)
++    static void interruptSleeps();     // WebAssembly: a "signal" ends the longSleep()s
++#endif
+     static uint64_t getMillisecondTicks()
+     {
+         struct timeval now;
 diff --git a/common/platform/windows/SysFile.hpp b/common/platform/windows/SysFile.hpp
 index 5bd484f..f51abef 100644
 --- a/common/platform/windows/SysFile.hpp
@@ -725,8 +802,45 @@ index 5abf65b..8a0f7aa 100644
      if (ioContext->IsRedirectionRequested())
      {
          InputWriterThread inputThread; // separate thread if we need to write INPUT
+diff --git a/interpreter/platform/unix/SystemInterpreter.cpp b/interpreter/platform/unix/SystemInterpreter.cpp
+index cf4bffa..82f34e1 100644
+--- a/interpreter/platform/unix/SystemInterpreter.cpp
++++ b/interpreter/platform/unix/SystemInterpreter.cpp
+@@ -115,6 +115,32 @@ void signalHandler(int sig)
+ }
+ 
+ 
++#if defined(__EMSCRIPTEN__)
++#include <emscripten/emscripten.h>
++#include "SysThread.hpp"
++
++/**
++ * WebAssembly has no signals.  The Node runtime (wasm/node-pre.js) catches
++ * SIGINT, SIGTERM and SIGHUP on the JavaScript main thread and calls this,
++ * which does what signalHandler() does natively: a HALT in every running
++ * activity; and a sleep ends early (EINTR), as nanosleep() would.
++ *
++ * @param sig    The signal number (SIGINT, SIGTERM or SIGHUP).
++ *
++ * @return 1 if the HALT was posted, 0 if one is still pending (not yet seen
++ *         by the program), as Interpreter::haltAllActivities().
++ */
++extern "C" EMSCRIPTEN_KEEPALIVE int orxWasmSignal(int sig)
++{
++    RexxString *name = sig == SIGTERM ? GlobalNames::SIGTERM_STRING :
++                       sig == SIGHUP ? GlobalNames::SIGHUP_STRING : GlobalNames::SIGINT_STRING;
++    bool posted = Interpreter::haltAllActivities(name);
++    SysThread::interruptSleeps();
++    return posted ? 1 : 0;
++}
++#endif
++
++
+ void SystemInterpreter::startInterpreter()
+ {
+ 
 diff --git a/interpreter/runtime/RexxUtilCommon.cpp b/interpreter/runtime/RexxUtilCommon.cpp
-index bd839de..80892fa 100644
+index bd839de..b2dd38e 100644
 --- a/interpreter/runtime/RexxUtilCommon.cpp
 +++ b/interpreter/runtime/RexxUtilCommon.cpp
 @@ -1673,7 +1673,7 @@ RexxRoutine1(int, SysRmDir, CSTRING, path)
@@ -747,6 +861,15 @@ index bd839de..80892fa 100644
  }
  
  
+@@ -1919,7 +1919,7 @@ RexxRoutine1(int, SysSleep, RexxStringObject, delay)
+     uint64_t microseconds = (uint64_t)(seconds * 1000000);
+ 
+     // go do the sleep
+-    return SysThread::longSleep(microseconds);
++    return HOST_ERRNO(SysThread::longSleep(microseconds));
+ }
+ 
+ /*************************************************************************
 @@ -1937,7 +1937,7 @@ RexxRoutine2(int, SysFileCopy, CSTRING, from, CSTRING, to)
      RoutineQualifiedName fromFile(context, from);
      RoutineQualifiedName toFile(context, to);
@@ -885,7 +1008,7 @@ index 7ebfbe0..6d0b5ff 100644
                                           /* is this option a switch?          */
          if (program_name == NULL && (*(cp=*(argv+i)) == '-')) {
 diff --git a/wasm/README.md b/wasm/README.md
-index b0942ef..7ae0127 100644
+index b0942ef..86da947 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -11,7 +11,8 @@ transport for stream sockets.
@@ -898,7 +1021,7 @@ index b0942ef..7ae0127 100644
  * no external rxapi daemon: the API server (external data queues, function
    and subcom registration, macrospace) is linked in and reached through an
    in-process transport (`rexxapi/common/platform/unix/SysLoopbackConnection`);
-@@ -90,6 +91,22 @@ connect/send/recv, 5,000-byte partial stream reads, arbitrary binary strings,
+@@ -90,6 +91,27 @@ connect/send/recv, 5,000-byte partial stream reads, arbitrary binary strings,
  finite select timeout/readiness, nonblocking EINPROGRESS completion,
  connection refusal, DNS/localhost, and the unchanged `.StreamSocket` wrapper.
  
@@ -914,6 +1037,11 @@ index b0942ef..7ae0127 100644
 +entry of the same `rexx.js` (`wasm/rexxc-main.cpp`).  Error numbers seen by
 +Rexx programs (RC of CD, stream `ERROR:n`, SysMkDir, ...) are the Linux ones,
 +not the WASI ones of the Emscripten libc (`HOST_ERRNO`).
++Ctrl-C (SIGINT), SIGTERM and SIGHUP raise HALT in the running program, as
++natively, instead of ending the Node process: `wasm/node-pre.js` catches them
++on the JS main thread and calls `orxWasmSignal()`, which does what the native
++signal handler does; a SysSleep in progress ends at once (result 4, EINTR).
++SIGQUIT (Ctrl-\) still ends the process.
 +
 +    ./wasm/build-node.sh /tmp/oorexx-wasm-build
 +    ./wasm/tests/qualify-node-cli.sh /tmp/oorexx-wasm-build/bin-node
@@ -921,7 +1049,7 @@ index b0942ef..7ae0127 100644
  ## Browser status
  
  The generated `rexx.js/rexx.wasm/rexx.data` target `node,web,worker`. A pthread
-@@ -109,7 +126,7 @@ browser; see the limits below).
+@@ -109,7 +131,7 @@ browser; see the limits below).
  * UDP/datagram semantics are not qualified.
  * Native TCP servers need a WebSocket-facing endpoint/proxy; a real WebSocket
    server can be addressed directly.
@@ -1038,10 +1166,10 @@ index 6d8aec7..fb9d3f9 100755
  echo "WASM runtime built in $BUILD/bin"
 diff --git a/wasm/node-pre.js b/wasm/node-pre.js
 new file mode 100644
-index 0000000..bc83e87
+index 0000000..b5eef88
 --- /dev/null
 +++ b/wasm/node-pre.js
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,101 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -1079,6 +1207,29 @@ index 0000000..bc83e87
 +/*                                                                            */
 +/*----------------------------------------------------------------------------*/
 +// Pre-js of the Node command-line build (wasm/build-node.sh).
++
++// SIGINT (Ctrl-C), SIGTERM and SIGHUP become a HALT in the running program,
++// as natively (signalHandler() in SystemInterpreter.cpp), instead of Node's
++// default, which ends the process: orxWasmSignal() posts the HALT.  As
++// natively, they never end the process once the runtime is up (SIGQUIT,
++// Ctrl-\, still does); before that, Node's default.  Only for rexx itself:
++// rexxc, rxqueue, rxsubcom and the rxapi daemon (--orx-wasm-*) keep Node's
++// default.
++if (!ENVIRONMENT_IS_PTHREAD && !/^--orx-wasm-/.test(process.argv[2] || ''))
++{
++  var orxSignals = { SIGINT: 2, SIGTERM: 15, SIGHUP: 1 };
++  var orxOnSignal = function(name) {
++    if (typeof _orxWasmSignal === 'function' && runtimeInitialized)
++    {
++      _orxWasmSignal(orxSignals[name]);
++      return;
++    }
++    for (var s in orxSignals) process.removeAllListeners(s);
++    process.kill(process.pid, name);
++  };
++  for (var s in orxSignals) process.on(s, orxOnSignal);
++}
++
 +Module['preRun'] = (Module['preRun'] || []).concat([function() {
 +  // the host environment is the environment of the Rexx process
 +  for (var k in process.env) ENV[k] = process.env[k];
@@ -1174,10 +1325,10 @@ index 0000000..6538f75
 +#include "../utilities/rexxc/platform/unix/RexxCompiler.cpp"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
 new file mode 100755
-index 0000000..f5e9a9f
+index 0000000..0c6c433
 --- /dev/null
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -0,0 +1,105 @@
+@@ -0,0 +1,133 @@
 +#!/usr/bin/env bash
 +#/*----------------------------------------------------------------------------*/
 +#/*                                                                            */
@@ -1274,6 +1425,34 @@ index 0000000..f5e9a9f
 +check ".RexxInfo~executable" "^$NB/rexx\$" -- "$X -e 'say .RexxInfo~executable'"
 +check "rexxc compile + run" '^compiled ok$' -- \
 +  "echo 'say \"compiled ok\"' > c.rex && \"$NB/rexxc\" c.rex c.rxc >/dev/null && $X c.rxc"
++# --- SIGINT, SIGTERM: a HALT, as natively (node-pre.js, orxWasmSignal());
++# each program writes the file named by its argument once it runs
++cat > "$T/halt1.rex" <<'EOF'
++signal on halt name halted
++call time 'R'
++call lineout arg(1), 'ready'; call lineout arg(1)
++call SysSleep 30
++say 'not halted'
++exit 1
++halted:
++  say 'HALT result='result 'quick=' || (time('E') < 10)
++  exit 0
++EOF
++cat > "$T/halt2.rex" <<'EOF'
++call lineout arg(1), 'ready'; call lineout arg(1)
++do forever; nop; end
++EOF
++sig() {  # sig SIGNAL PROGRAM: runs it, sends it SIGNAL once it runs, waits
++  rm -f "$T/ready"; "$NB/rexx" "$T/$2" "$T/ready" & local p=$!
++  while [[ ! -s $T/ready ]]; do sleep 0.1; done
++  kill -$1 $p; wait $p
++}
++export -f sig; export T
++check "SIGINT and SIGTERM raise HALT, which ends a SysSleep at once" '^HALT result=4 quick=1$' '^term: HALT result=4 quick=1$' -- \
++  "sig INT halt1.rex; printf 'term: '; sig TERM halt1.rex"
++check "an untrapped HALT ends the program (Error 4); SIGQUIT still ends the process" \
++  '^Error 4\.1: +Program interrupted with HALT condition\.$' '^status=252$' '^quit=131$' -- \
++  "sig INT halt2.rex; echo status=\$?; sig QUIT halt2.rex; echo quit=\$?"
 +
 +
 +

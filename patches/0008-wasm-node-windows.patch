@@ -24,7 +24,10 @@ SysProcess::isWindowsHost() tells the Unix platform code, which then:
 - deletes directories with rmdir() (remove() stops at unlink()'s EPERM),
   takes TMPDIR, TEMP or TMP, is case-insensitive, and SysFileTree accepts
   backslashes;
-- has the RexxAPI daemon listen on a named pipe.
+- has the RexxAPI daemon listen on a named pipe;
+- treats Ctrl-C as ooRexx for Windows does: a second Ctrl-C while a HALT
+  is still pending ends the process, Ctrl-Break is ignored, and a SysSleep
+  is not interrupted.
 
 build-node.sh and build-test.sh also write rexx.cmd ... launchers (classes
 through REXX_PATH: cmd.exe would take rexx.js in PATH for "rexx").
@@ -36,14 +39,14 @@ through REXX_PATH: cmd.exe would take rexx.js in PATH for "rexx").
  interpreter/platform/unix/SysFileSystem.cpp   | 234 +++++++++++++++++-
  interpreter/platform/unix/SysFileSystem.hpp   |   1 +
  interpreter/platform/unix/SystemCommands.cpp  | 142 ++++++++++-
- .../platform/unix/SystemInterpreter.cpp       |  25 ++
+ .../platform/unix/SystemInterpreter.cpp       |  31 ++-
  interpreter/runtime/RexxUtilCommon.cpp        |  14 ++
  .../platform/unix/SysNodeConnection.cpp       |  18 +-
- wasm/README.md                                |  13 +
+ wasm/README.md                                |  16 ++
  wasm/build-node.sh                            |   8 +-
  wasm/build-test.sh                            |   2 +
- wasm/node-pre.js                              |  21 +-
- 14 files changed, 552 insertions(+), 33 deletions(-)
+ wasm/node-pre.js                              |  36 ++-
+ 14 files changed, 572 insertions(+), 37 deletions(-)
 
 diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
 index a6c467e..d7b4f4a 100644
@@ -868,7 +871,7 @@ index 8a0f7aa..8c15816 100644
      // The command handlers for shells other than "sh" will only work
      // if a shell with this named is installed on the system
 diff --git a/interpreter/platform/unix/SystemInterpreter.cpp b/interpreter/platform/unix/SystemInterpreter.cpp
-index cf4bffa..5ea03bc 100644
+index 82f34e1..41ac9d8 100644
 --- a/interpreter/platform/unix/SystemInterpreter.cpp
 +++ b/interpreter/platform/unix/SystemInterpreter.cpp
 @@ -43,6 +43,8 @@
@@ -880,7 +883,20 @@ index cf4bffa..5ea03bc 100644
  
  sigset_t SystemInterpreter::oldmask;
  sigset_t SystemInterpreter::newmask;
-@@ -177,6 +179,19 @@ void SystemInterpreter::liveGeneral(MarkReason reason)
+@@ -135,7 +137,11 @@ extern "C" EMSCRIPTEN_KEEPALIVE int orxWasmSignal(int sig)
+     RexxString *name = sig == SIGTERM ? GlobalNames::SIGTERM_STRING :
+                        sig == SIGHUP ? GlobalNames::SIGHUP_STRING : GlobalNames::SIGINT_STRING;
+     bool posted = Interpreter::haltAllActivities(name);
+-    SysThread::interruptSleeps();
++    // a Windows host: Ctrl-C does not end a SysSleep there
++    if (!SysProcess::isWindowsHost())
++    {
++        SysThread::interruptSleeps();
++    }
+     return posted ? 1 : 0;
+ }
+ #endif
+@@ -203,6 +209,19 @@ void SystemInterpreter::liveGeneral(MarkReason reason)
   */
  bool SystemInterpreter::getEnvironmentVariable(const char *variable, FileNameBuffer &buffer)
  {
@@ -900,7 +916,7 @@ index cf4bffa..5ea03bc 100644
      const char *value = getenv(variable);
      if (value != NULL)
      {
-@@ -198,6 +213,16 @@ bool SystemInterpreter::getEnvironmentVariable(const char *variable, FileNameBuf
+@@ -224,6 +243,16 @@ bool SystemInterpreter::getEnvironmentVariable(const char *variable, FileNameBuf
   */
  void SystemInterpreter::setEnvironmentVariable(const char *variableName, const char *value)
  {
@@ -918,7 +934,7 @@ index cf4bffa..5ea03bc 100644
      if (value == NULL)
      {
 diff --git a/interpreter/runtime/RexxUtilCommon.cpp b/interpreter/runtime/RexxUtilCommon.cpp
-index 80892fa..cb018f4 100644
+index b2dd38e..e87d207 100644
 --- a/interpreter/runtime/RexxUtilCommon.cpp
 +++ b/interpreter/runtime/RexxUtilCommon.cpp
 @@ -54,6 +54,7 @@
@@ -1014,10 +1030,10 @@ index 01582d1..500ab26 100644
      stringToUTF8(name, buf, size);
      return 1;
 diff --git a/wasm/README.md b/wasm/README.md
-index 17ec24c..204f4a5 100644
+index 76b9b81..ea1e0b5 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -134,6 +134,19 @@ host name and interface address come from `node:os`
+@@ -139,6 +139,22 @@ host name and interface address come from `node:os`
      ./wasm/build-node.sh /tmp/oorexx-wasm-build
      ./wasm/tests/qualify-node-cli.sh /tmp/oorexx-wasm-build/bin-node
  
@@ -1033,6 +1049,9 @@ index 17ec24c..204f4a5 100644
 +named pipe (`\\.\pipe\.ooRexx-5.3.0-wasm-USER.service`).  `rexx.img` is found
 +next to `rexx.js`, and the classes through `REXX_PATH`: `rexx.js` in `PATH`
 +would be taken by `cmd.exe` for the command `rexx` (`.JS` is in `PATHEXT`).
++Ctrl-C raises HALT as with ooRexx for Windows: a second one while the HALT is
++still pending ends the process, Ctrl-Break is ignored, and a SysSleep is not
++interrupted.
 +
  ## Browser status
  
@@ -1077,12 +1096,37 @@ index eda1d7c..cd0c09f 100755
  if [[ $WHICH != node ]]; then
    EXTRA_OBJECTS="${objects[*]}" "$SRC/wasm/build-web.sh" "$BUILD" "$BUILD/bin-web-test"
 diff --git a/wasm/node-pre.js b/wasm/node-pre.js
-index bc83e87..d0aa593 100644
+index b5eef88..dfd7b7e 100644
 --- a/wasm/node-pre.js
 +++ b/wasm/node-pre.js
-@@ -36,8 +36,27 @@
- /*----------------------------------------------------------------------------*/
- // Pre-js of the Node command-line build (wasm/build-node.sh).
+@@ -45,12 +45,21 @@
+ // default.
+ if (!ENVIRONMENT_IS_PTHREAD && !/^--orx-wasm-/.test(process.argv[2] || ''))
+ {
+-  var orxSignals = { SIGINT: 2, SIGTERM: 15, SIGHUP: 1 };
++  // a Windows host, as ooRexx for Windows (WinConsoleCtrlHandler()): Ctrl-C
++  // raises HALT, but ends the process if a HALT is still pending, and
++  // Ctrl-Break is ignored; console close and logoff are left to the system
++  var orxWindows = process.platform === 'win32';
++  var orxSignals = orxWindows ? { SIGINT: 2, SIGBREAK: 21 } : { SIGINT: 2, SIGTERM: 15, SIGHUP: 1 };
+   var orxOnSignal = function(name) {
+     if (typeof _orxWasmSignal === 'function' && runtimeInitialized)
+     {
+-      _orxWasmSignal(orxSignals[name]);
+-      return;
++      if (!orxWindows)
++      {
++        _orxWasmSignal(orxSignals[name]);
++        return;
++      }
++      if (name === 'SIGBREAK' || _orxWasmSignal(orxSignals[name])) return;
++      process.exit(-1073741510);       // STATUS_CONTROL_C_EXIT, as natively
+     }
+     for (var s in orxSignals) process.removeAllListeners(s);
+     process.kill(process.pid, name);
+@@ -59,8 +68,27 @@ if (!ENVIRONMENT_IS_PTHREAD && !/^--orx-wasm-/.test(process.argv[2] || ''))
+ }
+ 
  Module['preRun'] = (Module['preRun'] || []).concat([function() {
 -  // the host environment is the environment of the Rexx process
 +  // the host environment is the environment of the Rexx process.  Windows:

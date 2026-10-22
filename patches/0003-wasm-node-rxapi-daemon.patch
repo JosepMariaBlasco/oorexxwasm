@@ -1230,7 +1230,7 @@ index 6d0b5ff..e78f195 100644
  #endif
  
 diff --git a/wasm/README.md b/wasm/README.md
-index 7ae0127..e704208 100644
+index 86da947..7b90a2e 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -13,9 +13,11 @@ transport for stream sockets.
@@ -1248,9 +1248,9 @@ index 7ae0127..e704208 100644
  * user identity: Emscripten has no passwd database, so `getpwnam()` and
    `getpwuid()` are wrapped to return the user the process runs as (the host
    user under Node, the synthetic user `wasm` in the browser), for `USERID()`,
-@@ -104,6 +106,17 @@ entry of the same `rexx.js` (`wasm/rexxc-main.cpp`).  Error numbers seen by
- Rexx programs (RC of CD, stream `ERROR:n`, SysMkDir, ...) are the Linux ones,
- not the WASI ones of the Emscripten libc (`HOST_ERRNO`).
+@@ -109,6 +111,17 @@ on the JS main thread and calls `orxWasmSignal()`, which does what the native
+ signal handler does; a SysSleep in progress ends at once (result 4, EINTR).
+ SIGQUIT (Ctrl-\) still ends the process.
  
 +The RexxAPI is shared by all WASM processes of a user, as natively: the API
 +server runs as a daemon (`rexx.js --orx-wasm-rxapi`, started on first use,
@@ -1395,12 +1395,12 @@ index 0000000..2b6bbf4
 +#define main orxWasmRxsubcomMain
 +#include "../utilities/rxsubcom/platform/unix/rxsubcom.cpp"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index f5e9a9f..82124b9 100755
+index 0c6c433..351b211 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -95,6 +95,19 @@ check ".RexxInfo~executable" "^$NB/rexx\$" -- "$X -e 'say .RexxInfo~executable'"
- check "rexxc compile + run" '^compiled ok$' -- \
-   "echo 'say \"compiled ok\"' > c.rex && \"$NB/rexxc\" c.rex c.rxc >/dev/null && $X c.rxc"
+@@ -123,6 +123,19 @@ check "an untrapped HALT ends the program (Error 4); SIGQUIT still ends the proc
+   '^Error 4\.1: +Program interrupted with HALT condition\.$' '^status=252$' '^quit=131$' -- \
+   "sig INT halt2.rex; echo status=\$?; sig QUIT halt2.rex; echo quit=\$?"
  
 +# --- RexxAPI daemon shared between processes
 +cat > "$T/parent.rex" <<'EOF'

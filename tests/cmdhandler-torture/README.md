@@ -70,3 +70,11 @@ USER, HALT and NOTREADY raised in a handler reach the caller as themselves;
 an environment name of 1,000 characters is SYNTAX 29.1; dropping the
 output stem inside the handler leaves the caller's new stem untouched by the
 redirection (the interpreter keeps writing to the stem it had).
+
+Under Node (`build-wasm/bin-node/rexx`), `t07` runs as natively: the runtime
+turns SIGINT into a HALT (`wasm/node-pre.js`).  Natively and under Node
+alike, ooRexx loses a few per cent of the SIGINTs: those that arrive while a
+Rexx frame is finishing (here the short `getVar` / `setVar` methods); a
+finding sent upstream, not in a revision yet.  The case then runs its loop of
+100,000,000 `getVar` / `setVar` calls to the end, which under WASM looks like
+a hang (TIMEOUT); a second SIGINT to the process ends that loop.
