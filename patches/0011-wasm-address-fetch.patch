@@ -248,12 +248,12 @@ index 0000000..01451f3
 +
 +::requires "fetch.cls"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 14f9a9d..a4deb87 100755
+index aac9878..4442d1b 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -417,6 +417,13 @@ check "a logic error ends the process with a non-zero status" '^Logic error: can
- check "command handlers in Rexx (cmdhandler.cls)" '^[0-9]+ passed, 0 failed$' '!^FAIL ' -- \
-   "$X '$(cd "$(dirname "$0")" && pwd)/cmdhandler.rex'"
+@@ -421,6 +421,13 @@ check "command handlers in Rexx: a HALT is given back as a HALT" '^9 passed, 0 f
+ check "command handlers in Rexx: nested and recursive commands" '^10 passed, 0 failed$' '!^FAIL ' -- \
+   "$X '$(cd "$(dirname "$0")/../../extensions/cmdhandler/tests" && pwd)/nested.rex'"
  
 +# --- ADDRESS FETCH (wasm/web/fetch.cls over cmdhandler.cls and js.cls), portable test
 +"$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
@@ -266,7 +266,7 @@ index 14f9a9d..a4deb87 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 8f8a585..f33cd35 100755
+index 54fa8e4..52d0a9e 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -67,6 +67,9 @@ class H(SimpleHTTPRequestHandler):
@@ -279,7 +279,7 @@ index 8f8a585..f33cd35 100755
  time.sleep(0.7)
  
  CASES = [
-@@ -243,6 +246,9 @@ CASES = [
+@@ -247,6 +250,9 @@ CASES = [
                         '\'transform r\'; say rc; \'font f NoSuchFontAtAll\'; say rc; \'saveImage /nonexistent/dir/x.png\'; say rc\n'
                         '\'shape r rect 1 2 3 4\'; sh = rc; \'shapeBounds sh\'; say rc\n::requires "jdor.cls"', {},
       lambda r: r["out"] == "0.0 0.0 50.0 100.0\n1\n10 10 20 20\n1\n0\n-102\n-13\n-16\n1.0 2.0 3.0 4.0\n"),

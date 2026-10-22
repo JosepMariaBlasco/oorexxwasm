@@ -25,7 +25,7 @@ function, is SYNTAX 93.900.
   start({commandEnvironments: {NAME: fn}}), which stops the session if one
   fails.
 - wasm/build-node.sh, wasm/build-web.sh: jscommands.cls next to js.cls.
-- Tests: wasm/tests/js-commands.rex (41 checks, Node and the worker's
+- Tests: wasm/tests/js-commands.rex (47 checks, Node and the worker's
   realm; in qualify-node-cli.sh and web-api.py), web-api.py "js commands
   page" (a function of the page) and "session commands".
 Not part of the posted RFE (it needs cmdhandler).
@@ -33,13 +33,13 @@ Not part of the posted RFE (it needs cmdhandler).
  wasm/README.md                 |  12 ++
  wasm/build-node.sh             |   1 +
  wasm/build-web.sh              |   1 +
- wasm/tests/js-commands.rex     | 204 +++++++++++++++++++++++++++++++++
+ wasm/tests/js-commands.rex     | 244 +++++++++++++++++++++++++++++++++
  wasm/tests/qualify-node-cli.sh |   6 +
- wasm/tests/web-api.py          |  44 +++++++
- wasm/web/js.cls                |  29 +++++
- wasm/web/jscommands.cls        | 158 +++++++++++++++++++++++++
- wasm/web/ooRexx.js             |  30 ++++-
- 9 files changed, 479 insertions(+), 6 deletions(-)
+ wasm/tests/web-api.py          |  44 ++++++
+ wasm/web/js.cls                |  29 ++++
+ wasm/web/jscommands.cls        | 158 +++++++++++++++++++++
+ wasm/web/ooRexx.js             |  30 +++-
+ 9 files changed, 519 insertions(+), 6 deletions(-)
  create mode 100644 wasm/tests/js-commands.rex
  create mode 100644 wasm/web/jscommands.cls
 
@@ -92,10 +92,10 @@ index be073fb..e29ada0 100755
            "--preload-file" "$SRC/wasm/web/dom.cls@/usr/lib/ooRexx/dom.cls"
 diff --git a/wasm/tests/js-commands.rex b/wasm/tests/js-commands.rex
 new file mode 100644
-index 0000000..aaeb604
+index 0000000..865dc4d
 --- /dev/null
 +++ b/wasm/tests/js-commands.rex
-@@ -0,0 +1,204 @@
+@@ -0,0 +1,244 @@
 +/*----------------------------------------------------------------------------*/
 +/* Command environments written in JavaScript (.js~addCommandEnvironment,    */
 +/* jscommands.cls on cmdhandler.cls), in the realm of .js: the worker's in   */
@@ -127,6 +127,8 @@ index 0000000..aaeb604
 +  "case 'error': return ctx.raiseError(5);" -
 +  "case 'failure': return ctx.raiseFailure(-2);" -
 +  "case 'raiseuser': return ctx.raise('USER MINE', 4, 'from JavaScript');" -
++  "case 'halt': globalThis.thing.halts(); return 0;" -
++  "case 'raisehalt': return ctx.raise('HALT', 5);" -
 +  "case 'twice': ctx.raiseError(1); return ctx.raiseError(2);" -
 +  "case 'throw': throw new TypeError('from the handler');" -
 +  "case 'reject': return Promise.reject(new RangeError('rejected'));" -
@@ -191,6 +193,14 @@ index 0000000..aaeb604
 +opts = .Routine~new("opts", .array~of('signal on user mine name got', 'address calc "raiseuser"', -
 +  'return "no trap, rc" rc', 'got: return condition("C") "rc" rc', '::options error syntax'))
 +call check "ctx.raise under ::OPTIONS ERROR SYNTAX: still USER MINE", opts~call == "USER MINE rc 4"
++-- a HALT out of a JavaScript handler is a HALT for the code that issued the
++-- command (rule 1): one the Rexx code it called did not trap, and ctx.raise
++.js~globalThis["thing"] = .Thing~new
++do cmd over .array~of("halt", "raisehalt")
++  call check cmd": SIGNAL ON HALT traps it", haltSignalOn(cmd) == "HALT"
++  call check cmd": CALL ON HALT after the next clause", haltCallOn(cmd) == "HALT rc" (cmd == "raisehalt")~?(5, 0)
++  call check cmd": untrapped, SYNTAX 4.1", haltUntrapped(cmd) == "SYNTAX 4.1"
++end
 +
 +signal on syntax name s1
 +"throw"
@@ -270,6 +280,31 @@ index 0000000..aaeb604
 +  .local~userRc = rc
 +  return
 +
++haltSignalOn: procedure
++  use arg cmd
++  signal on halt name hs; signal on syntax name hx
++  address calc cmd
++  return "nothing"
++hs: return "HALT"
++hx: return "SYNTAX" condition("O")~code
++
++haltCallOn: procedure               -- CALL ON HALT runs after the next clause
++  use arg cmd
++  .local~halted = ""
++  call on halt name hc; signal on syntax name hy
++  address calc cmd
++  nop
++  return .local~halted "rc" rc
++hc: .local~halted = "HALT"; return
++hy: return "SYNTAX" condition("O")~code
++
++haltUntrapped: procedure
++  use arg cmd
++  signal on syntax name hz
++  address calc cmd
++  return "nothing"
++hz: return "SYNTAX" condition("O")~code
++
 +F: procedure                        -- F(params, body): a JavaScript function
 +  return .fn~call(.nil, arg(1), arg(2))
 +
@@ -292,6 +327,8 @@ index 0000000..aaeb604
 +::requires "cmdhandler.cls"
 +
 +::class Thing
++::method halts                      -- a HALT in a routine: it does not reach the issuer's traps
++  call haltsHere
 +::method user
 +  raise user mine description "the description" additional ("one", "two") return 7
 +
@@ -300,17 +337,20 @@ index 0000000..aaeb604
 +  use arg command
 +  if command == "raise" then raise user mine description "the description" additional ("one", "two") return 7
 +  return .Thing~new~user
++
++::routine haltsHere
++  raise halt
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index a4deb87..e737875 100755
+index 4442d1b..d872fe4 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -417,6 +417,12 @@ check "a logic error ends the process with a non-zero status" '^Logic error: can
- check "command handlers in Rexx (cmdhandler.cls)" '^[0-9]+ passed, 0 failed$' '!^FAIL ' -- \
-   "$X '$(cd "$(dirname "$0")" && pwd)/cmdhandler.rex'"
+@@ -421,6 +421,12 @@ check "command handlers in Rexx: a HALT is given back as a HALT" '^9 passed, 0 f
+ check "command handlers in Rexx: nested and recursive commands" '^10 passed, 0 failed$' '!^FAIL ' -- \
+   "$X '$(cd "$(dirname "$0")/../../extensions/cmdhandler/tests" && pwd)/nested.rex'"
  
 +# --- command environments written in JavaScript (.js~addCommandEnvironment,
 +# wasm/web/jscommands.cls over cmdhandler.cls), portable test
-+check "command handlers in JavaScript (jscommands.cls)" '^41 passed, 0 failed$' '!^FAIL ' \
++check "command handlers in JavaScript (jscommands.cls)" '^47 passed, 0 failed$' '!^FAIL ' \
 +  '^to the console, from JavaScript$' '^to the error stream, from JavaScript$' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-commands.rex'"
 +
@@ -318,7 +358,7 @@ index a4deb87..e737875 100755
  "$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
  FETCH_SRV=$!; sleep 0.5
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 4915777..479763e 100755
+index 4870525..ddcdf17 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -99,6 +99,28 @@ CASES = [
@@ -327,7 +367,7 @@ index 4915777..479763e 100755
       {}, lambda r: r["out"] == "1\n"),
 +  # command environments written in JavaScript (jscommands.cls), in the worker's realm: the portable test
 +  ("js commands", open(f"{SRC}/wasm/tests/js-commands.rex").read(), {"js": {"worker": True}},
-+     lambda r: "41 passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
++     lambda r: "47 passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
 +  # ... and a function of the page: its ctx calls give Promises
 +  ("js commands page", 'f = .js~page~Function~new("c", "ctx", "return ctx.getVar(\'X\').then((x) => \' \' + c + \' \' + x * 2)")\n'
 +                       '.js~addCommandEnvironment("P", f); x = 21; address p "go"; say "["rc"]"\n'
@@ -350,7 +390,7 @@ index 4915777..479763e 100755
    # command environments written in Rexx (extensions/cmdhandler): the portable test
    ("cmdhandler", open(f"{SRC}/wasm/tests/cmdhandler.rex").read(), {},
       lambda r: " passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
-@@ -423,6 +445,28 @@ JS_CASES = [
+@@ -427,6 +449,28 @@ JS_CASES = [
      return { r, out: out.join(''), stopped: d.stopped };
    ''', lambda v: v["r"][:9] == ['3', '42', 'undefined', '42', '150', '7', '16', 'RexxError true', 'syntax true']
         and v["r"][9] == '1,2,3,4' and v["out"] == "hi\n" and v["stopped"]),

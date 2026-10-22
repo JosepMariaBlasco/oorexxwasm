@@ -28,24 +28,33 @@ bin / bin-node / bin-web.  Tests: wasm/tests/cmdhandler.rex (65 checks, also
 in qualify-node-cli.sh and web-api.py); extensions/cmdhandler/tests/
 instances.cpp (two instances in one process, native).  Portable, not part
 of the posted RFE.
+A HALT that leaves a handler untrapped (SYNTAX 4.1 out of COMMAND), and
+raise("HALT"), are a HALT for the code that issued the command, raised
+with HaltThread (an untrapped HALT from RaiseCondition is ignored).
+extensions/cmdhandler/tests/halt.rex (9 checks) and nested.rex (10:
+nested and recursive commands), also in qualify-node-cli.sh and web-api.py.
 ---
  CMakeLists.txt                            |  24 +-
- extensions/cmdhandler/cmdhandler.cls      | 424 +++++++++++++++++++++
- extensions/cmdhandler/cmdhandler.cpp      | 433 ++++++++++++++++++++++
+ extensions/cmdhandler/cmdhandler.cls      | 424 ++++++++++++++++++++
+ extensions/cmdhandler/cmdhandler.cpp      | 450 ++++++++++++++++++++++
  extensions/cmdhandler/tests/ask.rex       |   2 +
- extensions/cmdhandler/tests/instances.cpp |  42 +++
+ extensions/cmdhandler/tests/halt.rex      |  66 ++++
+ extensions/cmdhandler/tests/instances.cpp |  42 ++
+ extensions/cmdhandler/tests/nested.rex    | 181 +++++++++
  extensions/cmdhandler/tests/reg.rex       |  13 +
  interpreter/package/PackageManager.cpp    |   2 +
  wasm/build-node.sh                        |   2 +-
  wasm/build-web.sh                         |   2 +-
- wasm/tests/cmdhandler.rex                 | 418 +++++++++++++++++++++
- wasm/tests/qualify-node-cli.sh            |   4 +
- wasm/tests/web-api.py                     |   3 +
- 12 files changed, 1366 insertions(+), 3 deletions(-)
+ wasm/tests/cmdhandler.rex                 | 418 ++++++++++++++++++++
+ wasm/tests/qualify-node-cli.sh            |   8 +
+ wasm/tests/web-api.py                     |   7 +
+ 14 files changed, 1638 insertions(+), 3 deletions(-)
  create mode 100644 extensions/cmdhandler/cmdhandler.cls
  create mode 100644 extensions/cmdhandler/cmdhandler.cpp
  create mode 100644 extensions/cmdhandler/tests/ask.rex
+ create mode 100644 extensions/cmdhandler/tests/halt.rex
  create mode 100644 extensions/cmdhandler/tests/instances.cpp
+ create mode 100644 extensions/cmdhandler/tests/nested.rex
  create mode 100644 extensions/cmdhandler/tests/reg.rex
  create mode 100644 wasm/tests/cmdhandler.rex
 
@@ -558,10 +567,10 @@ index 0000000..6fb8f45
 +  self~flush
 diff --git a/extensions/cmdhandler/cmdhandler.cpp b/extensions/cmdhandler/cmdhandler.cpp
 new file mode 100644
-index 0000000..074fb2c
+index 0000000..6af1b9d
 --- /dev/null
 +++ b/extensions/cmdhandler/cmdhandler.cpp
-@@ -0,0 +1,433 @@
+@@ -0,0 +1,450 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -692,6 +701,17 @@ index 0000000..074fb2c
 +    state->valid = false;               // the context is dead from now on
 +    if (c->CheckCondition())
 +    {
++        // a HALT nobody trapped in the handler arrives as SYNTAX 4.1: in the
++        // caller it is a HALT again, with HaltThread (an untrapped HALT from
++        // RaiseCondition is ignored); the command's RC meanwhile is 0
++        RexxDirectoryObject cond = c->GetConditionInfo();
++        RexxObjectPtr code = cond != NULLOBJECT ? c->DirectoryAt(cond, "CODE") : NULLOBJECT;
++        if (code != NULLOBJECT && strcmp(c->ObjectToStringValue(code), "4.1") == 0)
++        {
++            c->ClearCondition();
++            c->threadContext->HaltThread();
++            return c->WholeNumber(0);
++        }
 +        // a SYNTAX error in the handler: the interpreter raises it in the caller
 +        return NULLOBJECT;
 +    }
@@ -719,6 +739,12 @@ index 0000000..074fb2c
 +        if (additional == c->Nil())
 +        {
 +            additional = NULLOBJECT;
++        }
++        if (strcmp(name, "HALT") == 0)
++        {
++            // HaltThread, as a Ctrl-C: RaiseCondition's untrapped HALT is ignored
++            c->threadContext->HaltThread();
++            return rc;
 +        }
 +        c->RaiseCondition(name, text, additional, rc);
 +        return rc;
@@ -1003,6 +1029,78 @@ index 0000000..3489759
 @@ -0,0 +1,2 @@
 +address t "WHO"
 +return rc
+diff --git a/extensions/cmdhandler/tests/halt.rex b/extensions/cmdhandler/tests/halt.rex
+new file mode 100644
+index 0000000..2741262
+--- /dev/null
++++ b/extensions/cmdhandler/tests/halt.rex
+@@ -0,0 +1,66 @@
++/* halt.rex: tests of cmdhandler.cls, a HALT out of a handler is a HALT for */
++/* the code that issued the command: SIGNAL ON HALT traps it, CALL ON HALT  */
++/* runs its handler after the next clause, and untrapped it ends the        */
++/* program as in plain Rexx (here, SYNTAX 4.1 caught by a SIGNAL ON SYNTAX).*/
++/* Three ways out of the handler: a HALT raised in a routine it calls, a   */
++/* HALT raised in COMMAND itself, and caller~raise("HALT", rc).            */
++/* Prints one line per check and exits 1 if any fails.                      */
++/*   rexx halt.rex                                                          */
++.local~ok = 0; .local~bad = 0
++
++.CommandHandler~register("H", .H~new)
++do cmd over .array~of("HALTROUTINE", "HALT", "RAISEHALT")
++  .local~cmd = cmd
++  call check cmd": SIGNAL ON HALT traps it", signalOn() == "HALT"
++  expected = "HALT rc" (cmd == "RAISEHALT")~?(5, 0)
++  call check cmd": CALL ON HALT runs after the next clause", callOn() == expected
++  call check cmd": untrapped, SYNTAX 4.1", untrapped() == "SYNTAX 4.1"
++end
++
++say .ok "passed," .bad "failed"
++exit .bad > 0
++
++signalOn: procedure
++  signal on halt name h; signal on syntax name s
++  address h .local~cmd
++  nop
++  return "nothing"
++h: return "HALT"
++s: return "SYNTAX" condition("O")~code
++
++callOn: procedure
++  .local~called = ""
++  call on halt name ch; signal on syntax name s4
++  address h .local~cmd
++  nop
++  return .local~called "rc" rc
++ch: .local~called = "HALT"; return
++s4: return "SYNTAX" condition("O")~code
++
++untrapped: procedure
++  signal on syntax name s3
++  address h .local~cmd
++  nop
++  return "nothing"
++s3: return "SYNTAX" condition("O")~code
++
++check: procedure
++  use arg name, ok
++  if ok then do; .local~ok += 1; say "ok   " name; end
++  else do; .local~bad += 1; say "FAIL " name; end
++  return
++
++::requires "cmdhandler.cls"
++
++::class H inherit CommandHandler
++::method command
++  use arg command, caller
++  select case command
++    when "HALTROUTINE" then call halts
++    when "RAISEHALT" then return caller~raise("HALT", 5)
++    when "HALT" then raise halt
++  end
++  return 0
++
++::routine halts
++  raise halt
 diff --git a/extensions/cmdhandler/tests/instances.cpp b/extensions/cmdhandler/tests/instances.cpp
 new file mode 100644
 index 0000000..6596dc4
@@ -1051,6 +1149,193 @@ index 0000000..6596dc4
 +    printf("%s\n", bad ? "FAILED" : "all ok");
 +    return bad != 0;
 +}
+diff --git a/extensions/cmdhandler/tests/nested.rex b/extensions/cmdhandler/tests/nested.rex
+new file mode 100644
+index 0000000..6bdad75
+--- /dev/null
++++ b/extensions/cmdhandler/tests/nested.rex
+@@ -0,0 +1,181 @@
++/* nested.rex: tests of cmdhandler.cls, commands issued from inside a       */
++/* handler: to another environment, to its own (recursion), nested          */
++/* redirection, unbounded recursion, a handler that deregisters itself, and */
++/* nested commands from several threads at once.  The contract tested:      */
++/* a handler can send commands to any environment, its own included, and    */
++/* each command gets its own context, valid while that command runs; the    */
++/* "caller" of a nested command is the handler's method that sent it.       */
++/* Prints one line per check and exits 1 if any fails.                      */
++/*   rexx nested.rex                                                        */
++signal on syntax name unexpected
++.local~ok = 0; .local~bad = 0
++
++.CommandHandler~register("A", .A~new)
++.CommandHandler~register("B", .B~new)
++
++-- to another environment
++address a "FWD hello"
++call check "a handler sends a command to another environment", rc == 0 & seen == "B got hello from B"
++
++-- to its own environment, 5 levels deep; each level uses its own caller's variables
++depth = 0
++address a "SELF 5"
++call check "recursion: each level's caller is the method that sent it", rc == 0 & depth == 5
++
++-- nested redirection
++address a "REDIR" with output stem out.
++call check "nested redirection: the inner command has its own", rc == 0 & out.0 == 1 & out.1 == "outer got inner"
++
++-- the outer context after the inner command
++address a "AFTER"
++call check "the outer context is still valid after an inner command", rc == 0 & after == "1 valid, set after inner"
++
++-- a condition of the inner command, trapped in the handler, raised to the outer caller
++.local~failed = ""
++signal on failure name f5
++address a "CHAIN"
++after5:
++signal off failure
++call check "an inner ERROR trapped in the handler becomes the outer FAILURE", .local~failed == "9 inner ERROR rc 3 turned into FAILURE"
++
++-- unbounded recursion: SYNTAX 11.1, trappable, and the interpreter is fine afterwards
++.local~levels = 0; .local~code = ""
++call loop
++call check "unbounded recursion: SYNTAX 11.1, trappable", .local~code == "11.1" & .local~levels > 100
++address a "SELF 3"
++call check "commands work after the 11.1", rc == 0
++
++-- a handler that deregisters its own environment while it runs
++address a "DEREG"
++call check "a handler deregisters itself: its command ends normally", rc == 42
++address a "FWD x"
++call check "the next command: FAILURE, RC 30", rc == 30
++
++-- nested commands from 4 threads at once, 200 commands 10 levels deep each
++.CommandHandler~register("C", .C~new)
++t = .array~new
++do i = 1 to 4
++  t~append(.Worker~new~start("run"))
++end
++results = ""
++do w over t
++  results ||= w~result" "
++end
++call check "4 threads x 200 nested commands 10 levels deep", results == "2000 2000 2000 2000 "
++
++say .ok "passed," .bad "failed"
++exit .bad > 0
++
++f5:
++  .local~failed = rc condition("D")
++  signal after5
++
++loop: procedure
++  signal on syntax name s6
++  address a "LOOP"
++  return
++s6:
++  .local~code = condition("O")~code
++  return
++
++unexpected:
++  c = condition("O")
++  say "UNEXPECTED SYNTAX" c~code c~message "line" c~position
++  exit 2
++
++check: procedure
++  use arg name, ok
++  if ok then do; .local~ok += 1; say "ok   " name; end
++  else do; .local~bad += 1; say "FAIL " name; end
++  return
++
++::requires "cmdhandler.cls"
++
++::class A inherit CommandHandler
++::method command
++  use arg command, caller
++  parse var command verb rest
++  select case verb
++    when "FWD" then do
++      address b rest
++      caller["seen"] = result_of_b
++      return rc
++    end
++    when "SELF" then do
++      n = rest
++      caller["depth"] = caller["depth"] + 1
++      if n > 1 then do
++        depth = 0                -- this method's own variable: the inner caller's
++        address a "SELF" (n - 1)
++        caller["depth"] = caller["depth"] + depth
++      end
++      return 0
++    end
++    when "REDIR" then do
++      address b "ECHO inner" with output stem mine.
++      caller~output~lineout("outer got" mine.1)
++      return 0
++    end
++    when "AFTER" then do
++      address b "ECHO x" with output stem tmp.
++      caller["after"] = caller~isValid "valid, set after inner"
++      return 0
++    end
++    when "CHAIN" then return self~chain(caller)
++    when "LOOP" then do
++      .local~levels += 1
++      address a "LOOP"
++      return rc
++    end
++    when "DEREG" then do
++      .CommandHandler~deregister("A")
++      return 42
++    end
++    otherwise return -1
++  end
++
++::method chain
++  use arg caller
++  signal on error name e
++  address b "FAIL"
++  return caller~raise("FAILURE", 7, "no error came")
++e: return caller~raise("FAILURE", 9, "inner ERROR rc" rc "turned into FAILURE")
++
++::class B inherit CommandHandler
++::method command
++  use arg command, caller
++  parse var command verb rest
++  select case verb
++    when "FAIL" then return caller~raiseError(3)
++    when "ECHO" then do
++      caller~output~lineout(rest)
++      return 0
++    end
++    otherwise do
++      caller["result_of_b"] = "B got" command "from" caller~environment
++      return 0
++    end
++  end
++
++::class C inherit CommandHandler
++::method command
++  use arg command, caller
++  parse var command verb n
++  caller["depth"] = caller["depth"] + 1
++  if n > 1 then do
++    depth = 0
++    address c "SELF" (n - 1)
++    caller["depth"] = caller["depth"] + depth
++  end
++  return 0
++
++::class Worker
++::method run
++  total = 0
++  do k = 1 to 200
++    depth = 0
++    address c "SELF 10"
++    if rc \= 0 then return "rc" rc
++    total += depth
++  end
++  return total
 diff --git a/extensions/cmdhandler/tests/reg.rex b/extensions/cmdhandler/tests/reg.rex
 new file mode 100644
 index 0000000..68f1845
@@ -1541,31 +1826,39 @@ index 0000000..54ebe1e
 +  address t "RETURN thread ok"
 +  return rc
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 8ed1b07..14f9a9d 100755
+index 8ed1b07..aac9878 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -413,6 +413,10 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
+@@ -413,6 +413,14 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
  check "a logic error ends the process with a non-zero status" '^Logic error: cannot locate startup image' '^status=[1-9]' -- \
    "mkdir noimg && cp '$NB/rexx.js' '$NB/rexx.wasm' noimg/ && cd noimg && PATH=/usr/bin:/bin '$(command -v node)' rexx.js -e 'say 1'; echo status=\$?"
  
 +# --- command environments written in Rexx (extensions/cmdhandler, portable test)
 +check "command handlers in Rexx (cmdhandler.cls)" '^[0-9]+ passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/cmdhandler.rex'"
++check "command handlers in Rexx: a HALT is given back as a HALT" '^9 passed, 0 failed$' '!^FAIL ' -- \
++  "$X '$(cd "$(dirname "$0")/../../extensions/cmdhandler/tests" && pwd)/halt.rex'"
++check "command handlers in Rexx: nested and recursive commands" '^10 passed, 0 failed$' '!^FAIL ' -- \
++  "$X '$(cd "$(dirname "$0")/../../extensions/cmdhandler/tests" && pwd)/nested.rex'"
 +
  echo
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 777d199..8f8a585 100755
+index 777d199..54fa8e4 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
-@@ -96,6 +96,9 @@ CASES = [
+@@ -96,6 +96,13 @@ CASES = [
       lambda r: "[1,2]" in r["out"].replace(" ", "")),
    ("requires rxregexp", 'm = .RegularExpression~new("a+b"); say m~match("aaab")\n::requires "rxregexp.cls"',
       {}, lambda r: r["out"] == "1\n"),
 +  # command environments written in Rexx (extensions/cmdhandler): the portable test
 +  ("cmdhandler", open(f"{SRC}/wasm/tests/cmdhandler.rex").read(), {},
 +     lambda r: " passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
++  ("cmdhandler halt", open(f"{SRC}/extensions/cmdhandler/tests/halt.rex").read(), {},
++     lambda r: "9 passed, 0 failed" in r["out"] and r["rc"] == 0),
++  ("cmdhandler nested", open(f"{SRC}/extensions/cmdhandler/tests/nested.rex").read(), {},
++     lambda r: "10 passed, 0 failed" in r["out"] and r["rc"] == 0),
    ("rexxtry", 'call "/home/rexx/rexxtry.rex"',
       {"files": {"/home/rexx/rexxtry.rex": open(f"{SRC}/samples/rexxtry.rex").read()},
        "inputs": ["say 6*7", "x = 'abc'; say reverse(x)", "exit"]},
