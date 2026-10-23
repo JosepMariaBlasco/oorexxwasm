@@ -139,11 +139,6 @@ of Array, Directory and StringTable are copied too, read by SUPPLIER
   HTTP server answered from Rexx, a Rexx comparator, events taken by
   several threads;
   iteration, options latest and max, release).  Documented in wasm/README.md.
-- ooRexx #2122: IsInstanceOf, a non-blocking API call, asked of a number
-  with no string value yet makes that string without the kernel lock;
-  the conversion of a Rexx value checks the String family first, once
-  (IsString, then IsOfType, which takes the lock), and only asks
-  IsInstanceOf of other objects.
 - A HALT is given back as a HALT: a SYNTAX 4.1 of Rexx (a HALT that the
   Rexx code JavaScript called did not trap) that JavaScript lets through
   is, back in Rexx, HaltThread(), and the call gives .nil (SIGNAL ON HALT
@@ -170,11 +165,11 @@ of Array, Directory and StringTable are copied too, read by SUPPLIER
  wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 1971 ++++++++++++++++++++++++
+ wasm/web-js.cpp                        | 1955 ++++++++++++++++++++++++
  wasm/web/js.cls                        |  750 +++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 +++
- 24 files changed, 6109 insertions(+), 12 deletions(-)
+ 24 files changed, 6093 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -3589,10 +3584,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..faba9be
+index 0000000..bed3d38
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,1971 @@
+@@ -0,0 +1,1955 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -4319,23 +4314,7 @@ index 0000000..faba9be
 +    }
 +}
 +
-+// ooRexx #2122: IsInstanceOf (a non-blocking API call) asked of a number
-+// with no string value yet makes that string without the kernel lock, which
-+// corrupts the heap when other threads run Rexx.  Never ask it of the
-+// String family: IsString only compares the class, IsOfType takes the lock.
-+static bool isStringFamily(RexxThreadContext *c, RexxObjectPtr v)
-+{
-+    return c->IsString(v) || c->IsOfType(v, "STRING");
-+}
-+
-+// v is an instance of cls (a class that is not in the String family)
 +static bool isA(RexxThreadContext *c, RexxObjectPtr v, RexxObjectPtr cls)
-+{
-+    return cls != NULLOBJECT && !isStringFamily(c, v) && c->IsInstanceOf(v, (RexxClassObject)cls);
-+}
-+
-+// the same, for a v known not to be in the String family
-+static bool isAObject(RexxThreadContext *c, RexxObjectPtr v, RexxObjectPtr cls)
 +{
 +    return cls != NULLOBJECT && c->IsInstanceOf(v, (RexxClassObject)cls);
 +}
@@ -4458,31 +4437,17 @@ index 0000000..faba9be
 +    if (v == NULLOBJECT) { putRec(out, 'U', ""); return; }
 +    if (v == c->Nil()) { putRec(out, 'N', ""); return; }
 +    copyClasses(c);
-+    // the String family first, and once: a string, a number (an internal
-+    // integer or number object) or a subclass of String goes as a string;
-+    // IsOfType, not IsInstanceOf (#2122)
-+    if (c->IsString(v))
-+    {
-+        RexxStringObject str = (RexxStringObject)v;
-+        putRec(out, 'S', std::string(c->StringData(str), c->StringLength(str)));
-+        return;
-+    }
-+    if (c->IsOfType(v, "STRING"))
-+    {
-+        putRec(out, 'S', c->ObjectToStringValue(v));
-+        return;
-+    }
-+    if (isAObject(c, v, jsObjectClass))
++    if (isA(c, v, jsObjectClass))
 +    {
 +        putRec(out, 'O', c->ObjectToStringValue(c->SendMessage0(v, "JSREF")));
 +        return;
 +    }
-+    if (isAObject(c, v, jsBooleanClass))                   // a .LogicalWrapper (any subclass): a boolean
++    if (isA(c, v, jsBooleanClass))                         // a .LogicalWrapper (any subclass): a boolean
 +    {
 +        putRec(out, 'B', c->ObjectToStringValue(c->SendMessage0(v, "VALUE")));
 +        return;
 +    }
-+    if (isAObject(c, v, jsHandlerClass))
++    if (isA(c, v, jsHandlerClass))
 +    {
 +        size_t id = 0;
 +        c->ObjectToStringSize(c->SendMessage0(v, "ID"), &id);
@@ -4498,7 +4463,7 @@ index 0000000..faba9be
 +        putRec(out, 'H', std::to_string(id) + "\t" + options);
 +        return;
 +    }
-+    if (isAObject(c, v, jsTypedClass))
++    if (isA(c, v, jsTypedClass))
 +    {
 +        std::string kind = c->ObjectToStringValue(c->SendMessage0(v, "KIND"));
 +        RexxObjectPtr val = c->SendMessage0(v, "VALUE");
@@ -4507,7 +4472,7 @@ index 0000000..faba9be
 +        putRec(out, kind.empty() ? 'U' : kind[0], data);
 +        return;
 +    }
-+    if (c->IsArray(v) || isAObject(c, v, arrayClass))
++    if (c->IsArray(v) || isA(c, v, arrayClass))
 +    {
 +        size_t id;
 +        if (copiedBefore(out, v, depth, memo, &id)) return;
@@ -4568,8 +4533,8 @@ index 0000000..faba9be
 +    }
 +    // a Directory or StringTable, subclasses included: by ALLINDEXES and AT, a
 +    // subclass by SUPPLIER (what it only computes, in UNKNOWN, is not copied)
-+    if (c->IsDirectory(v) || c->IsStringTable(v) || isAObject(c, v, directoryClass) ||
-+        isAObject(c, v, stringTableClass))
++    if (c->IsDirectory(v) || c->IsStringTable(v) || isA(c, v, directoryClass) ||
++        isA(c, v, stringTableClass))
 +    {
 +        size_t id;
 +        if (copiedBefore(out, v, depth, memo, &id)) return;
@@ -4600,6 +4565,20 @@ index 0000000..faba9be
 +            c->ReleaseLocalReference(k);
 +        }
 +        c->ReleaseLocalReference(keys);
++        return;
++    }
++    if (c->IsString(v))
++    {
++        RexxStringObject str = (RexxStringObject)v;
++        putRec(out, 'S', std::string(c->StringData(str), c->StringLength(str)));
++        return;
++    }
++    // a number is a String too (an internal integer or number object)
++    static RexxObjectPtr stringClass = NULLOBJECT;
++    if (stringClass == NULLOBJECT) stringClass = c->RequestGlobalReference(c->FindClass("STRING"));
++    if (c->IsInstanceOf(v, (RexxClassObject)stringClass))
++    {
++        putRec(out, 'S', c->ObjectToStringValue(v));
 +        return;
 +    }
 +    // any other object: a RexxProxy
@@ -4859,7 +4838,7 @@ index 0000000..faba9be
 +        target = c->SendMessage0(handler, "TARGET");
 +        message = c->ObjectToStringValue(c->SendMessage0(handler, "MESSAGE"));
 +    }
-+    if (scope != NULLOBJECT && (isStringFamily(c, scope) || !c->IsInstanceOf(scope, c->FindClass("CLASS"))))
++    if (scope != NULLOBJECT && !c->IsInstanceOf(scope, c->FindClass("CLASS")))
 +    {
 +        putRec(out, 'E', "Error 98.900: sendMessageScope: the scope must be a Rexx class");
 +        putRec(out, 'N', "");
