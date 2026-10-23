@@ -15,6 +15,7 @@ processes	base/keyword/PARSE	external command RC 127
 processes	base/keyword/SIGNAL	command FAILURE
 processes	base/rexxutil/Macrospace	'rexx -e ...' RC 127
 processes	base/rexxutil/SysSearchPath	SysSearchPath('PATH', 'sh'): no shell
+processes	base/rexxutil/SysStemSort	TEST_UNTRAPPED_ERRORS (test/trunk r13285, bug #2120): runs a second rexx, RC 127
 processes	base/runtime.objects/environmentEntries	address '' 'exit': .rs -1
 processes	base/source.file/incorrectCharacters	'rexx ...' RC 127
 processes	base/special.variables/RESULT_RC_SIGL	external rexx RC 127
