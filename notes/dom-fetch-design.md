@@ -6,6 +6,13 @@ series, none of which is part of the RFE. Context: `jsobject-design.md`.
 Model: Rony G. Flatscher's JDOR (an ADDRESS environment over Java2D, part of
 BSF4ooRexx; its web version is patch 0009).*
 
+*Since ooRexx trunk r13288 layer 1 is the interpreter's own
+`.CommandHandler` ([RFE #882](https://sourceforge.net/p/oorexx/feature-requests/882/)):
+the series no longer carries `cmdhandler`, FETCH and DOM are patches 0010
+and 0011, and they run on the core's classes unchanged. What follows about
+`cmdhandler` is how layer 1 was built before; the core's version came from
+it, with registrations that stack.*
+
 ## Why ADDRESS when there is `.JSObject`
 
 `.JSObject` is for people who think in objects and know JavaScript's APIs.

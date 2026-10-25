@@ -1,4 +1,4 @@
--- ADDRESS SQLITE: an ADDRESS environment written in Rexx (cmdhandler.cls)
+-- ADDRESS SQLITE: an ADDRESS environment written in Rexx (.CommandHandler)
 address sqlite
 "CONNECT orders.db"
 "DROP TABLE IF EXISTS orders"

@@ -1,5 +1,5 @@
 #!/bin/sh
-# run.sh REXX [CASE...]: runs the cmdhandler torture cases, each in a process
+# run.sh REXX [CASE...]: runs the command handler torture cases, each in a process
 # of its own, and sums up.  REXX is the command that runs a Rexx program (it
 # may have words: "rexx", "/path/bin-node/rexx", a launcher...).
 #   TORTURE_SCALE    multiplies the counts (default 1; e.g. 0.1 for WASM)
@@ -11,7 +11,7 @@
 REXX=${1:?usage: run.sh REXX [CASE...]}; shift
 D=$(cd "$(dirname "$0")" && pwd)
 T=${TORTURE_TIMEOUT:-900}
-OUT=${TORTURE_OUT:-$(mktemp -d "${TMPDIR:-/tmp}/cmdhandler-torture.XXXXXX")}
+OUT=${TORTURE_OUT:-$(mktemp -d "${TMPDIR:-/tmp}/command-handlers-torture.XXXXXX")}
 mkdir -p "$OUT"
 if [ $# -eq 0 ]; then set -- $(cd "$D" && ls t[0-9]*.rex); fi
 bad=0

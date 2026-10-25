@@ -1,4 +1,4 @@
-/* t08-registration: environments registered, replaced and removed in odd   */
+/* t08-registration: environments registered, covered and removed in odd    */
 /* places and in quantity.                                                   */
 signal on syntax name unexpected
 trace off
@@ -11,10 +11,10 @@ call check "a handler removing itself answers its command", rc == "dropped"
 failed = ""
 address self "AGAIN"
 call check "then the environment is unknown (FAILURE 30)", failed == 30
--- a handler replaces itself, and a command nested inside goes to the new one
+-- a handler covers itself with a new one, and a command nested inside goes to the new one
 .CommandHandler~register("SELF", .Changer~new)
 address self "REPLACE"
-call check "replaced during its own command: the nested command goes to the new one", rc == "new:INNER"
+call check "covered during its own command: the nested command goes to the new one", rc == "new:INNER"
 address self "ANY"
 call check "and so does the next one", rc == "new:ANY"
 
@@ -40,19 +40,24 @@ do i = 1 to many
 end
 call check many "environments removed: FAILURE 30 each", gone == many
 
--- the same name registered again and again (each time the native table entry is replaced)
-h = .Named~new("same")
+-- the same name registered and deregistered again and again, over a handler
+-- it covers each time (registrations stack: a register without its
+-- deregister would keep each one, by design)
+.CommandHandler~register("SAME", .Named~new("same"))
+h = .Named~new("top")
 rss0 = rss()
 do i = 1 to n(200000)
   .CommandHandler~register("SAME", h)
+  .CommandHandler~deregister("SAME")
   if i = n(20000) then rss0 = rss()
 end
 rss1 = rss()
 address same "WHO"
-call check n(200000) "registrations of the same name", rc == "same"
+call check n(200000) "registrations of the same name, each deregistered: the covered one answers", rc == "same"
+call check "  and it is the only one", .CommandHandler~handlers("SAME")~items == 1
 if rss0 \== "" then do
   call note "RSS (KB):" rss0 "->" rss1
-  call check "re-registering does not keep growing", rss1 - rss0 < 16384
+  call check "registering and deregistering does not keep growing", rss1 - rss0 < 16384
 end
 
 -- names: case, length, odd characters

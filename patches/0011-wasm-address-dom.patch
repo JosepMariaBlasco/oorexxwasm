@@ -3,8 +3,9 @@ From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
 Date: Wed, 7 Oct 2026 18:46:16 +0200
 Subject: [PATCH] wasm: ADDRESS DOM, the page from classic Rexx (browser)
 
-wasm/web/dom.cls, written in Rexx over cmdhandler.cls and js.cls (the page
-realm): .CommandHandler~register("DOM", ...).  A root (the run option
+wasm/web/dom.cls, written in Rexx over the interpreter's .CommandHandler
+(RFE #882, trunk r13288) and js.cls (the page realm):
+.CommandHandler~register("DOM", ...).  A root (the run option
 dom: {root} of ooRexx.js, the page's body by default; NEW makes a floating
 panel in a Shadow DOM and makes it the root; ROOT PAGE | ref), a current
 element as in XEDIT (LOCATE, UP, TOP; CREATE, FIELD, BUTTON, TABLE and LIST
@@ -25,18 +26,18 @@ part of the posted RFE.
  wasm/tests/dom.rex      |  259 ++++++++++
  wasm/tests/web-api.html |    2 +-
  wasm/tests/web-api.py   |   11 +
- wasm/web/dom.cls        | 1047 +++++++++++++++++++++++++++++++++++++++
+ wasm/web/dom.cls        | 1046 +++++++++++++++++++++++++++++++++++++++
  wasm/web/ooRexx.js      |   14 +-
- 6 files changed, 1334 insertions(+), 3 deletions(-)
+ 6 files changed, 1333 insertions(+), 3 deletions(-)
  create mode 100644 wasm/tests/dom.rex
  create mode 100644 wasm/web/dom.cls
 
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index 7f9fb76..be073fb 100755
+index fe3dea4..82fd5f5 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
 @@ -77,10 +77,12 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
-            csvStream/csvStream.cls dateparser/dateparser.cls cmdhandler/cmdhandler.cls; do
+            csvStream/csvStream.cls dateparser/dateparser.cls; do
    PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
  done
 -# JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
@@ -328,14 +329,14 @@ index cb5c6fa..f56ea5d 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); }, onJdor,
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 52d0a9e..4870525 100755
+index 10de658..cdd822d 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
-@@ -253,6 +253,17 @@ CASES = [
-   # ADDRESS FETCH (wasm/web/fetch.cls over cmdhandler.cls and js.cls): the portable test
+@@ -246,6 +246,17 @@ CASES = [
+   # ADDRESS FETCH (wasm/web/fetch.cls over .CommandHandler and js.cls): the portable test
    ("fetch", open(f"{SRC}/wasm/tests/fetch.rex").read(), {"js": {"worker": True}, "args": ["http://127.0.0.1:8124"]},
       lambda r: "44 passed, 0 failed" in r["out"] and r["rc"] == 0),
-+  # ADDRESS DOM (wasm/web/dom.cls over cmdhandler.cls and js.cls): the portable test
++  # ADDRESS DOM (wasm/web/dom.cls over .CommandHandler and js.cls): the portable test
 +  ("dom", open(f"{SRC}/wasm/tests/dom.rex").read(), {"js": {"page": True}, "dom": {"root": None}},
 +     lambda r: "76 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  ("dom no page", 'call on failure name f; address dom "TEXT x"; say rc; exit; f: return\n::requires "dom.cls"', {},
@@ -351,10 +352,10 @@ index 52d0a9e..4870525 100755
       lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
 diff --git a/wasm/web/dom.cls b/wasm/web/dom.cls
 new file mode 100644
-index 0000000..3119ca4
+index 0000000..e2a94d4
 --- /dev/null
 +++ b/wasm/web/dom.cls
-@@ -0,0 +1,1047 @@
+@@ -0,0 +1,1046 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -367,8 +368,8 @@ index 0000000..3119ca4
 +/*----------------------------------------------------------------------------*/
 +/*
 + * dom.cls: ADDRESS DOM, the page (HTML) from classic Rexx (ooRexx/WASM in the
-+ * browser).  Written in Rexx on top of cmdhandler.cls (a command environment
-+ * written in Rexx) and js.cls (the page's DOM as .JSObjects); commands are
++ * browser).  Written in Rexx on top of the interpreter's .CommandHandler (a
++ * command environment written in Rexx) and js.cls (the page's DOM as .JSObjects); commands are
 + * split by commandwords.cls, as FETCH's.
 + *
 + *    ::requires "dom.cls"
@@ -498,7 +499,6 @@ index 0000000..3119ca4
 + */
 +.CommandHandler~register("DOM", .DomHandler~new)
 +
-+::requires "cmdhandler.cls"
 +::requires "commandwords.cls"
 +::requires "js.cls"
 +

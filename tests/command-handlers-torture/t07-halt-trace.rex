@@ -27,7 +27,7 @@ else do
 end
 
 -- TRACE in the caller and in the handler, to a file
-f = .File~temporaryPath || "/cmdhandler-torture-trace-" || SysQueryProcess("PID") || ".txt"
+f = .File~temporaryPath || "/command-handlers-torture-trace-" || SysQueryProcess("PID") || ".txt"
 fs = .stream~new(f); fs~open("write replace")
 previous = .traceOutput~destination(fs)
 in.0 = 2; in.1 = "a"; in.2 = "b"

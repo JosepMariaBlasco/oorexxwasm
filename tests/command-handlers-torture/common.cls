@@ -1,4 +1,4 @@
-/* common.cls: what the cmdhandler torture cases share.                       */
+/* common.cls: what the command handler torture cases share.                 */
 /*                                                                            */
 /* check(name, condition) prints "ok  " or "FAIL" and counts; finish()        */
 /* prints the totals and returns the exit status (1 when something failed).   */
@@ -8,8 +8,6 @@
 
 .local~tortureOk = 0
 .local~tortureBad = 0
-
-::requires "cmdhandler.cls"
 
 ::routine scale public
   s = value("TORTURE_SCALE", , "ENVIRONMENT")

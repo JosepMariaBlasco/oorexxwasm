@@ -35,7 +35,7 @@ outArr = .array~new
 address r "COPY" with input using (arr) output using (outArr)
 call check "INPUT / OUTPUT USING arrays", outArr~items == k & outArr[k] == k
 
-f = .File~temporaryPath || "/cmdhandler-torture-" || SysQueryProcess("PID") || ".txt"
+f = .File~temporaryPath || "/command-handlers-torture-" || SysQueryProcess("PID") || ".txt"
 fs = .stream~new(f); fs~open("write replace")
 address r "COPY" with input stem in. output using (fs)
 fs~close

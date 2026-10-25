@@ -1,8 +1,11 @@
-# cmdhandler torture tests
+# Command handler torture tests
 
-`wasm/tests/cmdhandler.rex` (in the patched ooRexx tree) checks that each
-part of cmdhandler — command environments written in Rexx, patch 0010 —
-does what it says, once.  These cases check that it *holds*: volume,
+`CommandHandler.testGroup` (ooRexx's test suite, test/trunk r13291) checks
+that each part of the interpreter's command environments written in Rexx
+(`.CommandHandler`, RFE #882, ooRexx trunk r13288) does what it says, once.
+These cases were written for `cmdhandler`, the series' own version of the
+same mechanism until r13288 (patch 0010 then), and now run against the
+interpreter's.  These cases check that it *holds*: volume,
 concurrency, reentrancy, chained errors, misuse, interruptions.  Each case is
 a program of its own, run in a process of its own, with assertions; it exits
 0 when everything held.
@@ -32,7 +35,7 @@ pointers itself, and `-fsanitize=vptr` cannot be used with it).
 | `t05-errors` | SYNTAX after every kind of context call, 2,000 times each; SYNTAX from 1 to 10 levels down; trapped inside the handler with the context still in use; ERROR / FAILURE with CALL ON and SIGNAL ON; USER, HALT, NOTREADY raised in a handler; SYNTAX halfway through the output |
 | `t06-context` | every method of a context whose command ended; 100,000 dead contexts kept; a handler that REPLYs and goes on using the context (10,000 calls); the context used from another thread while its command waits; odd RC values; ERROR asked for and then a SYNTAX |
 | `t07-halt-trace` | SIGINT to the process while a handler runs, 20 times (where there are signals); TRACE I in the caller and TRACE R in the handler, into a file |
-| `t08-registration` | a handler removing or replacing itself during its own command; 10,000 environments added and removed; the same name registered 200,000 times; names in mixed case, 100, 250 and 1,000 characters long, with a blank |
+| `t08-registration` | a handler removing itself, or covering itself with a new one, during its own command; 10,000 environments added and removed; the same name registered and deregistered 200,000 times over a handler it covers; names in mixed case, 100, 250 and 1,000 characters long, with a blank |
 
 What they found, with the fix for each:
 
@@ -61,8 +64,9 @@ What they found, with the fix for each:
 - cmdhandler let a `.CommandContext` be used from another thread: a method
   that REPLYs and goes on, or a thread the handler hands it to, used the
   command's exit context from the wrong activity, racing with the end of
-  the command (`t06`: hangs).  Fixed in patch 0010: such calls raise SYNTAX
-  98.900, as calls on a context whose command ended do.
+  the command (`t06`: hangs).  Fixed in cmdhandler (patch 0010 then), and
+  so in the interpreter's version: such calls raise SYNTAX 98.900, as calls
+  on a context whose command ended do.
 
 Facts found on the way (expected, no change): an untrapped HALT in a
 handler reaches the caller as SYNTAX 4.1 (it is untrapped in the method);

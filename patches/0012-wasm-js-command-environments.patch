@@ -33,13 +33,13 @@ Not part of the posted RFE (it needs cmdhandler).
  wasm/README.md                 |  12 ++
  wasm/build-node.sh             |   1 +
  wasm/build-web.sh              |   1 +
- wasm/tests/js-commands.rex     | 244 +++++++++++++++++++++++++++++++++
+ wasm/tests/js-commands.rex     | 243 +++++++++++++++++++++++++++++++++
  wasm/tests/qualify-node-cli.sh |   6 +
  wasm/tests/web-api.py          |  44 ++++++
  wasm/web/js.cls                |  29 ++++
- wasm/web/jscommands.cls        | 158 +++++++++++++++++++++
+ wasm/web/jscommands.cls        | 157 +++++++++++++++++++++
  wasm/web/ooRexx.js             |  30 +++-
- 9 files changed, 519 insertions(+), 6 deletions(-)
+ 9 files changed, 517 insertions(+), 6 deletions(-)
  create mode 100644 wasm/tests/js-commands.rex
  create mode 100644 wasm/web/jscommands.cls
 
@@ -67,19 +67,19 @@ index e2460df..eeb1fa5 100644
    are native, so errors point at the caller's line); each operation is
    passed synchronously to the main runtime thread, where `js-bridge.js` (a
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index 3e4113a..d725d9a 100755
+index 035e678..34dbab2 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
 @@ -84,6 +84,7 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
    cp "$SRC/extensions/$cls" "$OUT/"
  done
  cp "$SRC/wasm/web/js.cls" "$SRC/wasm/web/commandwords.cls" "$SRC/wasm/web/fetch.cls" "$OUT/"
-+cp "$SRC/wasm/web/jscommands.cls" "$OUT/"      # command environments in JavaScript (on cmdhandler.cls)
++cp "$SRC/wasm/web/jscommands.cls" "$OUT/"      # command environments in JavaScript (.JSCommandHandler)
  
  launcher() {   # launcher NAME [rexx.js option]
    cat > "$OUT/$1" <<SH
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index be073fb..e29ada0 100755
+index 82fd5f5..fa4e496 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
 @@ -80,6 +80,7 @@ done
@@ -92,10 +92,10 @@ index be073fb..e29ada0 100755
            "--preload-file" "$SRC/wasm/web/dom.cls@/usr/lib/ooRexx/dom.cls"
 diff --git a/wasm/tests/js-commands.rex b/wasm/tests/js-commands.rex
 new file mode 100644
-index 0000000..865dc4d
+index 0000000..2020519
 --- /dev/null
 +++ b/wasm/tests/js-commands.rex
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,243 @@
 +/*----------------------------------------------------------------------------*/
 +/* Command environments written in JavaScript (.js~addCommandEnvironment,    */
 +/* jscommands.cls on cmdhandler.cls), in the realm of .js: the worker's in   */
@@ -324,7 +324,6 @@ index 0000000..865dc4d
 +  return
 +
 +::requires "js.cls"
-+::requires "cmdhandler.cls"
 +
 +::class Thing
 +::method halts                      -- a HALT in a routine: it does not reach the issuer's traps
@@ -341,24 +340,24 @@ index 0000000..865dc4d
 +::routine haltsHere
 +  raise halt
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 78e615b..a09d280 100755
+index dc90d16..3b8c70f 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -449,6 +449,12 @@ check "command handlers in Rexx: a HALT is given back as a HALT" '^9 passed, 0 f
- check "command handlers in Rexx: nested and recursive commands" '^10 passed, 0 failed$' '!^FAIL ' -- \
-   "$X '$(cd "$(dirname "$0")/../../extensions/cmdhandler/tests" && pwd)/nested.rex'"
+@@ -441,6 +441,12 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
+ check "a logic error ends the process with a non-zero status" '^Logic error: cannot locate startup image' '^status=[1-9]' -- \
+   "mkdir noimg && cp '$NB/rexx.js' '$NB/rexx.wasm' noimg/ && cd noimg && PATH=/usr/bin:/bin '$(command -v node)' rexx.js -e 'say 1'; echo status=\$?"
  
 +# --- command environments written in JavaScript (.js~addCommandEnvironment,
-+# wasm/web/jscommands.cls over cmdhandler.cls), portable test
++# wasm/web/jscommands.cls, .JSCommandHandler), portable test
 +check "command handlers in JavaScript (jscommands.cls)" '^47 passed, 0 failed$' '!^FAIL ' \
 +  '^to the console, from JavaScript$' '^to the error stream, from JavaScript$' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-commands.rex'"
 +
- # --- ADDRESS FETCH (wasm/web/fetch.cls over cmdhandler.cls and js.cls), portable test
+ # --- ADDRESS FETCH (wasm/web/fetch.cls over .CommandHandler and js.cls), portable test
  "$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
  FETCH_SRV=$!; sleep 0.5
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 4870525..ddcdf17 100755
+index cdd822d..841e7db 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -99,6 +99,28 @@ CASES = [
@@ -387,10 +386,10 @@ index 4870525..ddcdf17 100755
 +                       'e1: say condition("C") rc; return\n'
 +                       '::requires "js.cls"', {"js": {"page": True}},
 +     lambda r: r["out"] == "[ go 42]\n1\n98.900 in the page\n93.900 1\nERROR 5\nnegative -3\n"),
-   # command environments written in Rexx (extensions/cmdhandler): the portable test
-   ("cmdhandler", open(f"{SRC}/wasm/tests/cmdhandler.rex").read(), {},
-      lambda r: " passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
-@@ -427,6 +449,28 @@ JS_CASES = [
+   ("rexxtry", 'call "/home/rexx/rexxtry.rex"',
+      {"files": {"/home/rexx/rexxtry.rex": open(f"{SRC}/samples/rexxtry.rex").read()},
+       "inputs": ["say 6*7", "x = 'abc'; say reverse(x)", "exit"]},
+@@ -420,6 +442,28 @@ JS_CASES = [
      return { r, out: out.join(''), stopped: d.stopped };
    ''', lambda v: v["r"][:9] == ['3', '42', 'undefined', '42', '150', '7', '16', 'RexxError true', 'syntax true']
         and v["r"][9] == '1,2,3,4' and v["out"] == "hi\n" and v["stopped"]),
@@ -482,10 +481,10 @@ index 9e602ed..137ec54 100644
    if source~isA(.String) then return source~makeArray
 diff --git a/wasm/web/jscommands.cls b/wasm/web/jscommands.cls
 new file mode 100644
-index 0000000..3c1ab12
+index 0000000..0e274d6
 --- /dev/null
 +++ b/wasm/web/jscommands.cls
-@@ -0,0 +1,158 @@
+@@ -0,0 +1,157 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -523,7 +522,6 @@ index 0000000..3c1ab12
 + * RexxError) is raised there as itself.
 + */
 +
-+::requires "cmdhandler.cls"
 +::requires "js.cls"
 +
 +

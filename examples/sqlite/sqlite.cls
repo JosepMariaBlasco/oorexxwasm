@@ -1,6 +1,7 @@
 /*
  * sqlite.cls: ADDRESS SQLITE, a command environment written in Rexx over
- * the sqlite3 command-line program (an example for cmdhandler.cls).
+ * the sqlite3 command-line program (an example of a command handler written
+ * in Rexx: the interpreter's .CommandHandler, RFE #882).
  *
  *    address sqlite
  *    "CONNECT orders.db"
@@ -24,7 +25,6 @@
  */
 .CommandHandler~register("SQLITE", .SqliteHandler~new)
 
-::requires "cmdhandler.cls"
 
 ::class SqliteHandler subclass CommandHandler
 

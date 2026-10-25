@@ -4,8 +4,9 @@ Date: Wed, 7 Oct 2026 15:51:21 +0200
 Subject: [PATCH] wasm: ADDRESS FETCH, HTTP from classic Rexx (browser and
  Node)
 
-wasm/web/fetch.cls, written in Rexx over cmdhandler.cls, js.cls (fetch())
-and json.cls: .CommandHandler~register("FETCH", ...).  Commands GET / HEAD
+wasm/web/fetch.cls, written in Rexx over the interpreter's .CommandHandler
+(RFE #882, trunk r13288), js.cls (fetch()) and json.cls:
+.CommandHandler~register("FETCH", ...).  Commands GET / HEAD
 / DELETE url [INTO var], POST / PUT / PATCH url [[JSON] value] [INTO var]
 (a word, FROM var, JSON FROM var serialized by json.cls, or the WITH INPUT
 lines), SAVE url file, HEADER name [value] / HEADER RESET, TIMEOUT
@@ -28,19 +29,19 @@ qualify-node-cli.sh and web-api.py.  Not part of the posted RFE.
  wasm/tests/qualify-node-cli.sh |   7 +
  wasm/tests/web-api.py          |   6 +
  wasm/web/commandwords.cls      | 172 ++++++++++++++++
- wasm/web/fetch.cls             | 353 +++++++++++++++++++++++++++++++++
- 8 files changed, 715 insertions(+), 1 deletion(-)
+ wasm/web/fetch.cls             | 352 +++++++++++++++++++++++++++++++++
+ 8 files changed, 714 insertions(+), 1 deletion(-)
  create mode 100644 wasm/tests/fetch-server.py
  create mode 100644 wasm/tests/fetch.rex
  create mode 100644 wasm/web/commandwords.cls
  create mode 100644 wasm/web/fetch.cls
 
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index 7e480c8..3e4113a 100755
+index 9525374..035e678 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
 @@ -83,7 +83,7 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
-            csvStream/csvStream.cls dateparser/dateparser.cls cmdhandler/cmdhandler.cls; do
+            csvStream/csvStream.cls dateparser/dateparser.cls; do
    cp "$SRC/extensions/$cls" "$OUT/"
  done
 -cp "$SRC/wasm/web/js.cls" "$OUT/"
@@ -49,7 +50,7 @@ index 7e480c8..3e4113a 100755
  launcher() {   # launcher NAME [rexx.js option]
    cat > "$OUT/$1" <<SH
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index 3c33670..7f9fb76 100755
+index 392b3fd..fe3dea4 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
 @@ -79,6 +79,8 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
@@ -248,14 +249,14 @@ index 0000000..01451f3
 +
 +::requires "fetch.cls"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index a7f36f5..78e615b 100755
+index bac7b7d..dc90d16 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -449,6 +449,13 @@ check "command handlers in Rexx: a HALT is given back as a HALT" '^9 passed, 0 f
- check "command handlers in Rexx: nested and recursive commands" '^10 passed, 0 failed$' '!^FAIL ' -- \
-   "$X '$(cd "$(dirname "$0")/../../extensions/cmdhandler/tests" && pwd)/nested.rex'"
+@@ -441,6 +441,13 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
+ check "a logic error ends the process with a non-zero status" '^Logic error: cannot locate startup image' '^status=[1-9]' -- \
+   "mkdir noimg && cp '$NB/rexx.js' '$NB/rexx.wasm' noimg/ && cd noimg && PATH=/usr/bin:/bin '$(command -v node)' rexx.js -e 'say 1'; echo status=\$?"
  
-+# --- ADDRESS FETCH (wasm/web/fetch.cls over cmdhandler.cls and js.cls), portable test
++# --- ADDRESS FETCH (wasm/web/fetch.cls over .CommandHandler and js.cls), portable test
 +"$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
 +FETCH_SRV=$!; sleep 0.5
 +check "ADDRESS FETCH: requests, JSON, headers, errors, SAVE" '^44 passed, 0 failed$' '!^FAIL ' -- \
@@ -266,7 +267,7 @@ index a7f36f5..78e615b 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 54fa8e4..52d0a9e 100755
+index 777d199..10de658 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -67,6 +67,9 @@ class H(SimpleHTTPRequestHandler):
@@ -279,11 +280,11 @@ index 54fa8e4..52d0a9e 100755
  time.sleep(0.7)
  
  CASES = [
-@@ -247,6 +250,9 @@ CASES = [
+@@ -240,6 +243,9 @@ CASES = [
                         '\'transform r\'; say rc; \'font f NoSuchFontAtAll\'; say rc; \'saveImage /nonexistent/dir/x.png\'; say rc\n'
                         '\'shape r rect 1 2 3 4\'; sh = rc; \'shapeBounds sh\'; say rc\n::requires "jdor.cls"', {},
       lambda r: r["out"] == "0.0 0.0 50.0 100.0\n1\n10 10 20 20\n1\n0\n-102\n-13\n-16\n1.0 2.0 3.0 4.0\n"),
-+  # ADDRESS FETCH (wasm/web/fetch.cls over cmdhandler.cls and js.cls): the portable test
++  # ADDRESS FETCH (wasm/web/fetch.cls over .CommandHandler and js.cls): the portable test
 +  ("fetch", open(f"{SRC}/wasm/tests/fetch.rex").read(), {"js": {"worker": True}, "args": ["http://127.0.0.1:8124"]},
 +     lambda r: "44 passed, 0 failed" in r["out"] and r["rc"] == 0),
    # .JSObject: JavaScript objects as Rexx objects (wasm/web-js.cpp, wasm/js-bridge.js, wasm/web/js.cls)
@@ -291,7 +292,7 @@ index 54fa8e4..52d0a9e 100755
       lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
 diff --git a/wasm/web/commandwords.cls b/wasm/web/commandwords.cls
 new file mode 100644
-index 0000000..dd4da0d
+index 0000000..7a78fb5
 --- /dev/null
 +++ b/wasm/web/commandwords.cls
 @@ -0,0 +1,172 @@
@@ -318,7 +319,7 @@ index 0000000..dd4da0d
 + *    into = w~takeInto                 -- "x": "INTO name", anywhere, or .nil
 + *    v = w~takeValue(context)          -- the next word, or with "FROM name"
 + *                                      -- that variable's value (.nil: unset;
-+ *                                      -- context: a cmdhandler.cls context)
++ *                                      -- context: a .CommandContext)
 + *    w~items, w[i], w~quoted(i), w~isKeyword(i, "FROM"), w~rest (an Array)
 + *
 + * .CommandIO: what both write and read.  Without WITH OUTPUT or WITH ERROR,
@@ -469,10 +470,10 @@ index 0000000..dd4da0d
 +  return lines
 diff --git a/wasm/web/fetch.cls b/wasm/web/fetch.cls
 new file mode 100644
-index 0000000..2b5b5d8
+index 0000000..d4cc6e2
 --- /dev/null
 +++ b/wasm/web/fetch.cls
-@@ -0,0 +1,353 @@
+@@ -0,0 +1,352 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -485,8 +486,8 @@ index 0000000..2b5b5d8
 +/*----------------------------------------------------------------------------*/
 +/*
 + * fetch.cls: ADDRESS FETCH, HTTP from classic Rexx (ooRexx/WASM, browser and
-+ * Node).  Written in Rexx on top of three pieces: cmdhandler.cls (a command
-+ * environment written in Rexx), js.cls (JavaScript's fetch()) and json.cls
++ * Node).  Written in Rexx on top of three pieces: the interpreter's
++ * .CommandHandler (a command environment written in Rexx), js.cls (JavaScript's fetch()) and json.cls
 + * (ooRexx's JSON reader and writer); commands are split by commandwords.cls,
 + * shared with dom.cls.
 + *
@@ -559,7 +560,6 @@ index 0000000..2b5b5d8
 + */
 +.CommandHandler~register("FETCH", .FetchHandler~new)
 +
-+::requires "cmdhandler.cls"
 +::requires "commandwords.cls"
 +::requires "js.cls"
 +::requires "json.cls"
