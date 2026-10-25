@@ -30,7 +30,7 @@ updates to that request are now published in [`rfe/`](rfe/).
 
 ## The patch series
 
-Applied in order on top of ooRexx SVN trunk **r13291**
+Applied in order on top of ooRexx SVN trunk **r13299** (main/trunk identical to r13297, the minimum)
 (`https://svn.code.sf.net/p/oorexx/code-0/main/trunk`):
 
 | Patch | What it adds |
@@ -75,7 +75,7 @@ and installs a build. Everything goes into the directory that contains your
 clone (`$ORX_WASM_WORK`, overridable), next to it:
 
 ```
-oorexx/        ooRexx trunk r13291 + patches
+oorexx/        ooRexx trunk r13299 + patches
 build-wasm/    bin/ (Node and browser, MEMFS), bin-node/ (Node CLI), bin-web/ (pages)
 saved-build/   the prebuilt binaries it downloaded
 emsdk/         Emscripten, only when compiling
@@ -103,11 +103,12 @@ tests/qualify.sh            # one command: Node, the Node CLI, Chromium, the web
 ```
 
 `qualify.sh` asserts every check and exits non-zero on any failure. GitHub
-Actions runs it on every push and pull request
+Actions runs it on demand
 ([`.github/workflows/qualify.yml`](.github/workflows/qualify.yml)); when the
 patches change, the workflow compiles them and, on `main`, publishes the new
-binaries to the branch `saved-build`. Every week it also compiles from
-scratch. It needs
+binaries to the branch `saved-build` (a working copy can publish them too:
+`scripts/save-build.sh`, `scripts/publish-build.sh`); with `rebuild` it
+compiles from scratch. It needs
 `pip install websockets playwright` (Chromium for the browser part). The
 in-tree tests it runs are `wasm/tests/qualify-node.sh`,
 `wasm/tests/qualify-node-cli.sh` and `wasm/tests/web-api.py`.

@@ -4,21 +4,18 @@
 #
 # The binaries come from the branch saved-build when they match the patches
 # (scripts/build-manifest.sh). When they do not (the patches changed), the job
-# compiles them, and on a push to main it publishes them there
-# (scripts/save-build.sh + publish-build.sh), so the next run and every
-# working copy can skip the compilation.
+# compiles them, and on main it publishes them there (scripts/save-build.sh +
+# publish-build.sh), so the next run and every working copy can skip the
+# compilation.
 #
-# Every week, and on demand (Actions > qualify > Run workflow > rebuild), it
-# compiles from scratch whatever saved-build has, to check that the build
-# itself still works (Emscripten download, SVN, the patches).
+# It runs on demand only (Actions > qualify > Run workflow): the same tests
+# run locally with tests/qualify.sh, and the saved build can be published
+# from a working copy. With rebuild, it compiles from scratch whatever
+# saved-build has, to check that the build itself still works (Emscripten
+# download, SVN, the patches).
 name: qualify
 
 on:
-  push:
-    branches: [main]
-  pull_request:
-  schedule:
-    - cron: '17 4 * * 1'        # Mondays 04:17 UTC
   workflow_dispatch:
     inputs:
       rebuild:
@@ -42,7 +39,7 @@ jobs:
     timeout-minutes: 60
     env:
       ORX_WASM_WORK: ${{ github.workspace }}/..
-      REBUILD: ${{ github.event_name == 'schedule' || inputs.rebuild == true }}
+      REBUILD: ${{ inputs.rebuild == true }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -70,7 +67,7 @@ jobs:
       - name: Qualification
         run: tests/qualify.sh
       - name: Publish the saved build
-        if: env.COMPILED == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: env.COMPILED == 'true' && github.ref == 'refs/heads/main'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
