@@ -267,7 +267,7 @@ index e97d5ce..703beb0 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 1e031aa..8b8ae76 100755
+index 9fa71ba..8c47cdf 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -67,6 +67,9 @@ class H(SimpleHTTPRequestHandler):
@@ -280,10 +280,10 @@ index 1e031aa..8b8ae76 100755
  time.sleep(0.7)
  
  CASES = [
-@@ -240,6 +243,9 @@ CASES = [
-                        '\'transform r\'; say rc; \'font f NoSuchFontAtAll\'; say rc; \'saveImage /nonexistent/dir/x.png\'; say rc\n'
-                        '\'shape r rect 1 2 3 4\'; sh = rc; \'shapeBounds sh\'; say rc\n::requires "jdor.cls"', {},
-      lambda r: r["out"] == "0.0 0.0 50.0 100.0\n1\n10 10 20 20\n1\n0\n-102\n-13\n-16\n1.0 2.0 3.0 4.0\n"),
+@@ -256,6 +259,9 @@ CASES = [
+                    'f: say "FAILURE" rc\n'
+                    '::requires "jdor.cls"\n::class Mine subclass CommandHandler\n::method command\n  return "mine"', {},
+      lambda r: r["out"] == "30 40 3\n100 100\nmine\n100 100\nmine\nFAILURE 30\n"),
 +  # ADDRESS FETCH (wasm/web/fetch.cls over .CommandHandler and js.cls): the portable test
 +  ("fetch", open(f"{SRC}/wasm/tests/fetch.rex").read(), {"js": {"worker": True}, "args": ["http://127.0.0.1:8124"]},
 +     lambda r: "44 passed, 0 failed" in r["out"] and r["rc"] == 0),

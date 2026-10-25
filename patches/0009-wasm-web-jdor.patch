@@ -30,7 +30,9 @@ the HTML canvas, no Java involved.
   whose pixels are taken whole or not at all, as Java's are.
 - wasm/web-jdor.cpp: the package "jdor" (JdorNewHandler,
   JdorAddEnvironment, JdorSetup, JdorObjectCall) and a redirecting
-  command handler added with AddCommandEnvironment; each command is
+  command handler stacked with StackCommandEnvironment (ooRexx r13297),
+  as .CommandHandler~register stacks, a binding per handler and name
+  (~deregister uncovers what was below); each command is
   passed synchronously to the main runtime thread
   (emscripten_proxy_sync_with_ctx), which may finish it later; Rexx
   variables the command needs are resolved on the interpreter thread;
@@ -49,25 +51,25 @@ the HTML canvas, no Java involved.
   few .java.lang.System properties), so they also run unchanged.
 - wasm/web/ooRexx.js: run({onJdor, screen}) and run.jdorEvent(); the page
   decides how to show the windows (ooRexx-worker.js relays the messages).
-- wasm/tests/web-api.py: 13 JDOR cases.
+- wasm/tests/web-api.py: 14 JDOR cases.
 ---
  interpreter/package/PackageManager.cpp |    4 +-
- wasm/README.md                         |   76 +-
+ wasm/README.md                         |   79 +-
  wasm/build-web.sh                      |   22 +-
  wasm/extra-packages.cpp                |    9 +-
  wasm/js-bridge.js                      |    3 +
  wasm/js-realm.js                       |    2 +-
  wasm/tests/web-api.html                |   21 +-
- wasm/tests/web-api.py                  |  103 +-
- wasm/web-jdor.cpp                      |  477 +++++
+ wasm/tests/web-api.py                  |  119 +-
+ wasm/web-jdor.cpp                      |  544 ++++++
  wasm/web-jdor.js                       | 2236 ++++++++++++++++++++++++
  wasm/web-js.cpp                        |    8 +
  wasm/web/BSF.CLS                       |  110 ++
- wasm/web/jdor.cls                      |  124 ++
+ wasm/web/jdor.cls                      |  126 ++
  wasm/web/ooRexx-worker.js              |   14 +-
  wasm/web/ooRexx.js                     |   19 +-
  wasm/web/polygon-clipping.umd.min.js   |   39 +
- 16 files changed, 3244 insertions(+), 23 deletions(-)
+ 16 files changed, 3332 insertions(+), 23 deletions(-)
  create mode 100644 wasm/web-jdor.cpp
  create mode 100644 wasm/web-jdor.js
  create mode 100644 wasm/web/BSF.CLS
@@ -90,10 +92,10 @@ index 786af1f..e949832 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index ea1e0b5..e2460df 100644
+index ea1e0b5..7565c7a 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -235,7 +235,78 @@ off, or changes the strings.
+@@ -235,7 +235,81 @@ off, or changes the strings.
  isolated (see above).  `wasm/tests/web-api.py BIN_WEB` runs assertions over the
  API in headless Chromium (Python Playwright): output, interactive and fixed
  stdin, EOF, stop, threads, files in and out, extension classes, rexxtry,
@@ -116,6 +118,9 @@ index ea1e0b5..e2460df 100644
 +  window) for the whole interpreter instance; `address jdor` selects it, in
 +  each routine, as for any environment.  `call addJdorHandler "NAME"` sets
 +  up another one (its own image and window), or gives JDOR a fresh one.
++  A handler is stacked on what the name has, as `.CommandHandler~register`
++  stacks (over a handler written in Rexx, or another JDOR handler), and
++  `.CommandHandler~deregister(name)` uncovers what was below.
 +* The commands, aliases, results (RC), canonical output (`ADDRESS ... WITH
 +  OUTPUT`), command input (`WITH INPUT`), error/failure conditions and return
 +  codes follow the Java handler (`JavaDrawingHandler.java`, 100.20230718,
@@ -151,7 +156,7 @@ index ea1e0b5..e2460df 100644
 +  lines of 1 pixel on whole pixels.
 +* Implementation: `web-jdor.cpp` is the package `jdor` (routines
 +  `JdorNewHandler`, `JdorAddEnvironment`, `JdorSetup`, `JdorObjectCall`; a redirecting command
-+  handler added at run time with `AddCommandEnvironment`), found by
++  handler stacked at run time with `StackCommandEnvironment`, ooRexx r13297), found by
 +  `PackageManager` through a weak hook, `orx_wasm_extra_packages()`, that
 +  only this build defines.  Each command is passed synchronously
 +  (`emscripten_proxy_sync_with_ctx`) to the main runtime thread, the worker
@@ -173,7 +178,7 @@ index ea1e0b5..e2460df 100644
  
  ## The test suite's API groups (`wasm/build-test.sh`)
  
-@@ -490,7 +561,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -490,7 +564,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
@@ -354,7 +359,7 @@ index b13d517..cb5c6fa 100644
  };
  </script>
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index a1588b7..1e031aa 100755
+index a1588b7..9fa71ba 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -42,7 +42,7 @@ Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP
@@ -366,7 +371,7 @@ index a1588b7..1e031aa 100755
  from playwright.sync_api import sync_playwright
  
  if len(sys.argv) != 2:
-@@ -139,6 +139,107 @@ CASES = [
+@@ -139,6 +139,123 @@ CASES = [
                         '::options trace r', {},
       lambda r: r["out"].count("  worker") == 12 and "total 4\n" in r["out"] and "*-*" in r["err"]
                 and r["err"] == r["trace"] and r["errmsg"] == ""),
@@ -471,15 +476,31 @@ index a1588b7..1e031aa 100755
 +                       '\'transform r\'; say rc; \'font f NoSuchFontAtAll\'; say rc; \'saveImage /nonexistent/dir/x.png\'; say rc\n'
 +                       '\'shape r rect 1 2 3 4\'; sh = rc; \'shapeBounds sh\'; say rc\n::requires "jdor.cls"', {},
 +     lambda r: r["out"] == "0.0 0.0 50.0 100.0\n1\n10 10 20 20\n1\n0\n-102\n-13\n-16\n1.0 2.0 3.0 4.0\n"),
++  # bindings stack, as .CommandHandler~register: over a handler written in Rexx,
++  # over each other; ~deregister uncovers what was below, a handler on top of
++  # them included
++  ("jdor stacked", '.CommandHandler~register("PAD", .Mine~new)\n'
++                   'h1 = newJdorHandler(); h2 = newJdorHandler()\n'
++                   'call bindJdorHandler "PAD", h1; address pad "newImage 100 100"\n'
++                   'call bindJdorHandler "PAD", h2; address pad "newImage 30 40"\n'
++                   'address pad "imageSize"; say rc .CommandHandler~handlers("PAD")~items\n'
++                   'x = .CommandHandler~deregister("PAD"); address pad "imageSize"; say rc\n'
++                   '.CommandHandler~register("PAD", .Mine~new); address pad "x"; say rc\n'
++                   'x = .CommandHandler~deregister("PAD"); address pad "imageSize"; say rc\n'
++                   'x = .CommandHandler~deregister("PAD"); address pad "x"; say rc\n'
++                   'x = .CommandHandler~deregister("PAD"); signal on failure name f; address pad "x"; exit\n'
++                   'f: say "FAILURE" rc\n'
++                   '::requires "jdor.cls"\n::class Mine subclass CommandHandler\n::method command\n  return "mine"', {},
++     lambda r: r["out"] == "30 40 3\n100 100\nmine\n100 100\nmine\nFAILURE 30\n"),
    # .JSObject: JavaScript objects as Rexx objects (wasm/web-js.cpp, wasm/js-bridge.js, wasm/web/js.cls)
    ("js not granted", 'say .js~Math~max(1, 2)\n::requires "js.cls"', {},
       lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
 diff --git a/wasm/web-jdor.cpp b/wasm/web-jdor.cpp
 new file mode 100644
-index 0000000..e7e38d7
+index 0000000..35dcb26
 --- /dev/null
 +++ b/wasm/web-jdor.cpp
-@@ -0,0 +1,477 @@
+@@ -0,0 +1,544 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -549,7 +570,10 @@ index 0000000..e7e38d7
 +#include <stdio.h>
 +#include <stdlib.h>
 +#include <string.h>
++#include <map>
++#include <mutex>
 +#include <string>
++#include <vector>
 +#include <time.h>
 +#include <unistd.h>
 +
@@ -812,10 +836,71 @@ index 0000000..e7e38d7
 +    return result;
 +}
 +
++// The JDOR handlers bound to each ADDRESS name.  A binding stacks jdorHandler
++// on the interpreter's handlers for the name (StackCommandEnvironment, as
++// .CommandHandler~register does), and the interpreter pops it with
++// .CommandHandler~deregister.  The handler is the same function for every
++// binding, so each binding records the depth of the name's stack it made
++// (.CommandHandler~handlers(name)~items): the stack only grows and shrinks at
++// its top, so when jdorHandler runs, the bindings deeper than the stack are
++// gone, and the deepest one left is the one that serves the command.
++// JavaScript serves a name with one handler (op 3); bound is the one it has.
++struct JdorBinding
++{
++    std::string ref;                // the handler, "Handler:id"
++    size_t depth;                   // the stack's depth with it on top
++};
++struct JdorName
++{
++    std::vector<JdorBinding> stack;
++    std::string bound;              // the handler JavaScript has for the name
++};
++static std::mutex bindingsLock;
++static std::map<std::string, JdorName> bindings;
++
++// the depth of the interpreter's stack of handlers for name (no lock of ours held)
++static size_t stackDepth(RexxThreadContext *c, const std::string &name)
++{
++    RexxClassObject cls = c->FindClass("COMMANDHANDLER");
++    if (cls == NULLOBJECT) return 0;
++    RexxObjectPtr list = c->SendMessage1(cls, "HANDLERS", c->String(name.c_str()));
++    if (c->CheckCondition()) { c->ClearCondition(); return 0; }
++    if (list == NULLOBJECT || !c->IsArray(list)) return 0;
++    return c->ArrayItems((RexxArrayObject)list);
++}
++
++// tell JavaScript which handler serves name; false if ref is no JDOR handler
++static bool bindInJavaScript(const std::string &name, const std::string &ref)
++{
++    JdorRequest req = {};
++    req.address = name.c_str();
++    req.command = ref.c_str();
++    req.op = 3;
++    return jdorCall(req).find("C") != 0;
++}
++
 +static RexxObjectPtr RexxEntry jdorHandler(RexxExitContext *c, RexxStringObject address,
 +                                           RexxStringObject command, RexxIORedirectorContext *io)
 +{
 +    const char *addr = c->CString(address);
++    // more than one binding for the name: the one on top of what is left
++    std::string name(addr), rebind;
++    for (auto &ch : name) ch = toupper(ch);
++    bool several;
++    {
++        std::lock_guard<std::mutex> lock(bindingsLock);
++        auto it = bindings.find(name);
++        several = it != bindings.end() && it->second.stack.size() > 1;
++    }
++    if (several)
++    {
++        size_t depth = stackDepth(c->threadContext, name);
++        std::lock_guard<std::mutex> lock(bindingsLock);
++        JdorName &n = bindings[name];
++        while (n.stack.size() > 1 && n.stack.back().depth > depth) n.stack.pop_back();
++        if (n.stack.back().ref != n.bound) { rebind = n.stack.back().ref; n.bound = rebind; }
++    }
++    if (!rebind.empty()) bindInJavaScript(name, rebind);
 +    bool raised = false;
 +    RexxObjectPtr result = runCommand(c, io, addr, c->CString(command), raised);
 +    if (!raised && io->IsInputRedirected())
@@ -877,18 +962,21 @@ index 0000000..e7e38d7
 +    }
 +    std::string upper(name);
 +    for (auto &ch : upper) ch = toupper(ch);
-+    JdorRequest req = {};
-+    req.address = upper.c_str();
-+    req.command = ref.c_str();
-+    req.op = 3;
-+    std::string reply = jdorCall(req);
-+    if (reply.find("C") == 0)
++    if (!bindInJavaScript(upper, ref))
 +    {
 +        context->ThrowException1(Rexx_Error_Incorrect_call_user_defined, context->String("not a JDOR handler"));
 +        return 1;
 +    }
-+    context->threadContext->AddCommandEnvironment(upper.c_str(), (REXXPFN)jdorHandler,
-+                                                  REDIRECTING_COMMAND_ENVIRONMENT);
++    // stacked on what the name has (a handler written in Rexx, another JDOR
++    // binding), as .CommandHandler~register does; ~deregister uncovers it
++    context->threadContext->StackCommandEnvironment(upper.c_str(), (REXXPFN)jdorHandler,
++                                                    REDIRECTING_COMMAND_ENVIRONMENT);
++    size_t depth = stackDepth(context->threadContext, upper);
++    std::lock_guard<std::mutex> lock(bindingsLock);
++    JdorName &n = bindings[upper];
++    while (!n.stack.empty() && n.stack.back().depth >= depth) n.stack.pop_back();
++    n.stack.push_back({ref, depth});
++    n.bound = ref;
 +    return 0;
 +}
 +
@@ -3343,10 +3431,10 @@ index 0000000..59e2f82
 +  end
 diff --git a/wasm/web/jdor.cls b/wasm/web/jdor.cls
 new file mode 100644
-index 0000000..170b156
+index 0000000..d7cebf7
 --- /dev/null
 +++ b/wasm/web/jdor.cls
-@@ -0,0 +1,124 @@
+@@ -0,0 +1,126 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -3397,7 +3485,9 @@ index 0000000..170b156
 + * handler of its own (an image and its window, created when first used);
 + * a routine selects it with ADDRESS JDOR, as any other environment.
 + * addJdorHandler([name]) gives an environment (default JDOR) a new handler,
-+ * for a second window ("call addJdorHandler 'SDOR'") or a fresh start.  The
++ * for a second window ("call addJdorHandler 'SDOR'") or a fresh start.  A
++ * handler is stacked on what the environment has, as .CommandHandler~register
++ * stacks, and .CommandHandler~deregister(name) uncovers what was below.  The
 + * commands are documented in BSF4ooRexx's jdor_doc.html.
 + *
 + * Objects that commands return (colors, fonts, images, shapes, ...) are

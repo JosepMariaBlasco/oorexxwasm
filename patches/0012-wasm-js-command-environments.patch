@@ -43,10 +43,10 @@ Not part of the posted RFE.
  create mode 100644 wasm/tests/js-commands.rex
 
 diff --git a/wasm/README.md b/wasm/README.md
-index e2460df..e979b3c 100644
+index 7565c7a..9257752 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -536,6 +536,21 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -539,6 +539,21 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    `prepare`, `attach`, `instrument`; see `web/ooRexx.js`).  Tests:
    `tests/web-api.py` (session eval, session page, rexx scripts with
    `tests/web-scripts.html`, the debugger hook with `tests/web-debugger.js`).
@@ -392,7 +392,7 @@ index 703beb0..4acf5c9 100755
  "$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
  FETCH_SRV=$!; sleep 0.5
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 15b95ef..8e1cb98 100755
+index 2f97fe4..e3da4c5 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -99,6 +99,28 @@ CASES = [
@@ -424,7 +424,7 @@ index 15b95ef..8e1cb98 100755
    ("rexxtry", 'call "/home/rexx/rexxtry.rex"',
       {"files": {"/home/rexx/rexxtry.rex": open(f"{SRC}/samples/rexxtry.rex").read()},
        "inputs": ["say 6*7", "x = 'abc'; say reverse(x)", "exit"]},
-@@ -420,6 +442,34 @@ JS_CASES = [
+@@ -436,6 +458,34 @@ JS_CASES = [
      return { r, out: out.join(''), stopped: d.stopped };
    ''', lambda v: v["r"][:9] == ['3', '42', 'undefined', '42', '150', '7', '16', 'RexxError true', 'syntax true']
         and v["r"][9] == '1,2,3,4' and v["out"] == "hi\n" and v["stopped"]),
