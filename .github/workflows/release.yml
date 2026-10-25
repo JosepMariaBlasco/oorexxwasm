@@ -112,7 +112,7 @@ jobs:
       - name: Smoke test
         run: mkdir scratch && cd scratch && rexx ../pkg/tests/smoke.rex | tee ../smoke.log && tr -d '\r' < ../smoke.log | grep -q ' 0 failed$'
       - name: Rexx objects in JavaScript (js-proxy.rex)
-        run: cd scratch && rexx ../pkg/tests/js-proxy.rex | tee ../proxy.log && tr -d '\r' < ../proxy.log | grep -q '^28 passed, 0 failed$'
+        run: cd scratch && rexx ../pkg/tests/js-proxy.rex | tee ../proxy.log && tr -d '\r' < ../proxy.log | grep -q '^29 passed, 0 failed$'
       - name: Rexx classes extending JavaScript classes (js-extend.rex)
         run: cd scratch && rexx ../pkg/tests/js-extend.rex | tee ../extend.log && tr -d '\r' < ../extend.log | grep -q '^31 passed, 0 failed$'
 

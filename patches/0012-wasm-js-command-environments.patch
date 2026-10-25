@@ -17,25 +17,26 @@ pending, finish, isRedirected, isValid), the tests answering booleans;
 in the page its calls give Promises.  A JavaScript exception is SYNTAX
 98.900 where the command was issued (ADDITIONAL as for any JavaScript
 exception); a condition of Rexx that the function lets through is raised
-there as itself.  .JSCommandHandler~new(.nil), or of anything but a
+there as itself, and a HALT that Rexx code the function calls leaves
+untrapped is a HALT there.  .JSCommandHandler~new(.nil), or of anything but a
 function, is SYNTAX 93.900.
 - From the page (ooRexx.js): a session's addCommandEnvironment(name, fn)
   and removeCommandEnvironment(name) (.JSSession: register and
   deregister, answering what they answer), and
   start({commandEnvironments: {NAME: fn}}), which stops the session if one
   fails.
-- Tests: wasm/tests/js-commands.rex (54 checks, Node and the worker's
+- Tests: wasm/tests/js-commands.rex (56 checks, Node and the worker's
   realm; in qualify-node-cli.sh and web-api.py), web-api.py "js commands
   page" (a function of the page) and "session commands".
 Not part of the posted RFE.
 ---
  wasm/README.md                 |  15 ++
- wasm/tests/js-commands.rex     | 259 +++++++++++++++++++++++++++++++++
+ wasm/tests/js-commands.rex     | 274 +++++++++++++++++++++++++++++++++
  wasm/tests/qualify-node-cli.sh |   5 +
- wasm/tests/web-api.py          |  50 +++++++
- wasm/web/js.cls                |  78 ++++++++++
- wasm/web/ooRexx.js             |  33 ++++-
- 6 files changed, 434 insertions(+), 6 deletions(-)
+ wasm/tests/web-api.py          |  50 ++++++
+ wasm/web/js.cls                |  81 ++++++++++
+ wasm/web/ooRexx.js             |  33 +++-
+ 6 files changed, 452 insertions(+), 6 deletions(-)
  create mode 100644 wasm/tests/js-commands.rex
 
 diff --git a/wasm/README.md b/wasm/README.md
@@ -66,10 +67,10 @@ index e2460df..e979b3c 100644
    passed synchronously to the main runtime thread, where `js-bridge.js` (a
 diff --git a/wasm/tests/js-commands.rex b/wasm/tests/js-commands.rex
 new file mode 100644
-index 0000000..18c7b48
+index 0000000..279acc1
 --- /dev/null
 +++ b/wasm/tests/js-commands.rex
-@@ -0,0 +1,259 @@
+@@ -0,0 +1,274 @@
 +/*----------------------------------------------------------------------------*/
 +/* Command environments written in JavaScript (.JSCommandHandler, one of    */
 +/* the interpreter's .CommandHandlers), in the realm of .js: the worker's in */
@@ -106,6 +107,7 @@ index 0000000..18c7b48
 +  "case 'raiseuser': return ctx.raise('USER MINE', 4, 'from JavaScript');" -
 +  "case 'halt': globalThis.thing.halts(); return 0;" -
 +  "case 'raisehalt': return ctx.raise('HALT', 5);" -
++  "case 'errorhalt': ctx.raiseError(5); globalThis.thing.halts(); return 5;" -
 +  "case 'twice': ctx.raiseError(1); return ctx.raiseError(2);" -
 +  "case 'throw': throw new TypeError('from the handler');" -
 +  "case 'reject': return Promise.reject(new RangeError('rejected'));" -
@@ -174,19 +176,23 @@ index 0000000..18c7b48
 +opts = .Routine~new("opts", .array~of('signal on user mine name got', 'address calc "raiseuser"', -
 +  'return "no trap, rc" rc', 'got: return condition("C") "rc" rc', '::options error syntax'))
 +call check "ctx.raise under ::OPTIONS ERROR SYNTAX: still USER MINE", opts~call == "USER MINE rc 4"
-+-- a HALT, as the interpreter's command handlers have it: ctx.raise("HALT")
-+-- is a HALT for the code that issued the command; a HALT raised in a routine
-+-- that the handler's Rexx code calls reaches it as SYNTAX 4.1, as in plain
-+-- Rexx (a method that calls such a routine) and as for a handler in Rexx
++-- a HALT: ctx.raise("HALT") is a HALT for the code that issued the command,
++-- as for the interpreter's command handlers; so is a HALT that Rexx code the
++-- JavaScript function calls leaves untrapped (there is JavaScript in between:
++-- a HALT given back as a HALT), while a HALT raised in a routine that a
++-- handler written in Rexx calls reaches the issuer as SYNTAX 4.1, as in plain
++-- Rexx
 +.js~globalThis["thing"] = .Thing~new
 +call check "raisehalt: SIGNAL ON HALT traps it", haltSignalOn("raisehalt") == "HALT"
 +call check "raisehalt: CALL ON HALT after the next clause", haltCallOn("raisehalt") == "HALT rc 5"
 +call check "raisehalt: untrapped, SYNTAX 4.1", haltUntrapped("raisehalt") == "SYNTAX 4.1"
-+call check "halt (in a routine): SYNTAX 4.1 under SIGNAL ON HALT", haltSignalOn("halt") == "SYNTAX 4.1"
-+call check "halt (in a routine): SYNTAX 4.1 under CALL ON HALT", haltCallOn("halt") == "SYNTAX 4.1"
-+call check "halt (in a routine): untrapped, SYNTAX 4.1", haltUntrapped("halt") == "SYNTAX 4.1"
++call check "halt (Rexx code the function calls): SIGNAL ON HALT traps it", haltSignalOn("halt") == "HALT"
++call check "halt (Rexx code the function calls): CALL ON HALT after the next clause", haltCallOn("halt") == "HALT rc 0"
++call check "halt (Rexx code the function calls): untrapped, SYNTAX 4.1", haltUntrapped("halt") == "SYNTAX 4.1"
++call check "halt after ctx.raiseError: SIGNAL ON HALT traps the HALT", haltSignalOn("errorhalt") == "HALT"
++call check "halt after ctx.raiseError: CALL ON gets both, HALT first", haltErrorCallOn() == "HALT ERROR rc 5"
 +.CommandHandler~register("REXXHALT", .HaltingHandler~new)
-+call check "the same for a handler in Rexx", haltSignalOn("halt", "REXXHALT") == "SYNTAX 4.1"
++call check "a handler in Rexx: a routine's HALT is SYNTAX 4.1, as in plain Rexx", haltSignalOn("halt", "REXXHALT") == "SYNTAX 4.1"
 +
 +signal on syntax name s1
 +"throw"
@@ -281,6 +287,16 @@ index 0000000..18c7b48
 +  nop
 +  return .local~halted "rc" rc
 +hc: .local~halted = "HALT"; return
++
++haltErrorCallOn: procedure          -- both conditions, each by its CALL ON
++  .local~halted = ""
++  call on halt name hec; call on error name hee; signal on syntax name hez
++  address calc "errorhalt"
++  nop
++  return strip(.local~halted) "rc" rc
++hec: .local~halted = .local~halted "HALT"; return
++hee: .local~halted = .local~halted "ERROR"; return
++hez: return "SYNTAX" condition("O")~code
 +hy: return "SYNTAX" condition("O")~code
 +
 +haltUntrapped: procedure
@@ -330,7 +346,7 @@ index 0000000..18c7b48
 +::routine haltsHere
 +  raise halt
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index dc90d16..be9061a 100755
+index 703beb0..bf7adec 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -441,6 +441,11 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
@@ -339,14 +355,14 @@ index dc90d16..be9061a 100755
  
 +# --- command environments written in JavaScript (.JSCommandHandler in js.cls,
 +# one of the interpreter's .CommandHandlers), portable test
-+check "command handlers in JavaScript (.JSCommandHandler)" '^54 passed, 0 failed$' '!^FAIL ' -- \
++check "command handlers in JavaScript (.JSCommandHandler)" '^56 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-commands.rex'"
 +
  # --- ADDRESS FETCH (wasm/web/fetch.cls over .CommandHandler and js.cls), portable test
  "$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
  FETCH_SRV=$!; sleep 0.5
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index cdd822d..1367e89 100755
+index 15b95ef..ff22b2d 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -99,6 +99,28 @@ CASES = [
@@ -355,7 +371,7 @@ index cdd822d..1367e89 100755
       {}, lambda r: r["out"] == "1\n"),
 +  # command environments written in JavaScript (.JSCommandHandler), in the worker's realm: the portable test
 +  ("js commands", open(f"{SRC}/wasm/tests/js-commands.rex").read(), {"js": {"worker": True}},
-+     lambda r: "54 passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
++     lambda r: "56 passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
 +  # ... and a function of the page: its ctx calls give Promises
 +  ("js commands page", 'f = .js~page~Function~new("c", "ctx", "return ctx.getVar(\'X\').then((x) => \' \' + c + \' \' + x * 2)")\n'
 +                       '.CommandHandler~register("P", .JSCommandHandler~new(f)); x = 21; address p "go"; say "["rc"]"\n'
@@ -414,7 +430,7 @@ index cdd822d..1367e89 100755
      const s = await rexxLib.start({ js: { page: true } });
      await s.eval('d = .js~page~document; b = d~createElement("button"); b~id = "rx"; d~body~appendChild(b)\\n' +
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
-index 9e602ed..417c933 100644
+index 9e602ed..7b4ed2f 100644
 --- a/wasm/web/js.cls
 +++ b/wasm/web/js.cls
 @@ -218,6 +218,19 @@
@@ -460,7 +476,7 @@ index 9e602ed..417c933 100644
  ::method lines private              -- source text (a string, maybe with line ends) as an Array of lines
    use arg source
    if source~isA(.String) then return source~makeArray
-@@ -710,6 +732,62 @@ syntax: raise propagate
+@@ -710,6 +732,65 @@ syntax: raise propagate
  ::method string
    return "a JSSession"
  
@@ -487,6 +503,7 @@ index 9e602ed..417c933 100644
 +::method command
 +  expose fn
 +  use arg command, caller
++  signal on halt name halted
 +  r = fn~call(.nil, command, .JSCommandContext~new(caller))
 +  if r~isA(.JSObject) then do
 +    if r~js.hasProperty("then") then if r~js.getStrict("then")~isA(.JSObject) then
@@ -494,6 +511,8 @@ index 9e602ed..417c933 100644
 +  end
 +  if .nil == r | .js~undefined == r then return 0
 +  return r
++halted:
++  raise halt
 +::method string
 +  return "a JSCommandHandler"
 +

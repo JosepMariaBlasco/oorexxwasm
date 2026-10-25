@@ -329,7 +329,7 @@ index cb5c6fa..f56ea5d 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); }, onJdor,
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 10de658..cdd822d 100755
+index 8b8ae76..15b95ef 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -246,6 +246,17 @@ CASES = [

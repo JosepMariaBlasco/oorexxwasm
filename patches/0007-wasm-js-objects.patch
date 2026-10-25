@@ -158,18 +158,18 @@ of Array, Directory and StringTable are copied too, read by SUPPLIER
  wasm/tests/js-extend-gc.rex            |  111 ++
  wasm/tests/js-extend.rex               |  157 ++
  wasm/tests/js-floats.rex               |  112 ++
- wasm/tests/js-proxy.rex                |  127 ++
+ wasm/tests/js-proxy.rex                |  136 ++
  wasm/tests/qualify-node-cli.sh         |  213 +++
  wasm/tests/web-api.html                |    4 +-
  wasm/tests/web-api.py                  |  236 ++-
  wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 1955 ++++++++++++++++++++++++
+ wasm/web-js.cpp                        | 1958 ++++++++++++++++++++++++
  wasm/web/js.cls                        |  750 +++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 +++
- 24 files changed, 6093 insertions(+), 12 deletions(-)
+ 24 files changed, 6105 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -2806,10 +2806,10 @@ index 0000000..05a3474
 +::requires "js.cls"
 diff --git a/wasm/tests/js-proxy.rex b/wasm/tests/js-proxy.rex
 new file mode 100644
-index 0000000..c89f67e
+index 0000000..1f62423
 --- /dev/null
 +++ b/wasm/tests/js-proxy.rex
-@@ -0,0 +1,127 @@
+@@ -0,0 +1,136 @@
 +/* js-proxy.rex: tests of Rexx objects in JavaScript (RexxProxy,           */
 +/* wasm/js-realm.js), in the realm where Rexx runs: the worker's in the     */
 +/* browser, Node's under Node.  Prints one line per check; exits 1 if any   */
@@ -2884,9 +2884,18 @@ index 0000000..c89f67e
 +do 100 while later~balance == 0; call SysSleep 0.02; end
 +call check "a timer calls a Rexx object's method", later~balance == 42
 +
++-- passing a Rexx object to JavaScript is no use of it as a string: a NOSTRING
++-- trap of the caller does not fire
++call check "an object passed to JavaScript raises no NOSTRING", noString() == "object"
++
 +say
 +say .ok "passed," .bad "failed"
 +exit .bad > 0
++
++noString: procedure
++  signal on nostring name nsTrap
++  return F("x", "return typeof x")~call(.nil, .object~new)
++nsTrap: return "NOSTRING"
 +
 +F: procedure                        -- F(params, body): a JavaScript function
 +  return .fn~call(.nil, arg(1), arg(2))
@@ -2938,7 +2947,7 @@ index 0000000..c89f67e
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index b44ba2b..bac7b7d 100755
+index b44ba2b..e97d5ce 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -228,6 +228,219 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
@@ -3050,7 +3059,7 @@ index b44ba2b..bac7b7d 100755
 +
 +# --- Rexx objects in JavaScript (RexxProxy, portable test), and their release:
 +# a proxy JavaScript collects gives its Rexx object back to Rexx's collector
-+check "JavaScript objects: Rexx objects in JavaScript (RexxProxy)" '^28 passed, 0 failed$' '!^FAIL ' -- \
++check "JavaScript objects: Rexx objects in JavaScript (RexxProxy)" '^29 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-proxy.rex'"
 +# --- errors both ways (RexxError's fields and cause, additional[3]) and text
 +# (no U+FFFD: a string that is not UTF-8, or not well-formed, is an error)
@@ -3184,7 +3193,7 @@ index d544388..b13d517 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..d5cfa88 100755
+index 3940711..a1588b7 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -49,7 +49,10 @@ if len(sys.argv) != 2:
@@ -3279,7 +3288,7 @@ index 3940711..d5cfa88 100755
 +     lambda r: "31 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # Rexx objects in JavaScript (RexxProxy), in the worker's realm: the portable test
 +  ("js proxy", open(f"{SRC}/wasm/tests/js-proxy.rex").read(), {"js": {"worker": True}},
-+     lambda r: "28 passed, 0 failed" in r["out"] and r["rc"] == 0),
++     lambda r: "29 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # a USER condition in Rexx code the page calls, trapped by SIGNAL ON in the
 +  # code that waits for the page: the page is answered, and goes on
 +  ("js page signal", 'f = .js~page~Function~new("o", "return o.user().then(() => \'resolved\', (e) => \'told\')")\n'
@@ -3584,10 +3593,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..bed3d38
+index 0000000..78db440
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,1955 @@
+@@ -0,0 +1,1958 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -4395,8 +4404,11 @@ index 0000000..bed3d38
 +static void toProxy(RexxThreadContext *c, std::string &out, RexxObjectPtr v)
 +{
 +    if (__atomic_load_n(&serverThread, __ATOMIC_SEQ_CST) == 0) serverSetup(c);
-+    std::string str = c->ObjectToStringValue(v);
-+    if (c->CheckCondition()) c->ClearCondition();
++    // its STRING, sent: asking for its string value (requestString) would
++    // raise NOSTRING in the Rexx code that called, when that code traps it
++    RexxObjectPtr s = c->IsString(v) ? v : c->SendMessage0(v, "STRING");
++    if (c->CheckCondition()) { c->ClearCondition(); s = NULLOBJECT; }
++    std::string str = s != NULLOBJECT && c->IsString(s) ? c->ObjectToStringValue(s) : "";
 +    size_t id;
 +    RexxObjectPtr g = c->RequestGlobalReference(v);  // (not with eventLock held: see above)
 +    {

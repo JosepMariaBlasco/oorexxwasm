@@ -354,7 +354,7 @@ index b13d517..cb5c6fa 100644
  };
  </script>
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index d5cfa88..777d199 100755
+index a1588b7..1e031aa 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -42,7 +42,7 @@ Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP
@@ -3200,7 +3200,7 @@ index 0000000..63aa1a9
 +  };
 +})();
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
-index bed3d38..08ea224 100644
+index 78db440..0b7ccce 100644
 --- a/wasm/web-js.cpp
 +++ b/wasm/web-js.cpp
 @@ -695,6 +695,7 @@ static RexxObjectPtr toRexx(RexxThreadContext *c, const std::string &s, size_t &
@@ -3211,7 +3211,7 @@ index bed3d38..08ea224 100644
                  return c->String(r.data.c_str());
              }
              RexxArrayObject args = c->ArrayOfThree(c->String(r.data.substr(0, t1).c_str()),
-@@ -1120,6 +1121,13 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
+@@ -1123,6 +1124,13 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
      return NULLOBJECT;
  }
  
