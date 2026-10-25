@@ -25,18 +25,18 @@ function, is SYNTAX 93.900.
   deregister, answering what they answer), and
   start({commandEnvironments: {NAME: fn}}), which stops the session if one
   fails.
-- Tests: wasm/tests/js-commands.rex (56 checks, Node and the worker's
+- Tests: wasm/tests/js-commands.rex (59 checks, Node and the worker's
   realm; in qualify-node-cli.sh and web-api.py), web-api.py "js commands
   page" (a function of the page) and "session commands".
 Not part of the posted RFE.
 ---
  wasm/README.md                 |  15 ++
- wasm/tests/js-commands.rex     | 274 +++++++++++++++++++++++++++++++++
+ wasm/tests/js-commands.rex     | 283 +++++++++++++++++++++++++++++++++
  wasm/tests/qualify-node-cli.sh |   5 +
  wasm/tests/web-api.py          |  50 ++++++
  wasm/web/js.cls                |  81 ++++++++++
  wasm/web/ooRexx.js             |  33 +++-
- 6 files changed, 452 insertions(+), 6 deletions(-)
+ 6 files changed, 461 insertions(+), 6 deletions(-)
  create mode 100644 wasm/tests/js-commands.rex
 
 diff --git a/wasm/README.md b/wasm/README.md
@@ -67,10 +67,10 @@ index e2460df..e979b3c 100644
    passed synchronously to the main runtime thread, where `js-bridge.js` (a
 diff --git a/wasm/tests/js-commands.rex b/wasm/tests/js-commands.rex
 new file mode 100644
-index 0000000..279acc1
+index 0000000..d412f1a
 --- /dev/null
 +++ b/wasm/tests/js-commands.rex
-@@ -0,0 +1,274 @@
+@@ -0,0 +1,283 @@
 +/*----------------------------------------------------------------------------*/
 +/* Command environments written in JavaScript (.JSCommandHandler, one of    */
 +/* the interpreter's .CommandHandlers), in the realm of .js: the worker's in */
@@ -108,6 +108,7 @@ index 0000000..279acc1
 +  "case 'halt': globalThis.thing.halts(); return 0;" -
 +  "case 'raisehalt': return ctx.raise('HALT', 5);" -
 +  "case 'errorhalt': ctx.raiseError(5); globalThis.thing.halts(); return 5;" -
++  "case 'halthere': globalThis.thing.haltHere(); return 6;" -
 +  "case 'twice': ctx.raiseError(1); return ctx.raiseError(2);" -
 +  "case 'throw': throw new TypeError('from the handler');" -
 +  "case 'reject': return Promise.reject(new RangeError('rejected'));" -
@@ -189,6 +190,12 @@ index 0000000..279acc1
 +call check "halt (Rexx code the function calls): SIGNAL ON HALT traps it", haltSignalOn("halt") == "HALT"
 +call check "halt (Rexx code the function calls): CALL ON HALT after the next clause", haltCallOn("halt") == "HALT rc 0"
 +call check "halt (Rexx code the function calls): untrapped, SYNTAX 4.1", haltUntrapped("halt") == "SYNTAX 4.1"
++-- RAISE HALT in a method that JavaScript calls on the issuer's thread: the
++-- SIGNAL ON HALT of the issuer (and COMMAND's own) must not unwind through
++-- JavaScript's frames; the call answers JavaScript, which finishes, first
++call check "raise halt in a method JavaScript calls: SIGNAL ON HALT traps it", haltSignalOn("halthere") == "HALT"
++call check "raise halt in a method JavaScript calls: CALL ON HALT after the next clause", haltCallOn("halthere") == "HALT rc 0"
++call check "raise halt in a method JavaScript calls: untrapped, SYNTAX 4.1", haltUntrapped("halthere") == "SYNTAX 4.1"
 +call check "halt after ctx.raiseError: SIGNAL ON HALT traps the HALT", haltSignalOn("errorhalt") == "HALT"
 +call check "halt after ctx.raiseError: CALL ON gets both, HALT first", haltErrorCallOn() == "HALT ERROR rc 5"
 +.CommandHandler~register("REXXHALT", .HaltingHandler~new)
@@ -327,6 +334,8 @@ index 0000000..279acc1
 +::requires "js.cls"
 +
 +::class Thing
++::method haltHere                   -- a HALT raised in the method itself
++  raise halt
 +::method halts                      -- a HALT in a routine: it does not reach the issuer's traps
 +  call haltsHere
 +::method user
@@ -346,7 +355,7 @@ index 0000000..279acc1
 +::routine haltsHere
 +  raise halt
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 703beb0..bf7adec 100755
+index 703beb0..0a408ed 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -441,6 +441,11 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
@@ -355,14 +364,14 @@ index 703beb0..bf7adec 100755
  
 +# --- command environments written in JavaScript (.JSCommandHandler in js.cls,
 +# one of the interpreter's .CommandHandlers), portable test
-+check "command handlers in JavaScript (.JSCommandHandler)" '^56 passed, 0 failed$' '!^FAIL ' -- \
++check "command handlers in JavaScript (.JSCommandHandler)" '^59 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-commands.rex'"
 +
  # --- ADDRESS FETCH (wasm/web/fetch.cls over .CommandHandler and js.cls), portable test
  "$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
  FETCH_SRV=$!; sleep 0.5
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 15b95ef..ff22b2d 100755
+index 15b95ef..09ca926 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -99,6 +99,28 @@ CASES = [
@@ -371,7 +380,7 @@ index 15b95ef..ff22b2d 100755
       {}, lambda r: r["out"] == "1\n"),
 +  # command environments written in JavaScript (.JSCommandHandler), in the worker's realm: the portable test
 +  ("js commands", open(f"{SRC}/wasm/tests/js-commands.rex").read(), {"js": {"worker": True}},
-+     lambda r: "56 passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
++     lambda r: "59 passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
 +  # ... and a function of the page: its ctx calls give Promises
 +  ("js commands page", 'f = .js~page~Function~new("c", "ctx", "return ctx.getVar(\'X\').then((x) => \' \' + c + \' \' + x * 2)")\n'
 +                       '.CommandHandler~register("P", .JSCommandHandler~new(f)); x = 21; address p "go"; say "["rc"]"\n'
