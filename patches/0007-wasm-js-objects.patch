@@ -165,11 +165,11 @@ of Array, Directory and StringTable are copied too, read by SUPPLIER
  wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 1958 ++++++++++++++++++++++++
+ wasm/web-js.cpp                        | 1959 ++++++++++++++++++++++++
  wasm/web/js.cls                        |  750 +++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 +++
- 24 files changed, 6105 insertions(+), 12 deletions(-)
+ 24 files changed, 6106 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -3593,10 +3593,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..78db440
+index 0000000..a769476
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,1958 @@
+@@ -0,0 +1,1959 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -4409,6 +4409,7 @@ index 0000000..78db440
 +    RexxObjectPtr s = c->IsString(v) ? v : c->SendMessage0(v, "STRING");
 +    if (c->CheckCondition()) { c->ClearCondition(); s = NULLOBJECT; }
 +    std::string str = s != NULLOBJECT && c->IsString(s) ? c->ObjectToStringValue(s) : "";
++    if (s != NULLOBJECT && s != v) c->ReleaseLocalReference(s);
 +    size_t id;
 +    RexxObjectPtr g = c->RequestGlobalReference(v);  // (not with eventLock held: see above)
 +    {
