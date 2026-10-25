@@ -9,4 +9,4 @@ bcc1cfb6a8136339c26030fa096ea60949eb8ee4417862bc622a5a0c3b318151  0007-wasm-js-o
 a7f402ce5d417168baffc1c3d392aff8055bcbfeab5db2edc26191dbfc858b9c  0009-wasm-web-jdor.patch
 2e3212b1c5859d9d4da371cf16c0c742fbc0b78a01b01edab20dd17d80ad92fb  0010-wasm-address-fetch.patch
 af42ffefaf8b50b591c252f9626e8a6ad0b268bc4562f099ab38a857eb36b185  0011-wasm-address-dom.patch
-5fd4bf1b893239244130e9f4d66fffb1f23e7c441e9148b5647181d0f66918fb  0012-wasm-js-command-environments.patch
+bed236f9c113482c9657db210d8f97449520515370c0ea7f6bf69a582a45dca5  0012-wasm-js-command-environments.patch

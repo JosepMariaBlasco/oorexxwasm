@@ -46,7 +46,7 @@ Applied in order on top of ooRexx SVN trunk **r13291**
 | 0009 | `ADDRESS JDOR`: Rony G. Flatscher's JDOR drawing commands on the browser's canvas (an example environment) |
 | 0010 | `ADDRESS FETCH`: HTTP from Rexx commands (an example environment) |
 | 0011 | `ADDRESS DOM`: building and driving the page from Rexx commands (an example environment) |
-| 0012 | Command environments written in JavaScript: `.js~addCommandEnvironment(name, fn)` |
+| 0012 | Command environments written in JavaScript: `.JSCommandHandler`, a JavaScript function as one of the interpreter's `.CommandHandler`s |
 
 0001–0008 are the RFE: the port, and `.JSObject`, which
 [`docs/ooRexx-WASM-and-JavaScript.md`](docs/ooRexx-WASM-and-JavaScript.md)
@@ -54,8 +54,8 @@ specifies. 0009, 0010 and 0011 are example command environments built on
 them; 0010 and 0011 are written in Rexx on the interpreter's own command
 environments written in Rexx (`.CommandHandler`, since trunk r13288:
 [RFE #882](https://sourceforge.net/p/oorexx/feature-requests/882/)), and
-0012 makes JavaScript functions command environments, as `.JSObject`'s
-specification describes. (Until r13288 the series carried
+0012 makes JavaScript functions command environments of the same kind, as
+`.JSObject`'s specification describes. (Until r13288 the series carried
 that mechanism as a patch of its own, `cmdhandler`; the core's version
 replaced it.) The
 patches are in git format and apply with `svn patch` or `git am`;
