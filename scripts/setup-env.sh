@@ -18,7 +18,7 @@
 ORX_WASM_WORK=${ORX_WASM_WORK:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)}   # where oorexx/, build-wasm/ ... live
 set -euo pipefail
 
-REV=${OOREXX_REV:-13289}
+REV=${OOREXX_REV:-13291}
 EMVER=${EMVER:-6.0.12}
 OOREXX=${OOREXX:-$ORX_WASM_WORK/oorexx}
 BUILD=${BUILD:-$ORX_WASM_WORK/build-wasm}

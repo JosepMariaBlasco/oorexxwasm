@@ -30,7 +30,7 @@ updates to that request are now published in [`rfe/`](rfe/).
 
 ## The patch series
 
-Applied in order on top of ooRexx SVN trunk **r13289**
+Applied in order on top of ooRexx SVN trunk **r13291**
 (`https://svn.code.sf.net/p/oorexx/code-0/main/trunk`):
 
 | Patch | What it adds |
@@ -77,7 +77,7 @@ and installs a build. Everything goes into the directory that contains your
 clone (`$ORX_WASM_WORK`, overridable), next to it:
 
 ```
-oorexx/        ooRexx trunk r13289 + patches
+oorexx/        ooRexx trunk r13291 + patches
 build-wasm/    bin/ (Node and browser, MEMFS), bin-node/ (Node CLI), bin-web/ (pages)
 saved-build/   the prebuilt binaries it downloaded
 emsdk/         Emscripten, only when compiling
@@ -120,8 +120,8 @@ interpreter) runs with `tests/run-suite.sh` under Node and with
 with the test suite's native libraries (`build-wasm/bin-node-test`,
 `bin-web-test`, from `wasm/build-test.sh`: the API test groups need them).
 Results on
-r13289 with test/trunk r13291 (main/trunk is the same; the tests of r13291
-are needed: see the results page), 404 test groups (GitHub Actions runners,
+r13291 (run on r13289, whose main/trunk is identical; test/trunk r13291),
+404 test groups (GitHub Actions runners,
 Ubuntu 24.04):
 
 | | groups passing |
