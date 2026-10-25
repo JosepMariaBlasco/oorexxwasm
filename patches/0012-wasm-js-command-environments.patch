@@ -17,26 +17,29 @@ pending, finish, isRedirected, isValid), the tests answering booleans;
 in the page its calls give Promises.  A JavaScript exception is SYNTAX
 98.900 where the command was issued (ADDITIONAL as for any JavaScript
 exception); a condition of Rexx that the function lets through is raised
-there as itself, and a HALT that Rexx code the function calls leaves
-untrapped is a HALT there.  .JSCommandHandler~new(.nil), or of anything but a
+there as itself, and so is any other condition that Rexx code the
+function calls raises (USER: COMMAND is a native method, js_command in
+web-js.cpp, so no Rexx activation stands in between); a HALT that such
+code leaves untrapped is a HALT there.  .JSCommandHandler~new(.nil), or of anything but a
 function, is SYNTAX 93.900.
 - From the page (ooRexx.js): a session's addCommandEnvironment(name, fn)
   and removeCommandEnvironment(name) (.JSSession: register and
   deregister, answering what they answer), and
   start({commandEnvironments: {NAME: fn}}), which stops the session if one
   fails.
-- Tests: wasm/tests/js-commands.rex (59 checks, Node and the worker's
+- Tests: wasm/tests/js-commands.rex (62 checks, Node and the worker's
   realm; in qualify-node-cli.sh and web-api.py), web-api.py "js commands
   page" (a function of the page) and "session commands".
 Not part of the posted RFE.
 ---
  wasm/README.md                 |  15 ++
- wasm/tests/js-commands.rex     | 283 +++++++++++++++++++++++++++++++++
+ wasm/tests/js-commands.rex     | 301 +++++++++++++++++++++++++++++++++
  wasm/tests/qualify-node-cli.sh |   5 +
  wasm/tests/web-api.py          |  50 ++++++
- wasm/web/js.cls                |  81 ++++++++++
+ wasm/web-js.cpp                |  38 +++++
+ wasm/web/js.cls                |  70 ++++++++
  wasm/web/ooRexx.js             |  33 +++-
- 6 files changed, 461 insertions(+), 6 deletions(-)
+ 7 files changed, 506 insertions(+), 6 deletions(-)
  create mode 100644 wasm/tests/js-commands.rex
 
 diff --git a/wasm/README.md b/wasm/README.md
@@ -67,10 +70,10 @@ index e2460df..e979b3c 100644
    passed synchronously to the main runtime thread, where `js-bridge.js` (a
 diff --git a/wasm/tests/js-commands.rex b/wasm/tests/js-commands.rex
 new file mode 100644
-index 0000000..d412f1a
+index 0000000..9f2b493
 --- /dev/null
 +++ b/wasm/tests/js-commands.rex
-@@ -0,0 +1,283 @@
+@@ -0,0 +1,301 @@
 +/*----------------------------------------------------------------------------*/
 +/* Command environments written in JavaScript (.JSCommandHandler, one of    */
 +/* the interpreter's .CommandHandlers), in the realm of .js: the worker's in */
@@ -149,13 +152,23 @@ index 0000000..d412f1a
 +x = 42
 +"bracket";               call check "ctx[name] (the message []): the caller's variable", rc == 42
 +-- a USER condition that a Rexx handler raises reaches the trap of the code
-+-- that issued the command, as itself.  (Rexx code that a JavaScript handler
-+-- calls cannot hand one back yet: ooRexx drops non-SYNTAX conditions at the
-+-- native API, a finding with the ooRexx bugs, not worked around here)
++-- that issued the command, as itself; so does one that Rexx code a
++-- JavaScript handler's function calls raises (COMMAND is native: no Rexx
++-- activation in between), as in plain Rexx: SIGNAL ON traps it (the command
++-- does not finish), CALL ON runs and the function goes on (RC its result),
++-- untrapped it is ignored
 +.CommandHandler~register("REXXH", .RaisingHandler~new)
 +call userCommand "REXXH", "raise"
 +call check "a Rexx handler that raises USER: the caller's SIGNAL ON, as itself", -
 +  .local~userTrapped == "USER MINE | the description | two"
++.js~globalThis["thing"] = .Thing~new
++call userCommand "CALC", "user"
++call check "USER from Rexx code the function calls: SIGNAL ON, as itself", -
++  .local~userTrapped == "USER MINE | the description | two"
++call check "USER from Rexx code the function calls: CALL ON, the function goes on", -
++  userCallOn() == "USER MINE the description rc JavaScript went on: 7"
++address calc "user";     call check "USER from Rexx code the function calls: untrapped, ignored", -
++  rc == "JavaScript went on: 7"
 +
 +call on error name gotError
 +"error";                 call check "ctx.raiseError(5): ERROR, RC 5", raised == "ERROR 5"
@@ -194,10 +207,10 @@ index 0000000..d412f1a
 +-- SIGNAL ON HALT of the issuer (and COMMAND's own) must not unwind through
 +-- JavaScript's frames; the call answers JavaScript, which finishes, first
 +call check "raise halt in a method JavaScript calls: SIGNAL ON HALT traps it", haltSignalOn("halthere") == "HALT"
-+call check "raise halt in a method JavaScript calls: CALL ON HALT after the next clause", haltCallOn("halthere") == "HALT rc 0"
++call check "raise halt in a method JavaScript calls: CALL ON HALT after the next clause", haltCallOn("halthere") == "HALT rc 6"
 +call check "raise halt in a method JavaScript calls: untrapped, SYNTAX 4.1", haltUntrapped("halthere") == "SYNTAX 4.1"
 +call check "halt after ctx.raiseError: SIGNAL ON HALT traps the HALT", haltSignalOn("errorhalt") == "HALT"
-+call check "halt after ctx.raiseError: CALL ON gets both, HALT first", haltErrorCallOn() == "HALT ERROR rc 5"
++call check "halt after ctx.raiseError: CALL ON gets both, ERROR first", haltErrorCallOn() == "ERROR HALT rc 5"
 +.CommandHandler~register("REXXHALT", .HaltingHandler~new)
 +call check "a handler in Rexx: a routine's HALT is SYNTAX 4.1, as in plain Rexx", haltSignalOn("halt", "REXXHALT") == "SYNTAX 4.1"
 +
@@ -262,6 +275,14 @@ index 0000000..d412f1a
 +
 +gotError:   raised = condition("C") rc; return
 +gotFailure: raised = condition("C") rc; return
++
++userCallOn: procedure                -- CALL ON USER MINE around the command
++  .local~called = ""
++  call on user mine name userCalled
++  address calc "user"
++  nop
++  return .local~called "rc" rc
++userCalled: .local~called = condition("C") condition("D"); return
 +
 +userCommand: procedure              -- SIGNAL ON USER MINE around ADDRESS env command
 +  use arg env, command
@@ -355,7 +376,7 @@ index 0000000..d412f1a
 +::routine haltsHere
 +  raise halt
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 703beb0..0a408ed 100755
+index 703beb0..4acf5c9 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -441,6 +441,11 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
@@ -364,14 +385,14 @@ index 703beb0..0a408ed 100755
  
 +# --- command environments written in JavaScript (.JSCommandHandler in js.cls,
 +# one of the interpreter's .CommandHandlers), portable test
-+check "command handlers in JavaScript (.JSCommandHandler)" '^59 passed, 0 failed$' '!^FAIL ' -- \
++check "command handlers in JavaScript (.JSCommandHandler)" '^62 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-commands.rex'"
 +
  # --- ADDRESS FETCH (wasm/web/fetch.cls over .CommandHandler and js.cls), portable test
  "$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
  FETCH_SRV=$!; sleep 0.5
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 15b95ef..09ca926 100755
+index 15b95ef..8e1cb98 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -99,6 +99,28 @@ CASES = [
@@ -380,7 +401,7 @@ index 15b95ef..09ca926 100755
       {}, lambda r: r["out"] == "1\n"),
 +  # command environments written in JavaScript (.JSCommandHandler), in the worker's realm: the portable test
 +  ("js commands", open(f"{SRC}/wasm/tests/js-commands.rex").read(), {"js": {"worker": True}},
-+     lambda r: "59 passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
++     lambda r: "62 passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
 +  # ... and a function of the page: its ctx calls give Promises
 +  ("js commands page", 'f = .js~page~Function~new("c", "ctx", "return ctx.getVar(\'X\').then((x) => \' \' + c + \' \' + x * 2)")\n'
 +                       '.CommandHandler~register("P", .JSCommandHandler~new(f)); x = 21; address p "go"; say "["rc"]"\n'
@@ -438,8 +459,64 @@ index 15b95ef..09ca926 100755
    ("session page", '''
      const s = await rexxLib.start({ js: { page: true } });
      await s.eval('d = .js~page~document; b = d~createElement("button"); b~id = "rx"; d~body~appendChild(b)\\n' +
+diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
+index cc612d6..afb3ba8 100644
+--- a/wasm/web-js.cpp
++++ b/wasm/web-js.cpp
+@@ -1484,6 +1484,43 @@ RexxMethod0(RexxObjectPtr, js_await)
+     return request(context->threadContext, OP_AWAIT, s);
+ }
+ 
++// COMMAND(command, caller) of a .JSCommandHandler (js.cls): fn(command, ctx),
++// ctx a .JSCommandContext on caller; what fn gives is RC (undefined or null:
++// 0; a thenable is waited for).  Native, so that no Rexx activation stands
++// between the code that issued the command and JavaScript: a condition that
++// Rexx code the function calls raises (USER ... RETURN, a HALT given back as
++// a HALT) reaches that code as itself; one that the API holds when this
++// returns (a SYNTAX) is raised there by the interpreter
++RexxMethod2(RexxObjectPtr, js_command, RexxObjectPtr, command, RexxObjectPtr, caller)
++{
++    RexxThreadContext *c = context->threadContext;
++    RexxObjectPtr fn = context->GetObjectVariable("FN");
++    RexxClassObject ctxClass = context->FindContextClass("JSCOMMANDCONTEXT");
++    if (fn == NULLOBJECT || ctxClass == NULLOBJECT) return context->WholeNumberToObject(0);
++    RexxObjectPtr ctx = c->SendMessage1(ctxClass, "NEW", caller);
++    if (c->CheckCondition()) return NULLOBJECT;
++    RexxArrayObject a = c->ArrayOfThree(c->Nil(), command, ctx);
++    RexxObjectPtr r = c->SendMessage(fn, "CALL", a);
++    if (c->CheckCondition()) return NULLOBJECT;
++    if (r != NULLOBJECT && isA(c, r, jsObjectClass))
++    {
++        RexxObjectPtr then = c->SendMessage1(r, "[]", c->String("then"));
++        if (c->CheckCondition()) return NULLOBJECT;
++        if (then != NULLOBJECT && isA(c, then, jsObjectClass))
++        {
++            RexxObjectPtr type = c->SendMessage0(then, "JS.TYPEOF");
++            if (c->CheckCondition()) return NULLOBJECT;
++            if (type != NULLOBJECT && c->ObjectToStringValue(type) == std::string("function"))
++            {
++                r = c->SendMessage0(r, "AWAIT");
++                if (c->CheckCondition()) return NULLOBJECT;
++            }
++        }
++    }
++    if (r == NULLOBJECT || r == c->Nil() || r == jsUndefined) return context->WholeNumberToObject(0);
++    return r;
++}
++
+ // introspection: TYPEOF, CLASSNAME, PROPERTYNAMES, MAKEARRAY, SUPPLIER (its data), BYTESTRING,
+ // INSTANCEOF(c), HASPROPERTY(n)
+ static RexxObjectPtr info(RexxMethodContext *context, const char *what, RexxObjectPtr arg)
+@@ -1922,6 +1959,7 @@ static RexxMethodEntry jsMethods[] =
+     REXX_METHOD(js_has, js_has),
+     REXX_METHOD(js_info, js_info),
+     REXX_METHOD(js_uninit, js_uninit),
++    REXX_METHOD(js_command, js_command),
+     REXX_LAST_METHOD()
+ };
+ 
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
-index 9e602ed..7b4ed2f 100644
+index 9e602ed..f2437bd 100644
 --- a/wasm/web/js.cls
 +++ b/wasm/web/js.cls
 @@ -218,6 +218,19 @@
@@ -485,7 +562,7 @@ index 9e602ed..7b4ed2f 100644
  ::method lines private              -- source text (a string, maybe with line ends) as an Array of lines
    use arg source
    if source~isA(.String) then return source~makeArray
-@@ -710,6 +732,65 @@ syntax: raise propagate
+@@ -710,6 +732,54 @@ syntax: raise propagate
  ::method string
    return "a JSSession"
  
@@ -509,19 +586,8 @@ index 9e602ed..7b4ed2f 100644
 +::method function
 +  expose fn
 +  return fn
-+::method command
-+  expose fn
-+  use arg command, caller
-+  signal on halt name halted
-+  r = fn~call(.nil, command, .JSCommandContext~new(caller))
-+  if r~isA(.JSObject) then do
-+    if r~js.hasProperty("then") then if r~js.getStrict("then")~isA(.JSObject) then
-+      if r~js.getStrict("then")~js.typeOf == "function" then r = r~await
-+  end
-+  if .nil == r | .js~undefined == r then return 0
-+  return r
-+halted:
-+  raise halt
++::method command external "LIBRARY js js_command"             -- native: no Rexx activation
++                                     -- between the issuer and JavaScript (web-js.cpp)
 +::method string
 +  return "a JSCommandHandler"
 +
