@@ -39,7 +39,11 @@ nested by dimension, the first outermost); a copy keeps cycles and sharing
 1000 deep), releasing each item's local reference once copied.  Subclasses
 of Array, Directory and StringTable are copied too, read by SUPPLIER
 (and DIMENSIONS, an Array's shape);
-.js~ref(x) sends any Rexx object by reference, as a RexxProxy.
+.js~ref(x) sends any Rexx object by reference, as a RexxProxy.  A
+RexxProxy keeps its Rexx object while JavaScript holds it; its crossings
+count both ways, so an object JavaScript hands back (a result, an
+argument, a RexxError's condition, the target of a message) stays until
+Rexx has read it, even if JavaScript collects the proxy meanwhile.
 
 - Message names arrive uppercased, so they are resolved case-insensitively
   along the prototype chain (cached per object; of two matches the one
@@ -151,7 +155,7 @@ of Array, Directory and StringTable are copied too, read by SUPPLIER
  wasm/build-web.sh                      |   17 +-
  wasm/extra-packages.cpp                |   66 +
  wasm/js-bridge.js                      |  241 +++
- wasm/js-realm.js                       |  991 ++++++++++++
+ wasm/js-realm.js                       | 1004 ++++++++++++
  wasm/tests/js-arrays.rex               |  169 ++
  wasm/tests/js-booleans.rex             |   78 +
  wasm/tests/js-errors.rex               |  264 ++++
@@ -159,17 +163,17 @@ of Array, Directory and StringTable are copied too, read by SUPPLIER
  wasm/tests/js-extend.rex               |  157 ++
  wasm/tests/js-floats.rex               |  112 ++
  wasm/tests/js-proxy.rex                |  136 ++
- wasm/tests/qualify-node-cli.sh         |  213 +++
+ wasm/tests/qualify-node-cli.sh         |  277 ++++
  wasm/tests/web-api.html                |    4 +-
  wasm/tests/web-api.py                  |  236 ++-
  wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 1959 ++++++++++++++++++++++++
+ wasm/web-js.cpp                        | 1998 ++++++++++++++++++++++++
  wasm/web/js.cls                        |  750 +++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 +++
- 24 files changed, 6106 insertions(+), 12 deletions(-)
+ 24 files changed, 6222 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -882,10 +886,10 @@ index 0000000..ea8b80b
 +})();
 diff --git a/wasm/js-realm.js b/wasm/js-realm.js
 new file mode 100644
-index 0000000..fb1cba9
+index 0000000..9aca10d
 --- /dev/null
 +++ b/wasm/js-realm.js
-@@ -0,0 +1,991 @@
+@@ -0,0 +1,1004 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -1124,13 +1128,22 @@ index 0000000..fb1cba9
 +    text(what) { return text(this.rec().d, what); }
 +  }
 +  class Writer {
-+    constructor() { this.parts = []; this.len = 0; }
++    constructor() { this.parts = []; this.len = 0; this.out = []; }
 +    rec(tag, data) {
 +      const d = typeof data === 'string' ? enc.encode(data) : data;
 +      const h = enc.encode(tag + d.length + ':');
 +      this.parts.push(h, d); this.len += h.length + d.length;
 +    }
++    // a Rexx object named in this message (R, or the target of M): it goes
++    // to Rexx, and so counts as one more crossing of its proxy (held.n), as
++    // the Rexx side counts it when it reads the record (see rexxProxy)
++    proxy(id) {
++      const e = proxies.get(id);
++      if (e) this.out.push(e.held);
++    }
 +    bytes() {
++      for (const held of this.out) held.n++;  // the message goes now
++      this.out = [];
 +      const out = new Uint8Array(this.len);
 +      let p = 0;
 +      for (const x of this.parts) { out.set(x, p); p += x.length; }
@@ -1259,7 +1272,7 @@ index 0000000..fb1cba9
 +        if (v instanceof RefForRexx) { w.rec('S', v.ref); return; }
 +        {
 +          const pid = proxyId.get(v);          // a Rexx object: itself
-+          if (pid !== undefined) { w.rec('R', String(pid)); return; }
++          if (pid !== undefined) { w.rec('R', String(pid)); w.proxy(pid); return; }
 +        }
 +        {
 +          // an instance of a Rexx class extending a JavaScript class: the Rexx
@@ -1345,7 +1358,10 @@ index 0000000..fb1cba9
 +  // each time it comes over) and its string then.  One proxy per id while
 +  // JavaScript holds it (identity); when it is collected, the counts it got
 +  // go back by emit (Z "id<tab>n"), and the Rexx object can go when none is
-+  // left.  A call is a synchronous call of Rexx (M "id<tab>NAME", U, the
++  // left.  Its crossings count both ways: n also counts each message that
++  // names it going to Rexx (R, the target of M; Writer.proxy), which Rexx
++  // counts when it reads it, so a proxy collected while such a message is
++  // on its way does not take the object from under it.  A call is a synchronous call of Rexx (M "id<tab>NAME", U, the
 +  // scope, A args), as a handler's; in a realm that cannot wait (the page) the
 +  // same call is queued as an event (hooks.call) and gives a Promise of the
 +  // result, rejected with a RexxError for a condition.
@@ -1400,6 +1416,7 @@ index 0000000..fb1cba9
 +    const w = new Writer();
 +    try {
 +      w.rec('M', id + '\t' + String(name).toUpperCase());
++      w.proxy(id);
 +      w.rec('U', '');
 +      if (scope === undefined) w.rec('U', ''); else put(w, scope);
 +      putArgs(w, args);
@@ -1841,7 +1858,7 @@ index 0000000..fb1cba9
 +    // raised again as itself
 +    if (e instanceof RexxError) {
 +      const pid = e[CONDITION] !== undefined ? proxyId.get(e[CONDITION]) : undefined;
-+      if (pid !== undefined) { w.rec('J', ''); w.rec('R', String(pid)); return w.bytes(); }
++      if (pid !== undefined) { w.rec('J', ''); w.rec('R', String(pid)); w.proxy(pid); return w.bytes(); }
 +    }
 +    let msg;
 +    try {
@@ -2947,10 +2964,10 @@ index 0000000..1f62423
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index b44ba2b..e97d5ce 100755
+index b44ba2b..db28f4b 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -228,6 +228,219 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
+@@ -228,6 +228,283 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
  check "name resolution (host resolver)" '^localhost=1 127\.0\.0\.1$' '^invalid=0$' '^reverse=1 ' "^hostname=$(hostname)\$" '^hostid=[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' -- \
    "$X dns.rex"
  
@@ -3106,6 +3123,70 @@ index b44ba2b..e97d5ce 100755
 +EOF
 +check "JavaScript objects: a handler whose function JavaScript collects is released" '^300$' -- \
 +  "NODE_OPTIONS=--expose-gc $X jshgc.rex | grep -c '^uninit$'"
++# a proxy's crossings count both ways: one that comes back to Rexx (a result,
++# an argument, the target of a message) keeps its object while JavaScript holds
++# it, and lets it go when JavaScript collects it
++cat > "$T/jsrgc.rex" <<'EOF'
++keep = .js~Function~new("o", "(globalThis.kept ||= []).push(o); return o")
++back = .js~Function~new("o", "return o")
++send = .js~Function~new("o", "return o.ping()")
++do i = 1 to 300; o = .Gone~new; x = keep~call(.nil, o); do 3; x = back~call(.nil, o); x = send~call(.nil, o); end; end
++drop o x
++gc = .js~Function~new("globalThis.gc(); return 1")
++do 5; y = gc~call(.nil); call SysSleep 0.1; end
++call SysSleep 0.3; y = .js~Math~max(1, 2)
++do k = 1 to 10; a = .array~new; do j = 1 to 50000; a[j] = .mutableBuffer~new(copies("x", 50)); end; drop a; end
++call SysSleep 0.1
++say "held"
++forget = .js~Function~new("globalThis.kept = undefined; return 1"); y = forget~call(.nil)
++do 5; y = gc~call(.nil); call SysSleep 0.1; end
++-- V8 runs finalizers as a task of its own, when it has time: give it some,
++-- and a request after each wait (the releases are done at a request)
++do 4
++  do k = 1 to 5; a = .array~new; do j = 1 to 50000; a[j] = .mutableBuffer~new(copies("x", 50)); end; drop a; end
++  call SysSleep 0.3; y = gc~call(.nil); call SysSleep 0.2; y = .js~Math~max(1, 2)
++end
++do k = 1 to 30; a = .array~new; do j = 1 to 50000; a[j] = .mutableBuffer~new(copies("x", 50)); end; drop a; end
++call SysSleep 0.1
++say "dropped"
++::requires "js.cls"
++::class Gone
++::method ping
++  return 1
++::method uninit
++  say "uninit"
++EOF
++check "JavaScript objects: a RexxProxy that comes back stays while JavaScript holds it" '^held$' -- \
++  "NODE_OPTIONS=--expose-gc $X jsrgc.rex | sed -n '1p'"
++check "JavaScript objects: ... and goes when JavaScript collects it" '^300$' -- \
++  "NODE_OPTIONS=--expose-gc $X jsrgc.rex | sed -n '/^held$/,/^dropped$/p' | grep -c '^uninit$'"
++# a Rexx condition let through JavaScript comes back as itself even when
++# JavaScript collects its RexxProxy before Rexx reads the reply (forced GC,
++# four processes on the CPUs at once)
++cat > "$T/jsrace.rex" <<'EOF'
++.js~globalThis["thing"] = .Thing~new
++g = .js~Function~new("globalThis.__gcTimer = setInterval(() => gc(), 0)"); x = g~call(.nil)
++f = .js~Function~new("return globalThis.thing.fails()")
++bad = 0
++do i = 1 to 5000
++  if once(f) \== "41.1" then bad += 1
++end
++g = .js~Function~new("clearInterval(globalThis.__gcTimer)"); x = g~call(.nil)
++say "not as themselves:" bad
++exit
++once: procedure
++  use arg f
++  signal on syntax name s
++  x = f~call(.nil)
++  return "no error"
++s: return condition("O")~code
++::requires "js.cls"
++::class Thing
++::method fails
++  return 1 + "a"
++EOF
++check "JavaScript objects: a condition through JavaScript under GC pressure, as itself" '^not as themselves: 0$' -- \
++  "for k in 1 2 3 4; do NODE_OPTIONS=--expose-gc $X jsrace.rex > jsrace.\$k.out & done; wait; cat jsrace.*.out | sort -u"
 +
 +# --- the bridge's own methods (js.), exact names, objects from names and values
 +cat > "$T/jsnames.rex" <<'EOF'
@@ -3593,10 +3674,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..a769476
+index 0000000..3e5faee
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,1959 @@
+@@ -0,0 +1,1998 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -3699,8 +3780,14 @@ index 0000000..a769476
 + *
 + * Proxies: a Rexx object that is not converted goes to JavaScript as a
 + * RexxProxy (js-realm.js): pinned here, one id per object, counted once each
-+ * time it goes; JavaScript gives the counts back (an event Z "id<tab>n")
-+ * when it collects the proxy, and at zero the object is unpinned.  Its
++ * time it crosses, either way: when it goes to JavaScript, and when a record
++ * from JavaScript that names it (R, the target of M) is read here; JavaScript
++ * counts the same crossings and gives its counts back (an event Z
++ * "id<tab>n") when it collects the proxy.  The object is unpinned when the
++ * counts meet, at the Z or at the reading of the last record that names it,
++ * whichever comes last: a proxy collected while a reply that names it is on
++ * its way (a RexxError's condition let through) keeps its object until the
++ * reply is read.  A count may go below zero meanwhile.  Its
 + * methods are synchronous calls, as handlers' (M "id<tab>NAME" + U + the
 + * scope or U + A).
 + *
@@ -4029,10 +4116,14 @@ index 0000000..a769476
 +static void dropEvent(const std::string &ev);
 +
 +// Rexx objects given to JavaScript as proxies: their ids (also in pinned) and
-+// how many times each went without coming back (guarded by eventLock)
++// their crossings, those to JavaScript and those read back here less those
++// JavaScript gave back (see Proxies above; guarded by eventLock)
 +static std::map<RexxObjectPtr, size_t> proxyIds;
-+static std::map<size_t, size_t> proxyCounts;
++static std::map<size_t, long long> proxyCounts;
 +static std::vector<RexxObjectPtr> unpinned;         // global references to release, with a context
++// threads taking a pinned object as a local reference of their own (see
++// takePinned): the global references in unpinned wait until there are none
++static int taking = 0;
 +
 +// the pairs of .js~extend (see Classes above; guarded by eventLock)
 +struct PeerState
@@ -4063,6 +4154,7 @@ index 0000000..a769476
 +    {
 +        std::lock_guard<std::mutex> lock(eventLock);
 +        if (unpinned.empty() && deadPeers.empty()) return;
++        if (taking > 0) return;                     // a later call releases them
 +        gone.swap(unpinned);
 +        for (size_t id : deadPeers)
 +        {
@@ -4119,6 +4211,45 @@ index 0000000..a769476
 +    return obj;
 +}
 +
++// a proxy's object, its counts met: unpinned (released by releaseUnpinned);
++// called with eventLock held
++static void unpinProxy(size_t id)
++{
++    proxyCounts.erase(id);
++    auto p = pinned.find(id);
++    if (p == pinned.end()) return;
++    proxyIds.erase(p->second);
++    unpinned.push_back(p->second);
++    pinned.erase(p);
++}
++
++// a pinned object that a record from JavaScript names, as a local reference
++// of this context (so that no release elsewhere can take it meanwhile: see
++// taking), or NULLOBJECT; crossing: a proxy's (R, the target of M), which
++// counts once more, as JavaScript counted it when it sent the record
++static RexxObjectPtr takePinned(RexxThreadContext *c, size_t id, bool crossing)
++{
++    RexxObjectPtr obj;
++    {
++        std::lock_guard<std::mutex> lock(eventLock);
++        auto it = pinned.find(id);
++        if (it == pinned.end()) return NULLOBJECT;
++        obj = it->second;
++        taking++;
++        if (crossing)
++        {
++            auto n = proxyCounts.find(id);
++            if (n != proxyCounts.end() && ++n->second == 0) unpinProxy(id);
++        }
++    }
++    RexxArrayObject box = c->ArrayOfOne(obj);
++    RexxObjectPtr local = c->ArrayAt(box, 1);
++    c->ReleaseLocalReference(box);
++    std::lock_guard<std::mutex> lock(eventLock);
++    taking--;
++    return local;
++}
++
 +// Z "id<tab>n": JavaScript collected a proxy that came over n times
 +static void proxyRelease(const std::string &spec)
 +{
@@ -4128,14 +4259,8 @@ index 0000000..a769476
 +    std::lock_guard<std::mutex> lock(eventLock);
 +    auto it = proxyCounts.find(id);
 +    if (it == proxyCounts.end()) return;
-+    it->second = it->second > n ? it->second - n : 0;
-+    if (it->second > 0) return;
-+    proxyCounts.erase(it);
-+    auto p = pinned.find(id);
-+    if (p == pinned.end()) return;
-+    proxyIds.erase(p->second);
-+    unpinned.push_back(p->second);
-+    pinned.erase(p);
++    it->second -= (long long)n;
++    if (it->second == 0) unpinProxy(id);
 +}
 +
 +// JavaScript collected a handler's function: nothing can call it any more,
@@ -4308,9 +4433,8 @@ index 0000000..a769476
 +        }
 +        case 'R':                                   // a RexxProxy: its Rexx object
 +        {
-+            std::lock_guard<std::mutex> lock(eventLock);
-+            auto it = pinned.find(strtoul(r.data.c_str(), NULL, 10));
-+            return it != pinned.end() ? it->second : c->Nil();
++            RexxObjectPtr o = takePinned(c, strtoul(r.data.c_str(), NULL, 10), true);
++            return o != NULLOBJECT ? o : c->Nil();
 +        }
 +        case 'A':
 +        {
@@ -4825,12 +4949,8 @@ index 0000000..a769476
 +        }
 +        size_t id = strtoul(r.data.c_str(), NULL, 10);
 +        if (override) handler = peerCrossing(c, id);
-+        if (handler == NULLOBJECT)
-+        {
-+            std::lock_guard<std::mutex> lock(eventLock);
-+            auto it = pinned.find(id);
-+            if (it != pinned.end()) handler = it->second;
-+        }
++        // a handler (H), or the Rexx object of a RexxProxy sent a message (M)
++        if (handler == NULLOBJECT) handler = takePinned(c, id, override);
 +    }
 +    if (override && nextRec(call, pos, r) && r.tag == 'S' && handler != NULLOBJECT)
 +    {

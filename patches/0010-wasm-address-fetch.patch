@@ -249,10 +249,10 @@ index 0000000..01451f3
 +
 +::requires "fetch.cls"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e97d5ce..703beb0 100755
+index db28f4b..414ca4b 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -441,6 +441,13 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
+@@ -505,6 +505,13 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
  check "a logic error ends the process with a non-zero status" '^Logic error: cannot locate startup image' '^status=[1-9]' -- \
    "mkdir noimg && cp '$NB/rexx.js' '$NB/rexx.wasm' noimg/ && cd noimg && PATH=/usr/bin:/bin '$(command -v node)' rexx.js -e 'say 1'; echo status=\$?"
  

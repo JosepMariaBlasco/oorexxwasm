@@ -167,7 +167,7 @@ say f~call(.nil, acct)                         -- 150
 - **Identity.** The same Rexx object is the same `RexxProxy` while JavaScript holds it (`a === b`), and a `RexxProxy` given back to Rexx is the Rexx object itself.
 - **Classes.** A Rexx class is a Rexx object too: `C.new(args)` in JavaScript makes an instance.
 - **Not a property bag, not a thenable.** Setting a property is a `TypeError`; `then` and `toJSON` are not messages, so `await` and `JSON.stringify` treat a `RexxProxy` as a plain object. `RexxProxy` and `RexxError` are globals of the realm, for `instanceof`.
-- **Lifetime.** JavaScript holding a `RexxProxy` keeps the Rexx object alive; when JavaScript collects it, Rexx may collect the object.
+- **Lifetime.** JavaScript holding a `RexxProxy` keeps the Rexx object alive; when JavaScript collects it, Rexx may collect the object. A Rexx object that JavaScript hands back to Rexx (a result, an argument, the condition of a `RexxError` let through, the object a message is sent to) stays alive until Rexx has it, even if JavaScript collects its `RexxProxy` meanwhile: the bridge counts each crossing of a proxy both ways.
 
 ## Rexx from the page
 

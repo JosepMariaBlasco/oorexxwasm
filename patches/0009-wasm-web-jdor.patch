@@ -295,10 +295,10 @@ index ea8b80b..cf52734 100644
    // a RexxError nobody catches (a synchronous handler's condition thrown in an
    // event listener, which JavaScript reports instead of passing on): written
 diff --git a/wasm/js-realm.js b/wasm/js-realm.js
-index fb1cba9..5acf0f8 100644
+index 9aca10d..07b62b3 100644
 --- a/wasm/js-realm.js
 +++ b/wasm/js-realm.js
-@@ -986,6 +986,6 @@ var orxJsRealm = (function () {
+@@ -999,6 +999,6 @@ var orxJsRealm = (function () {
      return w.bytes();
    }
  
@@ -3288,10 +3288,10 @@ index 0000000..63aa1a9
 +  };
 +})();
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
-index a769476..cc612d6 100644
+index 3e5faee..95749dc 100644
 --- a/wasm/web-js.cpp
 +++ b/wasm/web-js.cpp
-@@ -695,6 +695,7 @@ static RexxObjectPtr toRexx(RexxThreadContext *c, const std::string &s, size_t &
+@@ -739,6 +739,7 @@ static RexxObjectPtr toRexx(RexxThreadContext *c, const std::string &s, size_t &
              size_t t1 = r.data.find('\t'), t2 = r.data.find('\t', t1 + 1);
              if (jsObjectClass == NULLOBJECT || t1 == std::string::npos || t2 == std::string::npos)
              {
@@ -3299,7 +3299,7 @@ index a769476..cc612d6 100644
                  return c->String(r.data.c_str());
              }
              RexxArrayObject args = c->ArrayOfThree(c->String(r.data.substr(0, t1).c_str()),
-@@ -1124,6 +1125,13 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
+@@ -1167,6 +1168,13 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
      return NULLOBJECT;
  }
  

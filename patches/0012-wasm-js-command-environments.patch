@@ -376,10 +376,10 @@ index 0000000..9f2b493
 +::routine haltsHere
 +  raise halt
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 703beb0..4acf5c9 100755
+index 414ca4b..5ff12d5 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
-@@ -441,6 +441,11 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
+@@ -505,6 +505,11 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
  check "a logic error ends the process with a non-zero status" '^Logic error: cannot locate startup image' '^status=[1-9]' -- \
    "mkdir noimg && cp '$NB/rexx.js' '$NB/rexx.wasm' noimg/ && cd noimg && PATH=/usr/bin:/bin '$(command -v node)' rexx.js -e 'say 1'; echo status=\$?"
  
@@ -460,10 +460,10 @@ index 2f97fe4..e3da4c5 100755
      const s = await rexxLib.start({ js: { page: true } });
      await s.eval('d = .js~page~document; b = d~createElement("button"); b~id = "rx"; d~body~appendChild(b)\\n' +
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
-index cc612d6..afb3ba8 100644
+index 95749dc..63f0fd2 100644
 --- a/wasm/web-js.cpp
 +++ b/wasm/web-js.cpp
-@@ -1484,6 +1484,43 @@ RexxMethod0(RexxObjectPtr, js_await)
+@@ -1523,6 +1523,43 @@ RexxMethod0(RexxObjectPtr, js_await)
      return request(context->threadContext, OP_AWAIT, s);
  }
  
@@ -507,7 +507,7 @@ index cc612d6..afb3ba8 100644
  // introspection: TYPEOF, CLASSNAME, PROPERTYNAMES, MAKEARRAY, SUPPLIER (its data), BYTESTRING,
  // INSTANCEOF(c), HASPROPERTY(n)
  static RexxObjectPtr info(RexxMethodContext *context, const char *what, RexxObjectPtr arg)
-@@ -1922,6 +1959,7 @@ static RexxMethodEntry jsMethods[] =
+@@ -1961,6 +1998,7 @@ static RexxMethodEntry jsMethods[] =
      REXX_METHOD(js_has, js_has),
      REXX_METHOD(js_info, js_info),
      REXX_METHOD(js_uninit, js_uninit),
