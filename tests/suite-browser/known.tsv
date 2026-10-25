@@ -38,4 +38,4 @@ flaky	base/class/RexxContext	TEST_INTERPRETER_THREAD_INVOCATION: compares with a
 upstream	base/class/RexxInteger	TEST_INTEGER_TIME with TZ=UTC (bug #2110): on 32-bit builds (wasm32) TIME('O') is a String, never a RexxInteger; the test expects one when the offset is 0. Any other time zone passes
 flaky	base/bif/BEEP	TEST_BEEP_DURATION: a 10 ms BEEP measured 3 ms once under Node in CI (timing; it passed when run again)
 processes	base/class/CommandHandler	TEST_FORWARD_TO_NATIVE: "exit 3" in the default environment, RC 127 (no processes)
-flaky	base/rexxutil/SysSleep	TEST_SLEEP_DURATION: SysSleep(0.00000001) measured 0 s once in Firefox in CI (the browser's clock resolution; it passed when run again)
+flaky	base/rexxutil/SysSleep	TEST_SLEEP_DURATION: SysSleep(0.00000001) measured 0 s once in Firefox in CI (the browser's clock resolution; it passed when run again); TEST_SLEEP_CONCURRENT: SysSleep(2.4) took 2.450 s once on Windows in CI (the margin is 26 ms; a loaded runner)
