@@ -30,7 +30,7 @@ updates to that request are now published in [`rfe/`](rfe/).
 
 ## The patch series
 
-Applied in order on top of ooRexx SVN trunk **r13286**
+Applied in order on top of ooRexx SVN trunk **r13289**
 (`https://svn.code.sf.net/p/oorexx/code-0/main/trunk`):
 
 | Patch | What it adds |
@@ -54,7 +54,12 @@ Applied in order on top of ooRexx SVN trunk **r13286**
 specifies. 0009, 0011 and 0012 are example command environments built on
 them. 0010 is a separate, portable package, not WebAssembly-specific, on
 which 0011, 0012 and 0013 depend; 0013 makes JavaScript functions command
-environments, as `.JSObject`'s specification describes. The
+environments, as `.JSObject`'s specification describes. Since r13288
+the interpreter has command environments written in Rexx of its own
+([RFE #882](https://sourceforge.net/p/oorexx/feature-requests/882/),
+`.CommandHandler`), with the same class names as 0010; a program that
+requires `cmdhandler.cls` sees 0010's classes. Whether 0010 stays is
+being looked at. The
 patches are in git format and apply with `svn patch` or `git am`;
 `patches/SHA256SUMS` lists their hashes.
 
@@ -72,7 +77,7 @@ and installs a build. Everything goes into the directory that contains your
 clone (`$ORX_WASM_WORK`, overridable), next to it:
 
 ```
-oorexx/        ooRexx trunk r13286 + patches
+oorexx/        ooRexx trunk r13289 + patches
 build-wasm/    bin/ (Node and browser, MEMFS), bin-node/ (Node CLI), bin-web/ (pages)
 saved-build/   the prebuilt binaries it downloaded
 emsdk/         Emscripten, only when compiling
