@@ -60,10 +60,10 @@ index e78f195..56ffb5b 100644
      }
  #endif
 diff --git a/wasm/README.md b/wasm/README.md
-index d7ea4ec..5cf608a 100644
+index b48d6f3..ceeb311 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -221,6 +221,29 @@ API in headless Chromium (Python Playwright): output, interactive and fixed
+@@ -227,6 +227,29 @@ API in headless Chromium (Python Playwright): output, interactive and fixed
  stdin, EOF, stop, threads, files in and out, extension classes, rexxtry,
  trace and error marks, debug input.
  

@@ -92,10 +92,10 @@ index 786af1f..e949832 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index ea1e0b5..7565c7a 100644
+index 7fc9189..666f45b 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -235,7 +235,81 @@ off, or changes the strings.
+@@ -241,7 +241,81 @@ off, or changes the strings.
  isolated (see above).  `wasm/tests/web-api.py BIN_WEB` runs assertions over the
  API in headless Chromium (Python Playwright): output, interactive and fixed
  stdin, EOF, stop, threads, files in and out, extension classes, rexxtry,
@@ -178,7 +178,7 @@ index ea1e0b5..7565c7a 100644
  
  ## The test suite's API groups (`wasm/build-test.sh`)
  
-@@ -490,7 +564,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -496,7 +570,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
@@ -3621,7 +3621,7 @@ index 71cd58a..2edbbe8 100644
        if (msg.stdin) { M.orxStdinWrite(msg.stdin); M.orxStdinClose(); }
        for (const m of q) feed(m);
 diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
-index b580a5a..1bd93d8 100644
+index 031e84a..19a21a7 100644
 --- a/wasm/web/ooRexx.js
 +++ b/wasm/web/ooRexx.js
 @@ -95,6 +95,20 @@
@@ -3654,15 +3654,15 @@ index b580a5a..1bd93d8 100644
   *   rexx                       the .JSSession (a RexxProxy)
   *   eval(source, ...args)      source run as a routine (USE ARG, RETURN): a
   *                              Promise of its result (undefined when none)
-@@ -338,6 +352,7 @@
+@@ -343,6 +357,7 @@
              if (opts.onInput) opts.onInput({ debug: !!m.debug });
              break;
            case 'js': jsRequest(m.msg); break;
 +          case 'jdor': if (opts.onJdor) opts.onJdor(m.msg); else if (m.msg.bitmap) m.msg.bitmap.close(); break;
-           case 'exit': end({ rc: m.rc, files: m.files, stopped: false }); break;
+           case 'exit': end({ rc: m.rc, files: m.files, stopped: false }, true); break;
            case 'error': end({ rc: null, files: {}, stopped: false, error: m.message }); break;
          }
-@@ -347,12 +362,14 @@
+@@ -352,12 +367,14 @@
          type: 'run', scriptUrl: this.base + 'rexx.js', wasmModule: this.wasmModule,
          data: this.data.slice(0), args: opts.args || [], files, cwd, env: opts.env || {},
          stdin: opts.stdin === undefined || opts.stdin === null ? null : bytes(opts.stdin),

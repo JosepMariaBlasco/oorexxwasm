@@ -1030,7 +1030,7 @@ index 01582d1..500ab26 100644
      stringToUTF8(name, buf, size);
      return 1;
 diff --git a/wasm/README.md b/wasm/README.md
-index 76b9b81..ea1e0b5 100644
+index dc74baa..7fc9189 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -139,6 +139,22 @@ host name and interface address come from `node:os`

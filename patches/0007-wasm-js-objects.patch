@@ -225,10 +225,10 @@ index 9324d0b..786af1f 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index 5cf608a..76b9b81 100644
+index ceeb311..dc74baa 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -244,6 +244,229 @@ from the test suite's directory:
+@@ -250,6 +250,229 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -458,7 +458,7 @@ index 5cf608a..76b9b81 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -252,6 +475,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -258,6 +481,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).
@@ -6488,7 +6488,7 @@ index c87af29..71cd58a 100644
      printErr: (s) => post({ type: 'err', bytes: textBytes(s) }),
      orxReady: () => {
 diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
-index 70031fb..b580a5a 100644
+index 4866922..031e84a 100644
 --- a/wasm/web/ooRexx.js
 +++ b/wasm/web/ooRexx.js
 @@ -47,6 +47,17 @@
@@ -6629,7 +6629,7 @@ index 70031fb..b580a5a 100644
        const enc = new TextEncoder();
        const bytes = (v) => (typeof v === 'string' ? enc.encode(v) : v);
        const cwd = opts.cwd || '/home/rexx';
-@@ -165,12 +275,56 @@
+@@ -165,6 +275,46 @@
        const t0 = performance.now();
        let settle, finished = false;
        const done = new Promise((resolve) => { settle = resolve; });
@@ -6673,12 +6673,13 @@ index 70031fb..b580a5a 100644
 +          Promise.resolve(pageRealm.handle(m.op, m.bytes)).then(reply);
 +        }, (e) => { if (m.type === 'call') reply(errorBytes('Error: ' + e.message)); });
 +      };
-       const end = (result) => {
+       const end = (result, exited) => {
          if (finished) return;
          finished = true;
-         out.write(outDec.decode(), 'plain'); errs.write(errDec.decode(), 'plain');
-         out.flush(); errs.flush();
-         worker.terminate();
+@@ -175,6 +325,10 @@
+         // tearing down the worker's own threads first (see wasm/web-pre.js)
+         if (exited) setTimeout(() => worker.terminate(), 50);
+         else worker.terminate();
 +        if (pageRealm) pageRealm.close();       // its handlers' functions do nothing now
 +        pageRealm = null;
 +        for (const c of calls.values()) c.reject(new Error('the ooRexx run has ended'));
@@ -6686,15 +6687,15 @@ index 70031fb..b580a5a 100644
          result.ms = performance.now() - t0;
          settle(result);
        };
-@@ -183,6 +337,7 @@
+@@ -188,6 +342,7 @@
              if (prompts) out.prompt(m.debug ? prompts.debugInput : prompts.input);
              if (opts.onInput) opts.onInput({ debug: !!m.debug });
              break;
 +          case 'js': jsRequest(m.msg); break;
-           case 'exit': end({ rc: m.rc, files: m.files, stopped: false }); break;
+           case 'exit': end({ rc: m.rc, files: m.files, stopped: false }, true); break;
            case 'error': end({ rc: null, files: {}, stopped: false, error: m.message }); break;
          }
-@@ -192,6 +347,7 @@
+@@ -197,6 +352,7 @@
          type: 'run', scriptUrl: this.base + 'rexx.js', wasmModule: this.wasmModule,
          data: this.data.slice(0), args: opts.args || [], files, cwd, env: opts.env || {},
          stdin: opts.stdin === undefined || opts.stdin === null ? null : bytes(opts.stdin),
@@ -6702,7 +6703,7 @@ index 70031fb..b580a5a 100644
        });
        return {
          done,
-@@ -204,4 +360,65 @@
+@@ -209,4 +365,65 @@
    }
  
    global.ooRexx = ooRexx;

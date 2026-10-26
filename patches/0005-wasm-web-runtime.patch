@@ -40,15 +40,15 @@ onInput}) -> {write, close, stop, done}.
 ---
  common/platform/unix/SysProcess.cpp  |   9 ++
  interpreter/concurrency/Activity.cpp |  54 +++++++
- wasm/README.md                       |  70 +++++++++
- wasm/build-web.sh                    |  97 +++++++++++++
+ wasm/README.md                       |  76 ++++++++++
+ wasm/build-web.sh                    |  97 ++++++++++++
  wasm/tests/web-api.html              |  76 ++++++++++
- wasm/tests/web-api.py                | 163 +++++++++++++++++++++
- wasm/web-pre.js                      | 205 ++++++++++++++++++++++++++
- wasm/web-stdin.cpp                   | 157 ++++++++++++++++++++
+ wasm/tests/web-api.py                | 163 ++++++++++++++++++++
+ wasm/web-pre.js                      | 217 +++++++++++++++++++++++++++
+ wasm/web-stdin.cpp                   | 157 +++++++++++++++++++
  wasm/web/ooRexx-worker.js            | 127 ++++++++++++++++
- wasm/web/ooRexx.js                   | 207 +++++++++++++++++++++++++++
- 10 files changed, 1165 insertions(+)
+ wasm/web/ooRexx.js                   | 212 ++++++++++++++++++++++++++
+ 10 files changed, 1188 insertions(+)
  create mode 100755 wasm/build-web.sh
  create mode 100644 wasm/tests/web-api.html
  create mode 100755 wasm/tests/web-api.py
@@ -171,10 +171,10 @@ index 8848967..3b1f460 100644
      if (callDebugInputExit(activation, value))
      {
 diff --git a/wasm/README.md b/wasm/README.md
-index 155575d..d7ea4ec 100644
+index 155575d..b48d6f3 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -151,6 +151,76 @@ threads, SysSleep, RxSock and `.StreamSocket` over WebSocket, external data
+@@ -151,6 +151,82 @@ threads, SysSleep, RxSock and `.StreamSocket` over WebSocket, external data
  queue, rxregexp, rxmath, deep recursion (Error 11, at a depth set by the
  browser; see the limits below).
  
@@ -215,6 +215,12 @@ index 155575d..d7ea4ec 100644
 +  with 2 GiB an iPhone could make only a few runs before new ones failed with
 +  `RangeError: Out of memory`.  When the memory cannot be created, the run's
 +  error says so (`web/ooRexx-worker.js`);
++* when a program ends, the runtime does not terminate its pthread workers
++  (`web-pre.js`): the page terminates the run's worker a moment later
++  (`web/ooRexx.js`), and that ends them.  Chromium loses the threads of
++  workers terminated by a worker that is itself terminated right after: they
++  stayed in the page's process with their memory, 2-3 per run, and after ~190
++  runs in one page no new run could get its memory;
 +* `.RexxInfo~libraryPath` is `/usr/lib/ooRexx/`, the directory of the
 +  preloaded classes; `.RexxInfo~executable` is .nil: the executable
 +  (`rexx.wasm`, `rexx.js`) was loaded from a URL, or the browser's cache,
@@ -607,10 +613,10 @@ index 0000000..3940711
 +sys.exit(1 if fails else 0)
 diff --git a/wasm/web-pre.js b/wasm/web-pre.js
 new file mode 100644
-index 0000000..b6c9029
+index 0000000..7046ae0
 --- /dev/null
 +++ b/wasm/web-pre.js
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,217 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -663,7 +669,8 @@ index 0000000..b6c9029
 + *  - ioctl(0, FIONREAD) answers the bytes the program can read without
 + *    waiting, so LINES() and CHARS() on STDIN work;
 + *  - REXX_PATH points at the preloaded extension classes;
-+ *  - Atomics.waitAsync is hidden (see below).
++ *  - Atomics.waitAsync is hidden (see below);
++ *  - the runtime does not terminate its pthreads when it exits (see below).
 + */
 +
 +// WebKit (Safari 26) sometimes loses an Atomics.waitAsync wakeup.  Emscripten
@@ -689,6 +696,17 @@ index 0000000..b6c9029
 +} catch (e) {}
 +
 +Module['preRun'] = (Module['preRun'] || []).concat([function() {
++  // ---- exit ---------------------------------------------------------------
++  // When the program ends, Emscripten terminates the pthread workers
++  // (EXIT_RUNTIME), and the page then terminates this worker as soon as it is
++  // told.  Chromium loses worker threads when a worker that has just terminated
++  // its own workers is itself terminated: they stay in the page's process,
++  // with their memory, for good (2-3 per run; after ~190 runs in one page
++  // every new run failed for lack of memory, and the page's process could
++  // crash).  The pthread workers are this worker's own, so terminating it
++  // ends them too: leave them to that.
++  PThread.terminateAllThreads = function() {};
++
 +  // ---- output -------------------------------------------------------------
 +  var KINDS = ['plain', 'trace', 'error'];
 +  function kindNow() {                      // what the interpreter is writing (web-stdin.cpp)
@@ -1114,10 +1132,10 @@ index 0000000..c87af29
 +}
 diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
 new file mode 100644
-index 0000000..70031fb
+index 0000000..4866922
 --- /dev/null
 +++ b/wasm/web/ooRexx.js
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,212 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -1285,16 +1303,21 @@ index 0000000..70031fb
 +      const t0 = performance.now();
 +      let settle, finished = false;
 +      const done = new Promise((resolve) => { settle = resolve; });
-+      const end = (result) => {
++      const end = (result, exited) => {
 +        if (finished) return;
 +        finished = true;
 +        out.write(outDec.decode(), 'plain'); errs.write(errDec.decode(), 'plain');
 +        out.flush(); errs.flush();
-+        worker.terminate();
++        // a run that exited by itself: its runtime is gone, nothing runs any
++        // more; terminating the worker a moment later lets Chromium finish
++        // tearing down the worker's own threads first (see wasm/web-pre.js)
++        if (exited) setTimeout(() => worker.terminate(), 50);
++        else worker.terminate();
 +        result.ms = performance.now() - t0;
 +        settle(result);
 +      };
 +      worker.onmessage = (ev) => {
++        if (finished) return;
 +        const m = ev.data;
 +        switch (m.type) {
 +          case 'out': out.write(outDec.decode(m.bytes, { stream: true }), m.kind); break;
@@ -1303,7 +1326,7 @@ index 0000000..70031fb
 +            if (prompts) out.prompt(m.debug ? prompts.debugInput : prompts.input);
 +            if (opts.onInput) opts.onInput({ debug: !!m.debug });
 +            break;
-+          case 'exit': end({ rc: m.rc, files: m.files, stopped: false }); break;
++          case 'exit': end({ rc: m.rc, files: m.files, stopped: false }, true); break;
 +          case 'error': end({ rc: null, files: {}, stopped: false, error: m.message }); break;
 +        }
 +      };

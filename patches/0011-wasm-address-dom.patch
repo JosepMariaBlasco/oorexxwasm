@@ -1403,7 +1403,7 @@ index 0000000..e2a94d4
 +  use arg v
 +  return v == .nil | v == .js~undefined
 diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
-index 1bd93d8..d04bc82 100644
+index 19a21a7..4a8cfa8 100644
 --- a/wasm/web/ooRexx.js
 +++ b/wasm/web/ooRexx.js
 @@ -122,6 +122,11 @@
@@ -1432,7 +1432,7 @@ index 1bd93d8..d04bc82 100644
    // a session's program (start): .js~session takes events for good
    const SESSION_PATH = '/tmp/ooRexx-session.rex';
    const SESSION_SOURCE = '.js~session\n::requires "js.cls"\n';
-@@ -360,7 +372,7 @@
+@@ -365,7 +377,7 @@
        worker.onerror = (e) => end({ rc: null, files: {}, stopped: false, error: e.message || 'worker error' });
        worker.postMessage({
          type: 'run', scriptUrl: this.base + 'rexx.js', wasmModule: this.wasmModule,

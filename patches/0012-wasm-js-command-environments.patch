@@ -43,10 +43,10 @@ Not part of the posted RFE.
  create mode 100644 wasm/tests/js-commands.rex
 
 diff --git a/wasm/README.md b/wasm/README.md
-index 7565c7a..9257752 100644
+index 666f45b..64c9072 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -539,6 +539,21 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -545,6 +545,21 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    `prepare`, `attach`, `instrument`; see `web/ooRexx.js`).  Tests:
    `tests/web-api.py` (session eval, session page, rexx scripts with
    `tests/web-scripts.html`, the debugger hook with `tests/web-debugger.js`).
@@ -618,7 +618,7 @@ index 9e602ed..f2437bd 100644
  ::class JSEvent public
  ::attribute handler get
 diff --git a/wasm/web/ooRexx.js b/wasm/web/ooRexx.js
-index d04bc82..28af658 100644
+index 4a8cfa8..5a8cb36 100644
 --- a/wasm/web/ooRexx.js
 +++ b/wasm/web/ooRexx.js
 @@ -145,6 +145,18 @@
