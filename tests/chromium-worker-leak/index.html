@@ -1,0 +1,65 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Worker threads lost when a worker terminates its workers and is terminated</title>
+<style>body { font: 14px system-ui, sans-serif; margin: 2em; max-width: 50em } pre { background: #f4f4f4; padding: 1em }</style>
+<h1>Worker threads lost when a worker terminates its workers and is terminated right after</h1>
+<p>Each round: the page starts a worker (<code>parent.js</code>); it creates a shared
+<code>WebAssembly.Memory</code> (64 MiB, maximum 512 MiB) and four workers of its own
+(<code>child.js</code>) that receive it. Then the parent terminates its four children and
+tells the page, and the page terminates the parent at once.</p>
+<p>
+  <label>Rounds <input id="n" type="number" value="300" min="1"></label>
+  <label><input id="delay" type="checkbox"> wait 50 ms before terminating the parent</label>
+  <label><input id="keep" type="checkbox"> the parent does not terminate its children</label>
+  <button id="go">Run</button>
+</p>
+<pre id="out">Needs cross-origin isolation (serve with serve.py).</pre>
+<script>
+const out = document.getElementById('out');
+const log = (s) => { out.textContent += s + '\n'; };
+function round(opts) {
+  return new Promise((resolve) => {
+    const parent = new Worker('parent.js');
+    parent.onmessage = (e) => {
+      if (e.data.error) { parent.terminate(); resolve(e.data.error); return; }
+      if (opts.delay) setTimeout(() => parent.terminate(), 50); else parent.terminate();
+      resolve(null);
+    };
+    parent.postMessage({ keep: opts.keep });
+  });
+}
+async function run() {
+  out.textContent = '';
+  if (!crossOriginIsolated) { log('Not cross-origin isolated: serve this directory with serve.py.'); return null; }
+  const opts = { delay: document.getElementById('delay').checked, keep: document.getElementById('keep').checked };
+  const n = +document.getElementById('n').value;
+  log(navigator.userAgent);
+  log('rounds ' + n + ', delay ' + opts.delay + ', parent terminates children ' + !opts.keep);
+  let failed = 0, first = null;
+  for (let i = 1; i <= n; i++) {
+    const err = await round(opts);
+    if (err) { failed++; if (!first) { first = i; log('round ' + i + ': ' + err); } }
+    if (i % 50 === 0) log(i + ' rounds, ' + failed + ' failed');
+  }
+  log('done: ' + failed + ' of ' + n + ' rounds failed' + (first ? ', the first at round ' + first : ''));
+  // every round's workers have been terminated: none should be left
+  let workers = null, mib = null;
+  try {
+    log('measuring memory (can take a few seconds)...');
+    const m = await performance.measureUserAgentSpecificMemory();
+    workers = m.breakdown.filter((b) => b.attribution.some((a) => a.scope === 'DedicatedWorkerGlobalScope')).length;
+    mib = Math.round(m.bytes / 1048576);
+    log('measureUserAgentSpecificMemory: ' + mib + ' MiB; dedicated workers still there: ' + workers);
+  } catch (err) {
+    log('(performance.measureUserAgentSpecificMemory: ' + err.message + ' See the Task Manager.)');
+  }
+  return { failed, first, workers, mib };
+}
+document.getElementById('go').onclick = run;
+window.runRounds = (n, delay, keep) => {
+  document.getElementById('n').value = n;
+  document.getElementById('delay').checked = !!delay;
+  document.getElementById('keep').checked = !!keep;
+  return run();
+};
+</script>
