@@ -1,6 +1,6 @@
 # oorexxwasm
 
-[ooRexx](https://www.oorexx.org/) 5.3.0 (SVN trunk r13291) compiled to
+[ooRexx](https://www.oorexx.org/) 5.3.0 (SVN trunk r13325) compiled to
 WebAssembly, for Node.js 22 or later: `rexx`, `rexxc`, `rxqueue` and
 `rxsubcom`. It runs on Linux, macOS and Windows.
 

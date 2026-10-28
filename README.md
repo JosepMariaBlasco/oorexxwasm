@@ -30,7 +30,7 @@ updates to that request are now published in [`rfe/`](rfe/).
 
 ## The patch series
 
-Applied in order on top of ooRexx SVN trunk **r13299** (main/trunk identical to r13297, the minimum)
+Applied in order on top of ooRexx SVN trunk **r13325** (main/trunk identical to r13324, the minimum)
 (`https://svn.code.sf.net/p/oorexx/code-0/main/trunk`):
 
 | Patch | What it adds |
@@ -75,7 +75,7 @@ and installs a build. Everything goes into the directory that contains your
 clone (`$ORX_WASM_WORK`, overridable), next to it:
 
 ```
-oorexx/        ooRexx trunk r13299 + patches
+oorexx/        ooRexx trunk r13325 + patches
 build-wasm/    bin/ (Node and browser, MEMFS), bin-node/ (Node CLI), bin-web/ (pages)
 saved-build/   the prebuilt binaries it downloaded
 emsdk/         Emscripten, only when compiling
