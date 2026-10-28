@@ -33,13 +33,13 @@ function, is SYNTAX 93.900.
 Not part of the posted RFE.
 ---
  wasm/README.md                 |  15 ++
- wasm/tests/js-commands.rex     | 301 +++++++++++++++++++++++++++++++++
+ wasm/tests/js-commands.rex     | 347 +++++++++++++++++++++++++++++++++
  wasm/tests/qualify-node-cli.sh |   5 +
- wasm/tests/web-api.py          |  50 ++++++
- wasm/web-js.cpp                |  38 +++++
- wasm/web/js.cls                |  70 ++++++++
+ wasm/tests/web-api.py          |  50 +++++
+ wasm/web-js.cpp                |  38 ++++
+ wasm/web/js.cls                |  70 +++++++
  wasm/web/ooRexx.js             |  33 +++-
- 7 files changed, 506 insertions(+), 6 deletions(-)
+ 7 files changed, 552 insertions(+), 6 deletions(-)
  create mode 100644 wasm/tests/js-commands.rex
 
 diff --git a/wasm/README.md b/wasm/README.md
@@ -70,10 +70,10 @@ index 666f45b..64c9072 100644
    passed synchronously to the main runtime thread, where `js-bridge.js` (a
 diff --git a/wasm/tests/js-commands.rex b/wasm/tests/js-commands.rex
 new file mode 100644
-index 0000000..9f2b493
+index 0000000..65047e8
 --- /dev/null
 +++ b/wasm/tests/js-commands.rex
-@@ -0,0 +1,301 @@
+@@ -0,0 +1,347 @@
 +/*----------------------------------------------------------------------------*/
 +/* Command environments written in JavaScript (.JSCommandHandler, one of    */
 +/* the interpreter's .CommandHandlers), in the realm of .js: the worker's in */
@@ -169,6 +169,20 @@ index 0000000..9f2b493
 +  userCallOn() == "USER MINE the description rc JavaScript went on: 7"
 +address calc "user";     call check "USER from Rexx code the function calls: untrapped, ignored", -
 +  rc == "JavaScript went on: 7"
++-- NOTREADY, ERROR and FAILURE the same; ERROR's and FAILURE's RC too (a
++-- CALL ON ERROR trap sets RC, as for a RAISE ERROR in plain Rexx)
++.CommandHandler~register("RAISES", .JSCommandHandler~new(F("command,ctx", -
++  "return 'JavaScript went on: ' + globalThis.thing.raises(command)")))
++cases = .array~of( -
++  .array~of("NOTREADY", "NOTREADY | the description | The NIL object", "CALL ON NOTREADY | JavaScript went on: 8", "JavaScript went on: 8"), -
++  .array~of("ERROR", "ERROR | the description | 5", "CALL ON ERROR | 5", "JavaScript went on: 9"), -
++  .array~of("FAILURE", "FAILURE | the description | 6", "CALL ON FAILURE | 6", "JavaScript went on: 10"))
++do k over cases
++  call check k[1] "from Rexx code the function calls: SIGNAL ON, as itself (RC too)", cmdSignalOn(k[1]) == k[2]
++  call check k[1] "from Rexx code the function calls: CALL ON, the function goes on", cmdCallOn(k[1]) == k[3]
++  address raises k[1];   call check k[1] "from Rexx code the function calls: untrapped, ignored", rc == k[4]
++end
++call check "deregister RAISES", .CommandHandler~deregister("RAISES")~isA(.JSCommandHandler)
 +
 +call on error name gotError
 +"error";                 call check "ctx.raiseError(5): ERROR, RC 5", raised == "ERROR 5"
@@ -276,6 +290,33 @@ index 0000000..9f2b493
 +gotError:   raised = condition("C") rc; return
 +gotFailure: raised = condition("C") rc; return
 +
++cmdSignalOn: procedure               -- SIGNAL ON c around ADDRESS RAISES c
++  use arg c                          -- (no INTERPRET "SIGNAL ON": it can set the trap in the caller)
++  select
++    when c == "NOTREADY" then signal on notready name cmdSignalled
++    when c == "ERROR" then signal on error name cmdSignalled
++    otherwise signal on failure name cmdSignalled
++  end
++  address raises c
++  return "not trapped, rc" rc
++cmdSignalled:
++  return condition("C") "|" condition("D") "|" condition("O")~rc
++
++cmdCallOn: procedure                 -- CALL ON c around ADDRESS RAISES c: then RC
++  use arg c
++  .local~cmdCalled = ""
++  select
++    when c == "NOTREADY" then call on notready name cmdCalledOn
++    when c == "ERROR" then call on error name cmdCalledOn
++    otherwise call on failure name cmdCalledOn
++  end
++  address raises c
++  nop
++  return .local~cmdCalled "|" rc
++cmdCalledOn:
++  .local~cmdCalled = "CALL ON" condition("C")
++  return
++
 +userCallOn: procedure                -- CALL ON USER MINE around the command
 +  .local~called = ""
 +  call on user mine name userCalled
@@ -361,6 +402,11 @@ index 0000000..9f2b493
 +  call haltsHere
 +::method user
 +  raise user mine description "the description" additional ("one", "two") return 7
++::method raises                     -- NOTREADY, ERROR (RC 5) or FAILURE (RC 6)
++  use arg c
++  if c == "NOTREADY" then raise notready description "the description" return 8
++  if c == "ERROR" then raise error 5 description "the description" return 9
++  raise failure 6 description "the description" return 10
 +
 +::class RaisingHandler subclass CommandHandler
 +::method command
@@ -376,7 +422,7 @@ index 0000000..9f2b493
 +::routine haltsHere
 +  raise halt
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 414ca4b..5ff12d5 100755
+index 0bad7e6..2c02bb8 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -505,6 +505,11 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
@@ -385,14 +431,14 @@ index 414ca4b..5ff12d5 100755
  
 +# --- command environments written in JavaScript (.JSCommandHandler in js.cls,
 +# one of the interpreter's .CommandHandlers), portable test
-+check "command handlers in JavaScript (.JSCommandHandler)" '^62 passed, 0 failed$' '!^FAIL ' -- \
++check "command handlers in JavaScript (.JSCommandHandler)" '^72 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-commands.rex'"
 +
  # --- ADDRESS FETCH (wasm/web/fetch.cls over .CommandHandler and js.cls), portable test
  "$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
  FETCH_SRV=$!; sleep 0.5
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 2f97fe4..e3da4c5 100755
+index af4da2f..6d87154 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -99,6 +99,28 @@ CASES = [
@@ -401,7 +447,7 @@ index 2f97fe4..e3da4c5 100755
       {}, lambda r: r["out"] == "1\n"),
 +  # command environments written in JavaScript (.JSCommandHandler), in the worker's realm: the portable test
 +  ("js commands", open(f"{SRC}/wasm/tests/js-commands.rex").read(), {"js": {"worker": True}},
-+     lambda r: "62 passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
++     lambda r: "72 passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
 +  # ... and a function of the page: its ctx calls give Promises
 +  ("js commands page", 'f = .js~page~Function~new("c", "ctx", "return ctx.getVar(\'X\').then((x) => \' \' + c + \' \' + x * 2)")\n'
 +                       '.CommandHandler~register("P", .JSCommandHandler~new(f)); x = 21; address p "go"; say "["rc"]"\n'

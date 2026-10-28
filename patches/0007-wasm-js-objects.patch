@@ -158,7 +158,7 @@ Rexx has read it, even if JavaScript collects the proxy meanwhile.
  wasm/js-realm.js                       | 1004 ++++++++++++
  wasm/tests/js-arrays.rex               |  169 ++
  wasm/tests/js-booleans.rex             |   78 +
- wasm/tests/js-errors.rex               |  264 ++++
+ wasm/tests/js-errors.rex               |  309 ++++
  wasm/tests/js-extend-gc.rex            |  111 ++
  wasm/tests/js-extend.rex               |  157 ++
  wasm/tests/js-floats.rex               |  112 ++
@@ -173,7 +173,7 @@ Rexx has read it, even if JavaScript collects the proxy meanwhile.
  wasm/web/js.cls                        |  750 +++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 +++
- 24 files changed, 6222 insertions(+), 12 deletions(-)
+ 24 files changed, 6267 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -2155,10 +2155,10 @@ index 0000000..00d441e
 +::requires "json.cls"
 diff --git a/wasm/tests/js-errors.rex b/wasm/tests/js-errors.rex
 new file mode 100644
-index 0000000..60cb43e
+index 0000000..60f8ba3
 --- /dev/null
 +++ b/wasm/tests/js-errors.rex
-@@ -0,0 +1,264 @@
+@@ -0,0 +1,309 @@
 +/* js-errors.rex: tests of errors and text across the JavaScript bridge      */
 +/* (wasm/js-realm.js, wasm/web-js.cpp), in the realm where Rexx runs: the    */
 +/* worker's in the browser, Node's under Node.  A Rexx condition in          */
@@ -2243,6 +2243,18 @@ index 0000000..60cb43e
 +  .local~userTrapped == "CALL ON the description" & r == "JavaScript went on: 7"
 +call check "an untrapped USER condition: nothing, JavaScript gets the result", -
 +  F("o", "return o.user()")~call(.nil, o) == 7
++-- NOTREADY, ERROR and FAILURE the same; ERROR's and FAILURE's RC too (a
++-- CALL ON ERROR trap sets RC, as for a RAISE ERROR with no JavaScript between)
++cases = .array~of( -
++  .array~of("NOTREADY", "NOTREADY | the description | The NIL object", "CALL ON NOTREADY JavaScript went on: 8 | none", 8), -
++  .array~of("ERROR", "ERROR | the description | 5", "CALL ON ERROR JavaScript went on: 9 | 5", 9), -
++  .array~of("FAILURE", "FAILURE | the description | 6", "CALL ON FAILURE JavaScript went on: 10 | 6", 10))
++do k over cases
++  call check k[1] "through JavaScript: the caller's SIGNAL ON, as itself (RC too)", condSignalOn(o, k[1]) == k[2]
++  call check k[1] "through JavaScript: the caller's CALL ON, then JavaScript goes on", condCallOn(o, k[1]) == k[3]
++  call check k[1] "through JavaScript, untrapped: nothing, JavaScript gets the result", -
++    F("o,c", "return o.raises(c)")~call(.nil, o, k[1]) == k[4]
++end
 +-- a HALT that the Rexx code JavaScript called does not trap reaches
 +-- JavaScript as SYNTAX 4.1; let through, it is a HALT again (HaltThread)
 +halts = F("o", "o.halts(); return 'JavaScript went on'")
@@ -2346,6 +2358,34 @@ index 0000000..60cb43e
 +  .local~userTrapped = "CALL ON" condition("D")
 +  return
 +
++condSignalOn: procedure             -- SIGNAL ON c around a call of JavaScript whose Rexx code raises c
++  use arg o, c                      -- (no INTERPRET "SIGNAL ON": it can set the trap in the caller)
++  select
++    when c == "NOTREADY" then signal on notready name condSignalled
++    when c == "ERROR" then signal on error name condSignalled
++    otherwise signal on failure name condSignalled
++  end
++  F("o,c", "return o.raises(c)")~call(.nil, o, c)
++  return "not trapped"
++condSignalled:
++  return condition("C") "|" condition("D") "|" condition("O")~rc
++
++condCallOn: procedure               -- CALL ON c: the handler runs, JavaScript goes on; and RC
++  use arg o, c
++  .local~condCalled = ""
++  rc = "none"
++  select
++    when c == "NOTREADY" then call on notready name condCalledOn
++    when c == "ERROR" then call on error name condCalledOn
++    otherwise call on failure name condCalledOn
++  end
++  r = F("o,c", "return 'JavaScript went on: ' + o.raises(c)")~call(.nil, o, c)
++  nop
++  return .local~condCalled r "|" rc
++condCalledOn:
++  .local~condCalled = "CALL ON" condition("C")
++  return
++
 +haltSignalOn: procedure            -- SIGNAL ON HALT around f~call(.nil, o)
 +  use arg f, o
 +  signal on halt name hs
@@ -2410,6 +2450,11 @@ index 0000000..60cb43e
 +  raise syntax 98.900 additional ("given") description "my description" return 5
 +::method user
 +  raise user mine description "the description" additional ("one", "two") return 7
++::method raises                     -- NOTREADY, ERROR (RC 5) or FAILURE (RC 6)
++  use arg c
++  if c == "NOTREADY" then raise notready description "the description" return 8
++  if c == "ERROR" then raise error 5 description "the description" return 9
++  raise failure 6 description "the description" return 10
 +::method binary
 +  return "ff"x
 +
@@ -2964,7 +3009,7 @@ index 0000000..1f62423
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index b44ba2b..db28f4b 100755
+index b44ba2b..3d67494 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -228,6 +228,283 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
@@ -3080,7 +3125,7 @@ index b44ba2b..db28f4b 100755
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-proxy.rex'"
 +# --- errors both ways (RexxError's fields and cause, additional[3]) and text
 +# (no U+FFFD: a string that is not UTF-8, or not well-formed, is an error)
-+check "JavaScript objects: errors both ways, and text" '^50 passed, 0 failed$' '!^FAIL ' -- \
++check "JavaScript objects: errors both ways, and text" '^59 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-errors.rex'"
 +# --- booleans: .LogicalWrapper (logicalwrapper.cls) both ways across the bridge
 +check "JavaScript objects: booleans both ways (.LogicalWrapper)" '^25 passed, 0 failed$' '!^FAIL ' -- \
@@ -3274,7 +3319,7 @@ index d544388..b13d517 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..a1588b7 100755
+index 3940711..8ad3563 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -49,7 +49,10 @@ if len(sys.argv) != 2:
@@ -3380,7 +3425,7 @@ index 3940711..a1588b7 100755
 +     lambda r: r["out"] == "trapped the description\n2\n" and r["rc"] == 0),
 +  # errors both ways and text, in the worker's realm: the portable test
 +  ("js errors", open(f"{SRC}/wasm/tests/js-errors.rex").read(), {"js": {"worker": True}},
-+     lambda r: "50 passed, 0 failed" in r["out"] and r["rc"] == 0),
++     lambda r: "59 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # booleans both ways (.LogicalWrapper), in the worker's realm: the portable test
 +  ("js booleans", open(f"{SRC}/wasm/tests/js-booleans.rex").read(), {"js": {"worker": True}},
 +     lambda r: "25 passed, 0 failed" in r["out"] and r["rc"] == 0),
