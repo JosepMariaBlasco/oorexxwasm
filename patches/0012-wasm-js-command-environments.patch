@@ -36,10 +36,10 @@ Not part of the posted RFE.
  wasm/tests/js-commands.rex     | 347 +++++++++++++++++++++++++++++++++
  wasm/tests/qualify-node-cli.sh |   5 +
  wasm/tests/web-api.py          |  50 +++++
- wasm/web-js.cpp                |  38 ++++
+ wasm/web-js.cpp                |  39 ++++
  wasm/web/js.cls                |  70 +++++++
  wasm/web/ooRexx.js             |  33 +++-
- 7 files changed, 552 insertions(+), 6 deletions(-)
+ 7 files changed, 553 insertions(+), 6 deletions(-)
  create mode 100644 wasm/tests/js-commands.rex
 
 diff --git a/wasm/README.md b/wasm/README.md
@@ -422,7 +422,7 @@ index 0000000..65047e8
 +::routine haltsHere
 +  raise halt
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 7d858c3..078cb18 100755
+index 6f058ec..5fabb50 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -505,6 +505,11 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
@@ -438,7 +438,7 @@ index 7d858c3..078cb18 100755
  "$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
  FETCH_SRV=$!; sleep 0.5
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index c8e5d51..1b2e560 100755
+index 8596c05..b7b8ad5 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -99,6 +99,28 @@ CASES = [
@@ -506,10 +506,10 @@ index c8e5d51..1b2e560 100755
      const s = await rexxLib.start({ js: { page: true } });
      await s.eval('d = .js~page~document; b = d~createElement("button"); b~id = "rx"; d~body~appendChild(b)\\n' +
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
-index e9a2d09..1568568 100644
+index 276e1f6..cf23e08 100644
 --- a/wasm/web-js.cpp
 +++ b/wasm/web-js.cpp
-@@ -1578,6 +1578,43 @@ RexxMethod0(RexxObjectPtr, js_await)
+@@ -1612,6 +1612,44 @@ RexxMethod0(RexxObjectPtr, js_await)
      return request(context->threadContext, OP_AWAIT, s);
  }
  
@@ -522,6 +522,7 @@ index e9a2d09..1568568 100644
 +// returns (a SYNTAX) is raised there by the interpreter
 +RexxMethod2(RexxObjectPtr, js_command, RexxObjectPtr, command, RexxObjectPtr, caller)
 +{
++    SyntaxAnchor anchor(context->threadContext);   // ooRexx #2132
 +    RexxThreadContext *c = context->threadContext;
 +    RexxObjectPtr fn = context->GetObjectVariable("FN");
 +    RexxClassObject ctxClass = context->FindContextClass("JSCOMMANDCONTEXT");
@@ -553,7 +554,7 @@ index e9a2d09..1568568 100644
  // introspection: TYPEOF, CLASSNAME, PROPERTYNAMES, MAKEARRAY, SUPPLIER (its data), BYTESTRING,
  // INSTANCEOF(c), HASPROPERTY(n)
  static RexxObjectPtr info(RexxMethodContext *context, const char *what, RexxObjectPtr arg)
-@@ -2023,6 +2060,7 @@ static RexxMethodEntry jsMethods[] =
+@@ -2064,6 +2102,7 @@ static RexxMethodEntry jsMethods[] =
      REXX_METHOD(js_has, js_has),
      REXX_METHOD(js_info, js_info),
      REXX_METHOD(js_uninit, js_uninit),

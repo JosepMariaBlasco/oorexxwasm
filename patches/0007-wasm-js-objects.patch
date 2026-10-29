@@ -155,10 +155,10 @@ Rexx has read it, even if JavaScript collects the proxy meanwhile.
  wasm/build-web.sh                      |   17 +-
  wasm/extra-packages.cpp                |   66 +
  wasm/js-bridge.js                      |  241 +++
- wasm/js-realm.js                       | 1004 ++++++++++++
+ wasm/js-realm.js                       | 1004 +++++++++++
  wasm/tests/js-arrays.rex               |  169 ++
  wasm/tests/js-booleans.rex             |   78 +
- wasm/tests/js-errors.rex               |  403 +++++
+ wasm/tests/js-errors.rex               |  414 +++++
  wasm/tests/js-extend-gc.rex            |  111 ++
  wasm/tests/js-extend.rex               |  157 ++
  wasm/tests/js-floats.rex               |  112 ++
@@ -169,11 +169,11 @@ Rexx has read it, even if JavaScript collects the proxy meanwhile.
  wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 2060 ++++++++++++++++++++++++
+ wasm/web-js.cpp                        | 2101 ++++++++++++++++++++++++
  wasm/web/js.cls                        |  750 +++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 +++
- 24 files changed, 6423 insertions(+), 12 deletions(-)
+ 24 files changed, 6475 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -2155,10 +2155,10 @@ index 0000000..00d441e
 +::requires "json.cls"
 diff --git a/wasm/tests/js-errors.rex b/wasm/tests/js-errors.rex
 new file mode 100644
-index 0000000..62cbfb6
+index 0000000..4911e46
 --- /dev/null
 +++ b/wasm/tests/js-errors.rex
-@@ -0,0 +1,403 @@
+@@ -0,0 +1,414 @@
 +/* js-errors.rex: tests of errors and text across the JavaScript bridge      */
 +/* (wasm/js-realm.js, wasm/web-js.cpp), in the realm where Rexx runs: the    */
 +/* worker's in the browser, Node's under Node.  A Rexx condition in          */
@@ -2312,6 +2312,12 @@ index 0000000..62cbfb6
 +call check "an argument whose conversion raises: the caller gets the condition", r == "93.900 from supplier"
 +call check "... and JavaScript was not called", F("", "return globalThis.argRan")~call(.nil) == "no"
 +call check "... and the thread goes on", .js~Promise~resolve(5)~await == 5
++signal on syntax name argDescr
++F("x", "return 1")~call(.nil, o~badValue("supplierdescr"))
++argDescr:
++c = condition("O")
++call check "... with its description and result", -
++  c~code "|" c~description "|" c~additional[1] "|" c~result == "93.900 | supplier's description | from supplier | 6"
 +
 +-- A SUPPLIER of its own that answers no Supplier (a string, nothing):
 +-- 98.994, as DO WITH INDEX ... ITEM ... OVER in plain Rexx
@@ -2506,6 +2512,7 @@ index 0000000..62cbfb6
 +  use arg kind
 +  select
 +    when kind == "supplier" then return .BadArray~new~~append(1)
++    when kind == "supplierdescr" then return .BadArrayDescr~new~~append(1)
 +    when kind == "dimensions" then return .BadDims~new~~append(1)
 +    when kind == "makestring" then return .BadString~new("abc")
 +    when kind == "dirsupplier" then return .BadDir~new~~put(1, "a")
@@ -2523,6 +2530,10 @@ index 0000000..62cbfb6
 +::class BadArray subclass Array
 +::method supplier
 +  raise syntax 93.900 array("from supplier")
++
++::class BadArrayDescr subclass Array
++::method supplier
++  raise syntax 93.900 array("from supplier") description "supplier's description" return 6
 +
 +::class BadDims subclass Array
 +::method dimensions
@@ -3103,7 +3114,7 @@ index 0000000..1f62423
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index b44ba2b..fa4880b 100755
+index b44ba2b..b93f1f5 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -228,6 +228,283 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
@@ -3219,7 +3230,7 @@ index b44ba2b..fa4880b 100755
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-proxy.rex'"
 +# --- errors both ways (RexxError's fields and cause, additional[3]) and text
 +# (no U+FFFD: a string that is not UTF-8, or not well-formed, is an error)
-+check "JavaScript objects: errors both ways, and text" '^74 passed, 0 failed$' '!^FAIL ' -- \
++check "JavaScript objects: errors both ways, and text" '^75 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-errors.rex'"
 +# --- booleans: .LogicalWrapper (logicalwrapper.cls) both ways across the bridge
 +check "JavaScript objects: booleans both ways (.LogicalWrapper)" '^25 passed, 0 failed$' '!^FAIL ' -- \
@@ -3413,7 +3424,7 @@ index d544388..b13d517 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..365409e 100755
+index 3940711..d3068ae 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -49,7 +49,10 @@ if len(sys.argv) != 2:
@@ -3519,7 +3530,7 @@ index 3940711..365409e 100755
 +     lambda r: r["out"] == "trapped the description\n2\n" and r["rc"] == 0),
 +  # errors both ways and text, in the worker's realm: the portable test
 +  ("js errors", open(f"{SRC}/wasm/tests/js-errors.rex").read(), {"js": {"worker": True}},
-+     lambda r: "74 passed, 0 failed" in r["out"] and r["rc"] == 0),
++     lambda r: "75 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # booleans both ways (.LogicalWrapper), in the worker's realm: the portable test
 +  ("js booleans", open(f"{SRC}/wasm/tests/js-booleans.rex").read(), {"js": {"worker": True}},
 +     lambda r: "25 passed, 0 failed" in r["out"] and r["rc"] == 0),
@@ -3813,10 +3824,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..2f65868
+index 0000000..e392a7c
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,2060 @@
+@@ -0,0 +1,2101 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -4977,6 +4988,34 @@ index 0000000..2f65868
 +    }
 +}
 +
++// a SYNTAX that Rexx code run from a native method raised (a SUPPLIER,
++// DIMENSIONS or MAKESTRING of the user's, a call of Rexx that JavaScript let
++// through) and that the API still holds when the method returns: raised again
++// here with RaiseException (reraise()).  Left pending, the interpreter would
++// raise it from an object that only the method's activation held, popped
++// before the caller's trap stores it, and a collection in between could take
++// it (ooRexx #2132).  Not while a C++ exception unwinds the method: then a
++// trapped condition is on its way past it
++void orxAnchorSyntax(RexxThreadContext *c)
++{
++    if (!c->CheckCondition()) return;
++    RexxDirectoryObject cond = c->GetConditionInfo();
++    if (cond == NULLOBJECT) return;
++    RexxObjectPtr name = c->DirectoryAt(cond, "CONDITION");
++    const char *s = name == NULLOBJECT ? NULL : c->ObjectToStringValue(name);   // not strOf(): a condition is pending
++    if (s == NULL || strcmp(s, "SYNTAX") != 0) return;
++    c->ClearCondition();
++    reraise(c, cond);
++}
++
++struct SyntaxAnchor
++{
++    RexxThreadContext *c;
++    int unwinding;
++    explicit SyntaxAnchor(RexxThreadContext *t) : c(t), unwinding(std::uncaught_exceptions()) {}
++    ~SyntaxAnchor() { if (std::uncaught_exceptions() == unwinding) orxAnchorSyntax(c); }
++};
++
 +// the result of a reply: its value, or a raised SYNTAX 98.900 condition
 +static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
 +{
@@ -5319,6 +5358,7 @@ index 0000000..2f65868
 +// UNKNOWN: o~name, o~name(args), o~name = value
 +RexxMethod2(RexxObjectPtr, js_unknown, CSTRING, name, RexxArrayObject, list)
 +{
++    SyntaxAnchor anchor(context->threadContext);   // ooRexx #2132
 +    RexxThreadContext *c = context->threadContext;
 +    std::string n(name), s = newRequest();
 +    target(context, s);
@@ -5337,6 +5377,7 @@ index 0000000..2f65868
 +// [](name): the property, case-exact
 +RexxMethod1(RexxObjectPtr, js_get, RexxObjectPtr, name)
 +{
++    SyntaxAnchor anchor(context->threadContext);   // ooRexx #2132
 +    std::string s = newRequest();
 +    target(context, s);
 +    putRec(s, 'S', strOf(context->threadContext, name));
@@ -5346,6 +5387,7 @@ index 0000000..2f65868
 +// []=(value, name): set the property, case-exact (created if need be)
 +RexxMethod2(RexxObjectPtr, js_put, OPTIONAL_RexxObjectPtr, value, RexxObjectPtr, name)
 +{
++    SyntaxAnchor anchor(context->threadContext);   // ooRexx #2132
 +    std::string s = newRequest();
 +    target(context, s);
 +    putRec(s, 'S', strOf(context->threadContext, name));
@@ -5357,6 +5399,7 @@ index 0000000..2f65868
 +// INVOKE(name, args...): call method name, case-exact; INVOKE(.nil, args...): call this function
 +RexxMethod1(RexxObjectPtr, js_call, ARGLIST, list)
 +{
++    SyntaxAnchor anchor(context->threadContext);   // ooRexx #2132
 +    RexxThreadContext *c = context->threadContext;
 +    if (c->ArraySize(list) < 1 || c->ArrayAt(list, 1) == NULLOBJECT)
 +    {
@@ -5375,6 +5418,7 @@ index 0000000..2f65868
 +// NEW(args...): new this(...args)
 +RexxMethod1(RexxObjectPtr, js_new, ARGLIST, list)
 +{
++    SyntaxAnchor anchor(context->threadContext);   // ooRexx #2132
 +    std::string s = newRequest();
 +    target(context, s);
 +    args(context->threadContext, s, list, 1);
@@ -5384,6 +5428,7 @@ index 0000000..2f65868
 +// AWAIT: wait for this Promise (or thenable); its value, or its rejection as an error
 +RexxMethod0(RexxObjectPtr, js_await)
 +{
++    SyntaxAnchor anchor(context->threadContext);   // ooRexx #2132
 +    std::string s = newRequest();
 +    target(context, s);
 +    return request(context->threadContext, OP_AWAIT, s);
@@ -5393,6 +5438,7 @@ index 0000000..2f65868
 +// INSTANCEOF(c), HASPROPERTY(n)
 +static RexxObjectPtr info(RexxMethodContext *context, const char *what, RexxObjectPtr arg)
 +{
++    SyntaxAnchor anchor(context->threadContext);   // ooRexx #2132
 +    std::string s = newRequest();
 +    target(context, s);
 +    putRec(s, 'S', what);
@@ -5578,6 +5624,7 @@ index 0000000..2f65868
 +// JsStopLoops was called since
 +RexxRoutine2(RexxObjectPtr, JsNextEvent, OPTIONAL_double, seconds, OPTIONAL_RexxObjectPtr, gen)
 +{
++    SyntaxAnchor anchor(context->threadContext);   // ooRexx #2132
 +    size_t generation = 0;
 +    bool loop = gen != NULLOBJECT && context->ObjectToStringSize(gen, &generation);
 +    bool forever = argumentOmitted(1) || seconds < 0;
@@ -5677,6 +5724,7 @@ index 0000000..2f65868
 +// .js~num(...)) and back: a .JSObject for anything that is not a string
 +RexxRoutine1(RexxObjectPtr, JsValue, OPTIONAL_RexxObjectPtr, value)
 +{
++    SyntaxAnchor anchor(context->threadContext);   // ooRexx #2132
 +    std::string s = newRequest();
 +    fromRexx(context->threadContext, s, value);
 +    return request(context->threadContext, OP_VALUE, s);
@@ -5690,6 +5738,7 @@ index 0000000..2f65868
 +RexxRoutine4(RexxObjectPtr, JsExtend, RexxObjectPtr, base, CSTRING, name, RexxArrayObject, rexxNames,
 +             RexxArrayObject, exact)
 +{
++    SyntaxAnchor anchor(context->threadContext);   // ooRexx #2132
 +    RexxThreadContext *c = context->threadContext;
 +    std::string s = newRequest();
 +    if (isA(c, base, jsObjectClass)) fromRexx(c, s, base);
@@ -5704,6 +5753,7 @@ index 0000000..2f65868
 +// a pair (see Classes above); "realm<tab>id<tab>display"
 +RexxRoutine3(RexxObjectPtr, JsConstruct, RexxObjectPtr, self, RexxObjectPtr, ext, RexxArrayObject, list)
 +{
++    SyntaxAnchor anchor(context->threadContext);   // ooRexx #2132
 +    RexxThreadContext *c = context->threadContext;
 +    serverSetup(c);
 +    size_t id;
@@ -5794,6 +5844,7 @@ index 0000000..2f65868
 +RexxRoutine5(RexxObjectPtr, JsSuper, RexxObjectPtr, self, RexxObjectPtr, ext, CSTRING, kind, CSTRING, name,
 +             RexxArrayObject, list)
 +{
++    SyntaxAnchor anchor(context->threadContext);   // ooRexx #2132
 +    RexxThreadContext *c = context->threadContext;
 +    std::string s = newRequest();
 +    fromRexx(c, s, self);
@@ -5809,6 +5860,7 @@ index 0000000..2f65868
 +// JsSession(object): (the browser) ooRexx.js's start() gets its session object
 +RexxRoutine1(int, JsSession, RexxObjectPtr, session)
 +{
++    SyntaxAnchor anchor(context->threadContext);   // ooRexx #2132
 +    RexxThreadContext *c = context->threadContext;
 +    std::string s = newRequest();
 +    fromRexx(c, s, session);
