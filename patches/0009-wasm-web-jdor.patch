@@ -3288,7 +3288,7 @@ index 0000000..63aa1a9
 +  };
 +})();
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
-index 77ebae7..6c1e717 100644
+index 2f65868..e9a2d09 100644
 --- a/wasm/web-js.cpp
 +++ b/wasm/web-js.cpp
 @@ -739,6 +739,7 @@ static RexxObjectPtr toRexx(RexxThreadContext *c, const std::string &s, size_t &
@@ -3299,7 +3299,7 @@ index 77ebae7..6c1e717 100644
                  return c->String(r.data.c_str());
              }
              RexxArrayObject args = c->ArrayOfThree(c->String(r.data.substr(0, t1).c_str()),
-@@ -1193,6 +1194,13 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
+@@ -1207,6 +1208,13 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
      return NULLOBJECT;
  }
  
