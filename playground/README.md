@@ -45,6 +45,14 @@ Workbench, a separate page.
 - `grok/` — *Grokking in Rexx*, a page of its own on this site (`grok/`):
   a neural network in ooRexx that learns modular addition and draws itself
   learning with `ADDRESS JDOR`; see `grok/README.md`.
+- `examples/` — small, complete web pages written in Rexx
+  (`<script type="text/rexx">`), on this site's runtime (`../../ooRexx.js`):
+  `reverse/` (a click handled by a Rexx object) and `print/` (a table made by
+  Rexx, printed by the browser), each one static file; `examples/index.html`
+  lists them, shows each page whole, and links them with `?rexx-debug=1`, and
+  the browser distribution's example page (`../example/`, deployed on its
+  own). Linked from the playground's footer. Checked by
+  `tests/examples_check.py`.
 - `build-site.sh [BIN_WEB] [OUT]` — assembles the site (default
   `$ORX_WASM_WORK/site`; `$ORX_WASM_WORK` is the directory that contains this
   repository's clone, see the top README).

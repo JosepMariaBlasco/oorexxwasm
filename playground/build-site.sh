@@ -27,6 +27,8 @@ cp "$HERE"/../debugger/ooRexx-debugger.js "$OUT/"
 # "Grokking in Rexx" (grok/README.md): a page of its own that uses this site's runtime
 mkdir -p "$OUT/grok"
 cp "$HERE"/grok/index.html "$HERE"/grok/grok-live.rex "$HERE"/grok/oryx.svg "$OUT/grok/"
+# small web pages written in Rexx (<script type="text/rexx">), on this site's runtime
+cp -R "$HERE/examples" "$OUT/examples"
 # the Rexx Parser (vendored subset, import-rexx-parser.sh): CSS for the editor
 mkdir -p "$OUT/rexx-parser"
 # every style for the style chooser, as on the Parser's site ("test*" are dev fixtures)

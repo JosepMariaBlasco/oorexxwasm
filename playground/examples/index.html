@@ -1,0 +1,97 @@
+<!doctype html>
+<!-- Small, complete web pages written in Rexx, on the runtime of the ooRexx
+     Playground site they live in (../ooRexx.js). Each example is one static
+     file; this index shows it whole, as the browser receives it. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rexx in a web page: examples</title>
+<style>
+  :root { color-scheme: light dark; --fg: #1d1d1f; --bg: #fbfbf8; --muted: #66665f; --line: #d9d8cf; --accent: #2b5d8a; }
+  @media (prefers-color-scheme: dark) { :root { --fg: #e9e8e2; --bg: #1b1c1e; --muted: #a3a29a; --line: #3a3b3e; --accent: #8cb8e0; } }
+  body { margin: 0 auto; max-width: 46rem; padding: 2rem 1rem 4rem; font: 16px/1.55 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+  h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+  h2 { font-size: 1.1rem; margin: 0 0 .25rem; }
+  p.lead { color: var(--muted); margin-top: 0; }
+  section { border-top: 1px solid var(--line); padding: 1rem 0; }
+  code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; }
+  pre { overflow-x: auto; padding: .75rem; border: 1px solid var(--line); border-radius: 6px; margin: .5rem 0 0; }
+  .links { display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; }
+  summary { cursor: pointer; color: var(--accent); }
+  a { color: var(--accent); }
+  footer { border-top: 1px solid var(--line); margin-top: 1rem; font-size: .9rem; color: var(--muted); }
+</style>
+</head>
+<body>
+<h1>Rexx in a web page</h1>
+<p class="lead">Each example below is one small HTML file. Its program is a
+<code>&lt;script type="text/rexx"&gt;</code> element, run in your browser by
+the real ooRexx interpreter, compiled to WebAssembly. The server does nothing
+but send the file: any web server will do, as long as it sends two headers
+(see <a href="#serving">Serving pages like these</a>).</p>
+
+<section>
+  <h2>Reverse</h2>
+  <p>Today's date, a field and a button: clicking the button reverses the text.
+  A Rexx object handles the click.</p>
+  <div class="links">
+    <a href="reverse/">Open</a>
+    <a href="reverse/?rexx-debug=1">Open in the debugger</a>
+  </div>
+  <details data-src="reverse/index.html"><summary>The whole page</summary><pre></pre></details>
+</section>
+
+<section>
+  <h2>Print</h2>
+  <p>Rexx writes a multiplication table into the page, and the browser's own
+  print dialog prints it, on any printer it knows, or to a PDF.</p>
+  <div class="links">
+    <a href="print/">Open</a>
+    <a href="print/?rexx-debug=1">Open in the debugger</a>
+  </div>
+  <details data-src="print/index.html"><summary>The whole page</summary><pre></pre></details>
+</section>
+
+<section>
+  <h2>A longer page</h2>
+  <p>Event handlers, Rexx functions called from JavaScript, and a Rexx file
+  loaded with <code>src=</code>: the example page of the browser distribution.</p>
+  <div class="links">
+    <a href="../example/">Open</a>
+    <a href="../example/?rexx-debug=1">Open in the debugger</a>
+  </div>
+</section>
+
+<section id="serving">
+  <h2>Serving pages like these</h2>
+  <p>The page loads <code>ooRexx.js</code> from a directory that holds the
+  runtime, and the server must send <code>Cross-Origin-Opener-Policy:
+  same-origin</code> and <code>Cross-Origin-Embedder-Policy: require-corp</code>
+  (the interpreter's threads need them). With <code>?rexx-debug=1</code> in the
+  address, the page opens Dom Wise's ooRexx debugger: set breakpoints, step,
+  and watch the variables, also inside the event handlers. The runtime, an
+  <code>.htaccess</code> for Apache and a small server for Node are in the
+  browser distribution: see
+  <a href="https://github.com/JosepMariaBlasco/oorexxwasm/blob/main/INSTALL.md">INSTALL.md</a>.</p>
+</section>
+
+<footer>
+  <p><a href="../">The ooRexx Playground</a> · <a href="https://github.com/JosepMariaBlasco/oorexxwasm">ooRexx/WASM on GitHub</a></p>
+</footer>
+
+<script>
+  // "The whole page": the file as the server sends it
+  for (const d of document.querySelectorAll("details[data-src]")) {
+    d.addEventListener("toggle", async () => {
+      const pre = d.querySelector("pre");
+      if (!d.open || pre.textContent) return;
+      try {
+        const r = await fetch(d.dataset.src, { cache: "no-cache" });
+        pre.textContent = r.ok ? await r.text() : `(${r.status} ${r.statusText})`;
+      } catch (e) { pre.textContent = String(e); }
+    });
+  }
+</script>
+</body>
+</html>

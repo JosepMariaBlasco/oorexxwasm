@@ -1,0 +1,52 @@
+<!doctype html>
+<!-- Rexx in the browser, in a nutshell: Rexx writes a multiplication table
+     into the page, and the browser's own print dialog prints it, on any
+     printer it knows, or to a PDF. The server only sends this file. Add
+     ?rexx-debug=1 to the address to debug the script. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Print, from Rexx</title>
+  <script src="../../ooRexx.js"></script>
+  <style>
+    td { border: 1px solid #999; padding: 2px 8px; text-align: right }
+    @media print { .controls { display: none } }    /* the buttons are not printed */
+  </style>
+</head>
+<body>
+  <h1>Multiplication table</h1>
+  <p class="controls">Size: <input id="size" value="5" size="3">
+    <button id="make">Make the table</button>
+    <button id="print">Print (or save as PDF)</button></p>
+  <table id="table"></table>
+
+  <script type="text/rexx">
+    page = .js~page~document
+    app = .Table~new(page)
+    page~getElementById("make")~addEventListener("click", .js~handler(app, "MAKE"))
+    page~getElementById("print")~addEventListener("click", .js~handler(app, "PRINT"))
+    app~make                                          -- a first table
+
+    ::class Table
+    ::method init
+      expose page
+      use arg page
+    ::method make                                     -- rows of <td>s, made by Rexx
+      expose page
+      n = page~getElementById("size")~value
+      if \datatype(n, "W") | n < 1 | n > 12 then n = 5
+      table = page~getElementById("table")
+      table~textContent = ""                          -- empty it
+      do i = 1 to n
+        row = table~insertRow
+        do j = 1 to n
+          row~insertCell~textContent = i * j
+        end
+      end
+    ::method print                                    -- the browser's print dialog
+      .js~page~window~print
+  </script>
+  <p class="controls"><a href="../">More examples</a></p>
+</body>
+</html>

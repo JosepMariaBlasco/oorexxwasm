@@ -1,0 +1,36 @@
+<!doctype html>
+<!-- Rexx in the browser, in a nutshell: the page shows today's date, a field
+     and a button; clicking the button reverses the text. The server only sends
+     this file: everything else runs in the browser. Add ?rexx-debug=1 to the
+     address to debug the script. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reverse, in Rexx</title>
+  <script src="../../ooRexx.js"></script>
+</head>
+<body>
+  <h1>Reverse, in Rexx</h1>
+  <p>Today is <span id="today">...</span>.</p>
+  <p><input id="text" value="Hello, world!"> <button id="reverse">Reverse</button></p>
+  <p id="result"></p>
+
+  <script type="text/rexx">
+    page = .js~page~document                          -- the page, seen from Rexx
+    page~getElementById("today")~textContent = date() -- the browser's date
+    button = page~getElementById("reverse")
+    button~addEventListener("click", .js~handler(.Reverser~new(page), "CLICK"))
+
+    ::class Reverser                                  -- what the button does
+    ::method init
+      expose page
+      use arg page
+    ::method click
+      expose page
+      text = page~getElementById("text")~value
+      page~getElementById("result")~textContent = reverse(text)
+  </script>
+  <p><a href="../">More examples</a></p>
+</body>
+</html>
