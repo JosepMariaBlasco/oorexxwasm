@@ -158,7 +158,7 @@ Rexx has read it, even if JavaScript collects the proxy meanwhile.
  wasm/js-realm.js                       | 1004 ++++++++++++
  wasm/tests/js-arrays.rex               |  169 ++
  wasm/tests/js-booleans.rex             |   78 +
- wasm/tests/js-errors.rex               |  309 ++++
+ wasm/tests/js-errors.rex               |  365 +++++
  wasm/tests/js-extend-gc.rex            |  111 ++
  wasm/tests/js-extend.rex               |  157 ++
  wasm/tests/js-floats.rex               |  112 ++
@@ -169,11 +169,11 @@ Rexx has read it, even if JavaScript collects the proxy meanwhile.
  wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 1998 ++++++++++++++++++++++++
+ wasm/web-js.cpp                        | 2034 ++++++++++++++++++++++++
  wasm/web/js.cls                        |  750 +++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 +++
- 24 files changed, 6267 insertions(+), 12 deletions(-)
+ 24 files changed, 6359 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -2155,10 +2155,10 @@ index 0000000..00d441e
 +::requires "json.cls"
 diff --git a/wasm/tests/js-errors.rex b/wasm/tests/js-errors.rex
 new file mode 100644
-index 0000000..60f8ba3
+index 0000000..e99028c
 --- /dev/null
 +++ b/wasm/tests/js-errors.rex
-@@ -0,0 +1,309 @@
+@@ -0,0 +1,365 @@
 +/* js-errors.rex: tests of errors and text across the JavaScript bridge      */
 +/* (wasm/js-realm.js, wasm/web-js.cpp), in the realm where Rexx runs: the    */
 +/* worker's in the browser, Node's under Node.  A Rexx condition in          */
@@ -2291,6 +2291,27 @@ index 0000000..60f8ba3
 +s3:
 +a = condition("O")~additional
 +call check "a rejected Promise: the stack too", a~items == 3 & a[2]~message == "rejected"
++
++-- User code that converting a value runs (an Array subclass's SUPPLIER or
++-- DIMENSIONS, a String subclass's MAKESTRING, a Directory subclass's
++-- SUPPLIER): a SYNTAX it raises stops the conversion.  A callback's result:
++-- the call's RexxError in JavaScript, as one its method raised; an argument
++-- for JavaScript: JavaScript is not called, the caller gets the condition
++do k over "supplier", "dimensions", "makestring", "dirsupplier", "next"
++  r = F("o,k", "try { o.badValue(k); return 'no error' } catch (e) {" -
++    "return [e.name, e.code, e.message.includes('from ' + k)].join(' ') }")~call(.nil, o, k)
++  call check "a callback's result whose conversion raises (" || k || "): the call's RexxError", -
++    r == "RexxError 93.900 true"
++end
++r = errorOf(F("o", "try { o.badValue('supplier') } catch (e) { return 'caught' }"), .array~of(.nil, o))
++call check "... and nothing is raised in the Rexx code that called JavaScript", r == "no error"
++r = errorOf(F("o", "o.badValue('makestring')"), .array~of(.nil, o))
++call check "... let through by JavaScript, it is itself in Rexx", r == "93.900 from makestring"
++x = F("", "globalThis.argRan = 'no'")~call(.nil)
++r = errorOf(F("x", "globalThis.argRan = 'yes'"), .array~of(.nil, o~badValue("supplier")))
++call check "an argument whose conversion raises: the caller gets the condition", r == "93.900 from supplier"
++call check "... and JavaScript was not called", F("", "return globalThis.argRan")~call(.nil) == "no"
++call check "... and the thread goes on", .js~Promise~resolve(5)~await == 5
 +
 +-- Text: a Rexx string goes to JavaScript as UTF-8 text
 +call check "UTF-8 goes as text", F("s", "return s.length + ' ' + s.codePointAt(0)")~call(.nil, "c3a9"x) == "1 233"
@@ -2457,12 +2478,47 @@ index 0000000..60f8ba3
 +  raise failure 6 description "the description" return 10
 +::method binary
 +  return "ff"x
++::method badValue                   -- a value whose conversion for JavaScript raises SYNTAX
++  use arg kind
++  select
++    when kind == "supplier" then return .BadArray~new~~append(1)
++    when kind == "dimensions" then return .BadDims~new~~append(1)
++    when kind == "makestring" then return .BadString~new("abc")
++    when kind == "dirsupplier" then return .BadDir~new~~put(1, "a")
++    otherwise return .EndlessArray~new~~append(1)
++  end
 +
 +::class Bytes
 +::method makeString
 +  return "ab" || "ff"x
 +::method string
 +  return "ab" || "ff"x
++
++::class BadArray subclass Array
++::method supplier
++  raise syntax 93.900 array("from supplier")
++
++::class BadDims subclass Array
++::method dimensions
++  raise syntax 93.900 array("from dimensions")
++
++::class BadString subclass String
++::method makestring
++  raise syntax 93.900 array("from makestring")
++
++::class BadDir subclass Directory
++::method supplier
++  raise syntax 93.900 array("from dirsupplier")
++
++::class EndlessArray subclass Array  -- a SUPPLIER always AVAILABLE whose NEXT raises
++::method supplier
++  return .EndlessSupplier~new(.array~of(1), .array~of(1))
++
++::class EndlessSupplier subclass Supplier
++::method available
++  return 1
++::method next
++  raise syntax 93.900 array("from next")
 +
 +::requires "js.cls"
 +
@@ -3009,7 +3065,7 @@ index 0000000..1f62423
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index b44ba2b..3d67494 100755
+index b44ba2b..1fe1e38 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -228,6 +228,283 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
@@ -3125,7 +3181,7 @@ index b44ba2b..3d67494 100755
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-proxy.rex'"
 +# --- errors both ways (RexxError's fields and cause, additional[3]) and text
 +# (no U+FFFD: a string that is not UTF-8, or not well-formed, is an error)
-+check "JavaScript objects: errors both ways, and text" '^59 passed, 0 failed$' '!^FAIL ' -- \
++check "JavaScript objects: errors both ways, and text" '^69 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-errors.rex'"
 +# --- booleans: .LogicalWrapper (logicalwrapper.cls) both ways across the bridge
 +check "JavaScript objects: booleans both ways (.LogicalWrapper)" '^25 passed, 0 failed$' '!^FAIL ' -- \
@@ -3319,7 +3375,7 @@ index d544388..b13d517 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..8ad3563 100755
+index 3940711..6a6f768 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -49,7 +49,10 @@ if len(sys.argv) != 2:
@@ -3425,7 +3481,7 @@ index 3940711..8ad3563 100755
 +     lambda r: r["out"] == "trapped the description\n2\n" and r["rc"] == 0),
 +  # errors both ways and text, in the worker's realm: the portable test
 +  ("js errors", open(f"{SRC}/wasm/tests/js-errors.rex").read(), {"js": {"worker": True}},
-+     lambda r: "59 passed, 0 failed" in r["out"] and r["rc"] == 0),
++     lambda r: "69 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # booleans both ways (.LogicalWrapper), in the worker's realm: the portable test
 +  ("js booleans", open(f"{SRC}/wasm/tests/js-booleans.rex").read(), {"js": {"worker": True}},
 +     lambda r: "25 passed, 0 failed" in r["out"] and r["rc"] == 0),
@@ -3719,10 +3775,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..3e5faee
+index 0000000..45df988
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,1998 @@
+@@ -0,0 +1,2034 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -4529,15 +4585,24 @@ index 0000000..3e5faee
 +static void supplied(RexxThreadContext *c, RexxObjectPtr v,
 +    std::vector<std::pair<RexxObjectPtr, RexxObjectPtr>> &pairs)
 +{
++    // (user code: a condition it raises ends the reading, see fromRexx)
 +    RexxObjectPtr s = c->SendMessage0(v, "SUPPLIER");
 +    if (s == NULLOBJECT) return;
-+    for (;;)
++    while (!c->CheckCondition())
 +    {
 +        RexxObjectPtr more = c->SendMessage0(s, "AVAILABLE");
-+        bool yes = more != NULLOBJECT && c->ObjectToStringValue(more) == std::string("1");
++        bool yes = !c->CheckCondition() && more != NULLOBJECT && c->ObjectToStringValue(more) == std::string("1");
 +        if (more != NULLOBJECT) c->ReleaseLocalReference(more);
 +        if (!yes) break;
-+        pairs.emplace_back(c->SendMessage0(s, "INDEX"), c->SendMessage0(s, "ITEM"));
++        RexxObjectPtr index = c->SendMessage0(s, "INDEX");
++        RexxObjectPtr item = c->CheckCondition() ? NULLOBJECT : c->SendMessage0(s, "ITEM");
++        if (c->CheckCondition() || index == NULLOBJECT)
++        {
++            if (index != NULLOBJECT) c->ReleaseLocalReference(index);
++            if (item != NULLOBJECT) c->ReleaseLocalReference(item);
++            break;
++        }
++        pairs.emplace_back(index, item);
 +        RexxObjectPtr r = c->SendMessage0(s, "NEXT");
 +        if (r != NULLOBJECT) c->ReleaseLocalReference(r);
 +    }
@@ -4616,6 +4681,12 @@ index 0000000..3e5faee
 +{
 +    CopyMemo top;
 +    if (memo == nullptr) { memo = &top; top.top = v; }
++    // a condition raised by user code the conversion ran (a SUPPLIER, the
++    // DIMENSIONS of an Array subclass, the string of a String subclass...):
++    // nothing more is converted, and the caller, seeing it pending, does not
++    // use what was written (request: no request; runCallback: the call's
++    // error)
++    if (c->CheckCondition()) return;
 +    if (v == NULLOBJECT) { putRec(out, 'U', ""); return; }
 +    if (v == c->Nil()) { putRec(out, 'N', ""); return; }
 +    copyClasses(c);
@@ -4728,6 +4799,7 @@ index 0000000..3e5faee
 +            for (auto &p : pairs)
 +            {
 +                putRec(out, 'K', c->ObjectToStringValue(p.first));
++                if (c->CheckCondition()) { c->ReleaseLocalReference(p.first); break; }
 +                fromRexx(c, out, p.second, depth + 1, memo);
 +                if (p.second != NULLOBJECT && p.second != memo->top) c->ReleaseLocalReference(p.second);
 +                c->ReleaseLocalReference(p.first);
@@ -4894,6 +4966,9 @@ index 0000000..3e5faee
 +
 +static RexxObjectPtr request(RexxThreadContext *c, int op, const std::string &data)
 +{
++    // converting the values raised a condition (fromRexx): JavaScript is not
++    // called, and the condition is the caller's when this native code returns
++    if (c->CheckCondition()) return NULLOBJECT;
 +    releaseUnpinned(c);
 +    return result(c, jsCall(c, op, data));
 +}
@@ -4970,6 +5045,30 @@ index 0000000..3e5faee
 +    out += fields;
 +}
 +
++// the E records of the condition pending now (then cleared), the answer of
++// a call whose method raised it, or whose result raised it while converted
++static std::string conditionReply(RexxThreadContext *c, const std::string &message)
++{
++    std::string out;
++    RexxDirectoryObject cond = c->GetConditionInfo();
++    RexxCondition info = {};
++    c->DecodeConditionInfo(cond, &info);
++    std::string name = info.conditionName ? c->CString(info.conditionName) : "a condition";
++    std::string msg;
++    if (name == "SYNTAX")
++    {
++        msg = "Error " + std::to_string(info.code / 1000) + "." + std::to_string(info.code % 1000) + ": ";
++        msg += info.errortext ? c->CString(info.errortext) : "";
++        std::string detail = info.message ? c->CString(info.message) : "";
++        if (!detail.empty()) msg += " (" + detail + ")";
++    }
++    else msg = "condition " + name + " raised in " + message;
++    c->ClearCondition();
++    putRec(out, 'E', msg);
++    conditionFields(c, out, cond, info.code);
++    return out;
++}
++
 +// a synchronous handler's call, on a Rexx thread: the R/E records of its result
 +static std::string runCallback(RexxThreadContext *c, const std::string &call)
 +{
@@ -5025,28 +5124,14 @@ index 0000000..3e5faee
 +    RexxObjectPtr value = scope != NULLOBJECT
 +        ? c->SendMessageScoped(target, message.c_str(), (RexxClassObject)scope, args)
 +        : c->SendMessage(target, message.c_str(), args);
-+    if (c->CheckCondition())
-+    {
-+        RexxDirectoryObject cond = c->GetConditionInfo();
-+        RexxCondition info = {};
-+        c->DecodeConditionInfo(cond, &info);
-+        std::string name = info.conditionName ? c->CString(info.conditionName) : "a condition";
-+        std::string msg;
-+        if (name == "SYNTAX")
-+        {
-+            msg = "Error " + std::to_string(info.code / 1000) + "." + std::to_string(info.code % 1000) + ": ";
-+            msg += info.errortext ? c->CString(info.errortext) : "";
-+            std::string detail = info.message ? c->CString(info.message) : "";
-+            if (!detail.empty()) msg += " (" + detail + ")";
-+        }
-+        else msg = "condition " + name + " raised in " + message;
-+        c->ClearCondition();
-+        putRec(out, 'E', msg);
-+        conditionFields(c, out, cond, info.code);
-+        return out;
-+    }
++    if (c->CheckCondition()) return conditionReply(c, message);
++    // converting the result may run user code too (fromRexx): a condition it
++    // raises is the call's error, as one the method raised
++    std::string reply;
++    fromRexx(c, reply, value);
++    if (c->CheckCondition()) return conditionReply(c, message);
 +    putRec(out, 'R', "");
-+    fromRexx(c, out, value);
++    out += reply;
 +    return out;
 +}
 +
@@ -5568,6 +5653,13 @@ index 0000000..3e5faee
 +    fromRexx(c, s, ext);
 +    putRec(s, 'S', std::to_string(id));
 +    args(c, s, list, 1);
++    if (c->CheckCondition())                        // converting raised a condition: no request, no pair
++    {
++        std::lock_guard<std::mutex> lock(eventLock);
++        peerStates.erase(id);
++        peerIds.erase(self);
++        return NULLOBJECT;
++    }
 +    std::string reply = jsCall(c, OP_CONSTRUCT, s);
 +    RexxObjectPtr r = result(c, reply);
 +    bool ok = r != NULLOBJECT && c->IsString(r);

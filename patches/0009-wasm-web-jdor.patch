@@ -359,7 +359,7 @@ index b13d517..cb5c6fa 100644
  };
  </script>
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 8ad3563..3f17a43 100755
+index 6a6f768..7b6146f 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -42,7 +42,7 @@ Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP
@@ -3288,7 +3288,7 @@ index 0000000..63aa1a9
 +  };
 +})();
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
-index 3e5faee..95749dc 100644
+index 45df988..ceeb5f8 100644
 --- a/wasm/web-js.cpp
 +++ b/wasm/web-js.cpp
 @@ -739,6 +739,7 @@ static RexxObjectPtr toRexx(RexxThreadContext *c, const std::string &s, size_t &
@@ -3299,7 +3299,7 @@ index 3e5faee..95749dc 100644
                  return c->String(r.data.c_str());
              }
              RexxArrayObject args = c->ArrayOfThree(c->String(r.data.substr(0, t1).c_str()),
-@@ -1167,6 +1168,13 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
+@@ -1183,6 +1184,13 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
      return NULLOBJECT;
  }
  
@@ -3312,7 +3312,7 @@ index 3e5faee..95749dc 100644
 +
  static RexxObjectPtr request(RexxThreadContext *c, int op, const std::string &data)
  {
-     releaseUnpinned(c);
+     // converting the values raised a condition (fromRexx): JavaScript is not
 diff --git a/wasm/web/BSF.CLS b/wasm/web/BSF.CLS
 new file mode 100644
 index 0000000..59e2f82
