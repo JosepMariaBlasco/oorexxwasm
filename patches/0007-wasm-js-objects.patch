@@ -158,7 +158,7 @@ Rexx has read it, even if JavaScript collects the proxy meanwhile.
  wasm/js-realm.js                       | 1004 ++++++++++++
  wasm/tests/js-arrays.rex               |  169 ++
  wasm/tests/js-booleans.rex             |   78 +
- wasm/tests/js-errors.rex               |  365 +++++
+ wasm/tests/js-errors.rex               |  403 +++++
  wasm/tests/js-extend-gc.rex            |  111 ++
  wasm/tests/js-extend.rex               |  157 ++
  wasm/tests/js-floats.rex               |  112 ++
@@ -169,11 +169,11 @@ Rexx has read it, even if JavaScript collects the proxy meanwhile.
  wasm/tests/web-debugger.js             |   54 +
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
- wasm/web-js.cpp                        | 2034 ++++++++++++++++++++++++
+ wasm/web-js.cpp                        | 2046 ++++++++++++++++++++++++
  wasm/web/js.cls                        |  750 +++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 +++
- 24 files changed, 6359 insertions(+), 12 deletions(-)
+ 24 files changed, 6409 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -2155,10 +2155,10 @@ index 0000000..00d441e
 +::requires "json.cls"
 diff --git a/wasm/tests/js-errors.rex b/wasm/tests/js-errors.rex
 new file mode 100644
-index 0000000..e99028c
+index 0000000..62cbfb6
 --- /dev/null
 +++ b/wasm/tests/js-errors.rex
-@@ -0,0 +1,365 @@
+@@ -0,0 +1,403 @@
 +/* js-errors.rex: tests of errors and text across the JavaScript bridge      */
 +/* (wasm/js-realm.js, wasm/web-js.cpp), in the realm where Rexx runs: the    */
 +/* worker's in the browser, Node's under Node.  A Rexx condition in          */
@@ -2313,6 +2313,19 @@ index 0000000..e99028c
 +call check "... and JavaScript was not called", F("", "return globalThis.argRan")~call(.nil) == "no"
 +call check "... and the thread goes on", .js~Promise~resolve(5)~await == 5
 +
++-- A SUPPLIER of its own that answers no Supplier (a string, nothing):
++-- 98.994, as DO WITH INDEX ... ITEM ... OVER in plain Rexx
++do k over "nosupplier", "nosupplier2"
++  r = F("o,k", "try { o.badValue(k); return 'no error' } catch (e) { return e.name + ' ' + e.code }")~call(.nil, o, k)
++  call check "a callback's result whose SUPPLIER answers no Supplier (" || k || "): RexxError 98.994", -
++    r == "RexxError 98.994"
++end
++r = errorOf(F("x", "return 1"), .array~of(.nil, o~badValue("nosupplier")))
++call check "an argument whose SUPPLIER answers no Supplier: the caller gets 98.994", r~word(1) == "98.994"
++-- A property name whose MAKESTRING raises: the caller gets the condition
++call check "a property name whose MAKESTRING raises (get): the caller gets it", nameError("get") == "93.900 from name"
++call check "a property name whose MAKESTRING raises (set): the caller gets it", nameError("set") == "93.900 from name"
++
 +-- Text: a Rexx string goes to JavaScript as UTF-8 text
 +call check "UTF-8 goes as text", F("s", "return s.length + ' ' + s.codePointAt(0)")~call(.nil, "c3a9"x) == "1 233"
 +call check "UTF-8 comes back the same", F("s", "return s")~call(.nil, "e282ac"x) == "e282ac"x
@@ -2434,6 +2447,17 @@ index 0000000..e99028c
 +  return "no condition:" r
 +hz: return condition("O")~code
 +
++nameError: procedure                -- x[name] and x[name] = 1, name's MAKESTRING raising
++  use arg op
++  signal on syntax name nameErr
++  x = .js~Object~new
++  if op == "get" then y = x[.BadName~new]
++  else x[.BadName~new] = 1
++  return "no error"
++nameErr:
++  c = condition("O")
++  return c~code c~additional[1]
++
 +errorOf: procedure                  -- f~call(args...): "code message" of its condition
 +  use arg f, args
 +  signal on syntax
@@ -2485,6 +2509,8 @@ index 0000000..e99028c
 +    when kind == "dimensions" then return .BadDims~new~~append(1)
 +    when kind == "makestring" then return .BadString~new("abc")
 +    when kind == "dirsupplier" then return .BadDir~new~~put(1, "a")
++    when kind == "nosupplier" then return .NoSupplier~new~~put(1, "a")
++    when kind == "nosupplier2" then return .NoSupplier2~new~~put(1, "a")
 +    otherwise return .EndlessArray~new~~append(1)
 +  end
 +
@@ -2519,6 +2545,18 @@ index 0000000..e99028c
 +  return 1
 +::method next
 +  raise syntax 93.900 array("from next")
++
++::class NoSupplier subclass Directory -- a SUPPLIER that answers a string
++::method supplier
++  return "zz"
++
++::class NoSupplier2 subclass Directory -- a SUPPLIER that answers nothing
++::method supplier
++  return
++
++::class BadName                     -- a MAKESTRING that raises
++::method makestring
++  raise syntax 93.900 array("from name")
 +
 +::requires "js.cls"
 +
@@ -3065,7 +3103,7 @@ index 0000000..1f62423
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index b44ba2b..1fe1e38 100755
+index b44ba2b..fa4880b 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -228,6 +228,283 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
@@ -3181,7 +3219,7 @@ index b44ba2b..1fe1e38 100755
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-proxy.rex'"
 +# --- errors both ways (RexxError's fields and cause, additional[3]) and text
 +# (no U+FFFD: a string that is not UTF-8, or not well-formed, is an error)
-+check "JavaScript objects: errors both ways, and text" '^69 passed, 0 failed$' '!^FAIL ' -- \
++check "JavaScript objects: errors both ways, and text" '^74 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-errors.rex'"
 +# --- booleans: .LogicalWrapper (logicalwrapper.cls) both ways across the bridge
 +check "JavaScript objects: booleans both ways (.LogicalWrapper)" '^25 passed, 0 failed$' '!^FAIL ' -- \
@@ -3375,7 +3413,7 @@ index d544388..b13d517 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..6a6f768 100755
+index 3940711..365409e 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -49,7 +49,10 @@ if len(sys.argv) != 2:
@@ -3481,7 +3519,7 @@ index 3940711..6a6f768 100755
 +     lambda r: r["out"] == "trapped the description\n2\n" and r["rc"] == 0),
 +  # errors both ways and text, in the worker's realm: the portable test
 +  ("js errors", open(f"{SRC}/wasm/tests/js-errors.rex").read(), {"js": {"worker": True}},
-+     lambda r: "69 passed, 0 failed" in r["out"] and r["rc"] == 0),
++     lambda r: "74 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # booleans both ways (.LogicalWrapper), in the worker's realm: the portable test
 +  ("js booleans", open(f"{SRC}/wasm/tests/js-booleans.rex").read(), {"js": {"worker": True}},
 +     lambda r: "25 passed, 0 failed" in r["out"] and r["rc"] == 0),
@@ -3775,10 +3813,10 @@ index 0000000..9241084
 +o~textContent = o~textContent"|from src" 1 + 2
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
 new file mode 100644
-index 0000000..45df988
+index 0000000..77ebae7
 --- /dev/null
 +++ b/wasm/web-js.cpp
-@@ -0,0 +1,2034 @@
+@@ -0,0 +1,2046 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -4579,6 +4617,17 @@ index 0000000..45df988
 +    RexxArrayObject dims, std::vector<size_t> &index, int depth, CopyMemo *memo, size_t id,
 +    const SuppliedItems *items = nullptr);
 +
++// the string value of a Rexx object, for a record: "" when there is none
++// (NULLOBJECT, or the conversion ran user code, a MAKESTRING, that raised:
++// the API answers NULL then, and the condition stays pending for the caller,
++// see fromRexx)
++static std::string strOf(RexxThreadContext *c, RexxObjectPtr v)
++{
++    if (v == NULLOBJECT) return "";
++    CSTRING str = c->ObjectToStringValue(v);
++    return str == NULL || c->CheckCondition() ? std::string() : std::string(str);
++}
++
 +// what SUPPLIER gives, as DO WITH INDEX k ITEM v OVER x sees it: the (index,
 +// item) pairs, in its order; how a subclass of Array, Directory or StringTable
 +// is read, so that a SUPPLIER of its own is honoured
@@ -4587,11 +4636,20 @@ index 0000000..45df988
 +{
 +    // (user code: a condition it raises ends the reading, see fromRexx)
 +    RexxObjectPtr s = c->SendMessage0(v, "SUPPLIER");
-+    if (s == NULLOBJECT) return;
++    if (c->CheckCondition()) return;
++    // no Supplier (nothing, a string...): what plain Rexx says, 98.994
++    static RexxObjectPtr supplierClass = NULLOBJECT;
++    if (supplierClass == NULLOBJECT) supplierClass = c->RequestGlobalReference(c->FindClass("SUPPLIER"));
++    if (s == NULLOBJECT || !c->IsInstanceOf(s, (RexxClassObject)supplierClass))
++    {
++        if (s != NULLOBJECT) c->ReleaseLocalReference(s);
++        c->RaiseException1(Rexx_Error_Execution_no_supplier, v);
++        return;
++    }
 +    while (!c->CheckCondition())
 +    {
 +        RexxObjectPtr more = c->SendMessage0(s, "AVAILABLE");
-+        bool yes = !c->CheckCondition() && more != NULLOBJECT && c->ObjectToStringValue(more) == std::string("1");
++        bool yes = !c->CheckCondition() && more != NULLOBJECT && strOf(c, more) == "1";
 +        if (more != NULLOBJECT) c->ReleaseLocalReference(more);
 +        if (!yes) break;
 +        RexxObjectPtr index = c->SendMessage0(s, "INDEX");
@@ -4692,12 +4750,12 @@ index 0000000..45df988
 +    copyClasses(c);
 +    if (isA(c, v, jsObjectClass))
 +    {
-+        putRec(out, 'O', c->ObjectToStringValue(c->SendMessage0(v, "JSREF")));
++        putRec(out, 'O', strOf(c, c->SendMessage0(v, "JSREF")));
 +        return;
 +    }
 +    if (isA(c, v, jsBooleanClass))                         // a .LogicalWrapper (any subclass): a boolean
 +    {
-+        putRec(out, 'B', c->ObjectToStringValue(c->SendMessage0(v, "VALUE")));
++        putRec(out, 'B', strOf(c, c->SendMessage0(v, "VALUE")));
 +        return;
 +    }
 +    if (isA(c, v, jsHandlerClass))
@@ -4721,7 +4779,7 @@ index 0000000..45df988
 +        std::string kind = c->ObjectToStringValue(c->SendMessage0(v, "KIND"));
 +        RexxObjectPtr val = c->SendMessage0(v, "VALUE");
 +        if (kind == "P") { toProxy(c, out, val); return; }   // .js~ref(x): by reference
-+        std::string data = val == NULLOBJECT || val == c->Nil() ? "" : c->ObjectToStringValue(val);
++        std::string data = val == c->Nil() ? "" : strOf(c, val);
 +        putRec(out, kind.empty() ? 'U' : kind[0], data);
 +        return;
 +    }
@@ -4798,7 +4856,7 @@ index 0000000..45df988
 +            putRec(out, 'T', std::to_string(pairs.size()) + "\t" + std::to_string(id));
 +            for (auto &p : pairs)
 +            {
-+                putRec(out, 'K', c->ObjectToStringValue(p.first));
++                putRec(out, 'K', strOf(c, p.first));
 +                if (c->CheckCondition()) { c->ReleaseLocalReference(p.first); break; }
 +                fromRexx(c, out, p.second, depth + 1, memo);
 +                if (p.second != NULLOBJECT && p.second != memo->top) c->ReleaseLocalReference(p.second);
@@ -4832,7 +4890,7 @@ index 0000000..45df988
 +    if (stringClass == NULLOBJECT) stringClass = c->RequestGlobalReference(c->FindClass("STRING"));
 +    if (c->IsInstanceOf(v, (RexxClassObject)stringClass))
 +    {
-+        putRec(out, 'S', c->ObjectToStringValue(v));
++        putRec(out, 'S', strOf(c, v));
 +        return;
 +    }
 +    // any other object: a RexxProxy
@@ -4889,8 +4947,7 @@ index 0000000..45df988
 +    return code != NULLOBJECT && strcmp(c->ObjectToStringValue(code), "4.1") == 0;
 +}
 +
-+// a SYNTAX condition of Rexx (its condition object) raised again: the same
-+// code and ADDITIONAL, so the same message, and its DESCRIPTION and RESULT
++// a SYNTAX condition of Rexx (its condition object) raised again, as itself
 +static void reraise(RexxThreadContext *c, RexxObjectPtr cond)
 +{
 +    RexxObjectPtr code = cond != NULLOBJECT && c->IsDirectory(cond)
@@ -4901,18 +4958,9 @@ index 0000000..45df988
 +        c->RaiseException1(Rexx_Error_Execution_user_defined, c->String("JavaScript error: a RexxError without its condition"));
 +        return;
 +    }
-+    RexxObjectPtr add = c->DirectoryAt((RexxDirectoryObject)cond, "ADDITIONAL");
-+    if (add != NULLOBJECT && c->IsArray(add)) c->RaiseException(major * 1000 + minor, (RexxArrayObject)add);
-+    else c->RaiseException0(major * 1000 + minor);
-+    // the condition now raised is the one Rexx will see: give it what the
-+    // original had that RaiseException does not take
-+    RexxDirectoryObject raised = c->GetConditionInfo();
-+    if (raised == NULLOBJECT) return;
-+    for (const char *e : {"DESCRIPTION", "RESULT"})
-+    {
-+        RexxObjectPtr v = c->DirectoryAt((RexxDirectoryObject)cond, e);
-+        if (v != NULLOBJECT) c->DirectoryPut(raised, v, e);
-+    }
++    // a copy of the condition object, with all it holds (ADDITIONAL,
++    // DESCRIPTION, RESULT...): RaiseConditionObject, ooRexx r13329 (RFE #883)
++    c->RaiseConditionObject((RexxDirectoryObject)cond);
 +}
 +
 +// the result of a reply: its value, or a raised SYNTAX 98.900 condition
@@ -4992,6 +5040,7 @@ index 0000000..45df988
 +        RexxObjectPtr v = c->DirectoryAt(cond, e[1]);
 +        if (v == NULLOBJECT || v == c->Nil()) continue;
 +        RexxStringObject s = c->ObjectToString(v);
++        if (s == NULLOBJECT) continue;
 +        putRec(fields, 'K', e[0]);
 +        putRec(fields, 'S', std::string(c->StringData(s), c->StringLength(s)));
 +        n++;
@@ -5009,6 +5058,7 @@ index 0000000..45df988
 +                RexxObjectPtr l = c->ArrayAt((RexxArrayObject)lines, i);
 +                if (l == NULLOBJECT) continue;
 +                RexxStringObject s = c->ObjectToString(l);
++                if (s == NULLOBJECT) continue;
 +                if (!t.empty()) t += '\n';
 +                t.append(c->StringData(s), c->StringLength(s));
 +            }
@@ -5275,7 +5325,7 @@ index 0000000..45df988
 +{
 +    std::string s = newRequest();
 +    target(context, s);
-+    putRec(s, 'S', context->ObjectToStringValue(name));
++    putRec(s, 'S', strOf(context->threadContext, name));
 +    return request(context->threadContext, OP_GET, s);
 +}
 +
@@ -5284,7 +5334,7 @@ index 0000000..45df988
 +{
 +    std::string s = newRequest();
 +    target(context, s);
-+    putRec(s, 'S', context->ObjectToStringValue(name));
++    putRec(s, 'S', strOf(context->threadContext, name));
 +    fromRexx(context->threadContext, s, value);
 +    request(context->threadContext, OP_SET, s);
 +    return NULLOBJECT;
@@ -5303,7 +5353,7 @@ index 0000000..45df988
 +    target(context, s);
 +    RexxObjectPtr name = c->ArrayAt(list, 1);
 +    if (name == c->Nil()) putRec(s, 'N', "");
-+    else putRec(s, 'S', context->ObjectToStringValue(name));
++    else putRec(s, 'S', strOf(c, name));
 +    args(c, s, list, 2);
 +    return request(c, OP_CALL, s);
 +}
@@ -5629,7 +5679,7 @@ index 0000000..45df988
 +    RexxThreadContext *c = context->threadContext;
 +    std::string s = newRequest();
 +    if (isA(c, base, jsObjectClass)) fromRexx(c, s, base);
-+    else putRec(s, 'V', c->ObjectToStringValue(base));
++    else putRec(s, 'V', strOf(c, base));
 +    putRec(s, 'S', name);
 +    args(c, s, rexxNames, 1);
 +    args(c, s, exact, 1);
@@ -5734,7 +5784,7 @@ index 0000000..45df988
 +    std::string s = newRequest();
 +    fromRexx(c, s, self);
 +    if (isA(c, ext, jsObjectClass)) fromRexx(c, s, ext);
-+    else putRec(s, 'O', c->ObjectToStringValue(ext));      // its "realm<tab>id"
++    else putRec(s, 'O', strOf(c, ext));                    // its "realm<tab>id"
 +    putRec(s, 'S', kind);
 +    putRec(s, 'S', name);
 +    args(c, s, list, 1);
