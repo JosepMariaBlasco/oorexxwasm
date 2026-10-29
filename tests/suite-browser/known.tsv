@@ -39,3 +39,4 @@ upstream	base/class/RexxInteger	TEST_INTEGER_TIME with TZ=UTC (bug #2110): on 32
 flaky	base/bif/BEEP	TEST_BEEP_DURATION: a 10 ms BEEP measured 3 ms once under Node in CI (timing; it passed when run again)
 processes	base/class/CommandHandler	TEST_FORWARD_TO_NATIVE: "exit 3" in the default environment, RC 127 (no processes)
 flaky	base/rexxutil/SysSleep	TEST_SLEEP_DURATION: SysSleep(0.00000001) measured 0 s once in Firefox in CI (the browser's clock resolution; it passed when run again); TEST_SLEEP_CONCURRENT: SysSleep(2.4) took 2.450 s once on Windows in CI (the margin is 26 ms; a loaded runner)
+flaky	base/class/Ticker	TEST_TICKER_THREE_ARGS_TIMESPAN_TRIGGER: a 0.5 s Ticker fired 5 times in a SysSleep of 0.75 s under Node in CI (timing; 10 of 10 pass in a session)
