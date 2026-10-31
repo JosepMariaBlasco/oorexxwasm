@@ -61,7 +61,7 @@ the HTML canvas, no Java involved.
  wasm/js-realm.js                       |    2 +-
  wasm/tests/web-api.html                |   21 +-
  wasm/tests/web-api.py                  |  119 +-
- wasm/web-jdor.cpp                      |  556 ++++++
+ wasm/web-jdor.cpp                      |  544 ++++++
  wasm/web-jdor.js                       | 2236 ++++++++++++++++++++++++
  wasm/web-js.cpp                        |    8 +
  wasm/web/BSF.CLS                       |  110 ++
@@ -69,7 +69,7 @@ the HTML canvas, no Java involved.
  wasm/web/ooRexx-worker.js              |   14 +-
  wasm/web/ooRexx.js                     |   19 +-
  wasm/web/polygon-clipping.umd.min.js   |   39 +
- 16 files changed, 3344 insertions(+), 23 deletions(-)
+ 16 files changed, 3332 insertions(+), 23 deletions(-)
  create mode 100644 wasm/web-jdor.cpp
  create mode 100644 wasm/web-jdor.js
  create mode 100644 wasm/web/BSF.CLS
@@ -77,7 +77,7 @@ the HTML canvas, no Java involved.
  create mode 100644 wasm/web/polygon-clipping.umd.min.js
 
 diff --git a/interpreter/package/PackageManager.cpp b/interpreter/package/PackageManager.cpp
-index 786af1f..e949832 100644
+index 2cc9eaf..28d1920 100644
 --- a/interpreter/package/PackageManager.cpp
 +++ b/interpreter/package/PackageManager.cpp
 @@ -95,8 +95,8 @@ const PackageManager::EmbeddedPackage PackageManager::embeddedPackages[] =
@@ -497,10 +497,10 @@ index d3068ae..e615adb 100755
       lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
 diff --git a/wasm/web-jdor.cpp b/wasm/web-jdor.cpp
 new file mode 100644
-index 0000000..51f5c58
+index 0000000..35dcb26
 --- /dev/null
 +++ b/wasm/web-jdor.cpp
-@@ -0,0 +1,556 @@
+@@ -0,0 +1,544 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -566,7 +566,6 @@ index 0000000..51f5c58
 +#include <emscripten/proxying.h>
 +#include <emscripten/threading.h>
 +#include <oorexxapi.h>
-+#include <exception>
 +#include <pthread.h>
 +#include <stdio.h>
 +#include <stdlib.h>
@@ -756,15 +755,6 @@ index 0000000..51f5c58
 +// run one command; returns the result and tells whether a condition was raised
 +// web-js.cpp: raise the SYNTAX 98.900 of a JavaScript exception (E records)
 +void orxJsRaiseThrown(RexxThreadContext *c, const std::string &records);
-+// web-js.cpp: a SYNTAX left pending by a native method, raised again (ooRexx #2132)
-+void orxAnchorSyntax(RexxThreadContext *c);
-+struct SyntaxAnchor
-+{
-+    RexxThreadContext *c;
-+    int unwinding;
-+    explicit SyntaxAnchor(RexxThreadContext *t) : c(t), unwinding(std::uncaught_exceptions()) {}
-+    ~SyntaxAnchor() { if (std::uncaught_exceptions() == unwinding) orxAnchorSyntax(c); }
-+};
 +
 +static RexxObjectPtr runCommand(RexxExitContext *c, RexxIORedirectorContext *io, const char *address,
 +                                const std::string &command, bool &raised)
@@ -961,7 +951,6 @@ index 0000000..51f5c58
 +// JdorAddEnvironment(name, handler): commands to ADDRESS name go to handler
 +RexxRoutine2(int, JdorAddEnvironment, CSTRING, name, RexxObjectPtr, handler)
 +{
-+    SyntaxAnchor anchor(context->threadContext);   // ooRexx #2132
 +    std::string ref;
 +    if (jdorClass != NULLOBJECT && context->IsInstanceOf(handler, (RexxClassObject)jdorClass))
 +    {
@@ -997,7 +986,6 @@ index 0000000..51f5c58
 +// object has no such method; an error of the method raises SYNTAX 93.900.
 +RexxRoutine3(RexxObjectPtr, JdorObjectCall, CSTRING, ref, CSTRING, name, RexxArrayObject, args)
 +{
-+    SyntaxAnchor anchor(context->threadContext);   // ooRexx #2132
 +    std::string a;
 +    size_t n = context->ArraySize(args), count = 0;
 +    std::string items;
@@ -3300,7 +3288,7 @@ index 0000000..63aa1a9
 +  };
 +})();
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
-index e392a7c..276e1f6 100644
+index 77ebae7..6c1e717 100644
 --- a/wasm/web-js.cpp
 +++ b/wasm/web-js.cpp
 @@ -739,6 +739,7 @@ static RexxObjectPtr toRexx(RexxThreadContext *c, const std::string &s, size_t &
@@ -3311,7 +3299,7 @@ index e392a7c..276e1f6 100644
                  return c->String(r.data.c_str());
              }
              RexxArrayObject args = c->ArrayOfThree(c->String(r.data.substr(0, t1).c_str()),
-@@ -1235,6 +1236,13 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
+@@ -1193,6 +1194,13 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
      return NULLOBJECT;
  }
  
