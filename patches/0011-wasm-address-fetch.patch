@@ -1,8 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
 Date: Wed, 7 Oct 2026 15:51:21 +0200
-Subject: [PATCH] wasm: ADDRESS FETCH, HTTP from classic Rexx (browser and
- Node)
+Subject: [PATCH 11/13] wasm: ADDRESS FETCH, HTTP from classic Rexx (browser
+ and Node)
 
 wasm/web/fetch.cls, written in Rexx over the interpreter's .CommandHandler
 (RFE #882, trunk r13288), js.cls (fetch()) and json.cls:
@@ -249,7 +249,7 @@ index 0000000..01451f3
 +
 +::requires "fetch.cls"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index b93f1f5..6f058ec 100755
+index a51c34e..e6e6dd0 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -505,6 +505,13 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
@@ -267,7 +267,7 @@ index b93f1f5..6f058ec 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index e615adb..0bb0c00 100755
+index 5be30ce..32d669e 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -67,6 +67,9 @@ class H(SimpleHTTPRequestHandler):

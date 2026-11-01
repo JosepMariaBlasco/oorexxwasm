@@ -1,7 +1,7 @@
 # Threads, recursion and the test suite
 
 *Written 03/10/2026 against ooRexx SVN trunk r13195; the work described here
-is now part of patch 0001 of the current series (except the ooRexx bug fixes,
+is now part of patch 0002 of the current series (except the ooRexx bug fixes,
 which are now in trunk).*
 
 Base: ooRexx SVN trunk r13195 + Tom Dyer's dev1 patch. Toolchain: Emscripten
@@ -116,7 +116,7 @@ reported as ooRexx bug #2096 and fixed in trunk r13254.
 
 ## 6. Node command-line variant for real scripts / the test suite
 
-A relink script (now `wasm/build-node.sh`, patch 0002) builds, without
+A relink script (now `wasm/build-node.sh`, patch 0003) builds, without
 recompilation, a Node-only runtime with NODERAWFS (host files), the host
 environment copied into `ENV`, and a `rexx` launcher. It works around an
 Emscripten 6.0.9 NODERAWFS bug: `FS.fstat()` dereferences `stream.node`, which

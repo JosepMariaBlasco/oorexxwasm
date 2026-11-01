@@ -1,7 +1,7 @@
 # Real sockets under Node
 
-*Written 04/10/2026; describes patch 0004 of the current series
-(`patches/0004-wasm-node-real-sockets.patch`).*
+*Written 04/10/2026; describes patch 0005 of the current series
+(`patches/0005-wasm-node-real-sockets.patch`; 0004 until 01/11/2026).*
 
 Files: `extensions/rxsock/rxsockfn.cpp`, `wasm/node-sockets-pre.js` (new),
 `wasm/node-resolve.js` (was `wasm/emscripten-dns-proxy.js`), `CMakeLists.txt`, `wasm/build-node.sh`,

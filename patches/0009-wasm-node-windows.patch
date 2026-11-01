@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
 Date: Tue, 13 Oct 2026 07:45:36 +0200
-Subject: [PATCH 8/8] WebAssembly port, Node: Windows hosts
+Subject: [PATCH 09/13] WebAssembly port, Node: Windows hosts
 
 The Node command-line build's rexx.js also runs under Node on Windows.
 SysProcess::isWindowsHost() tells the Unix platform code, which then:
@@ -34,11 +34,12 @@ through REXX_PATH: cmd.exe would take rexx.js in PATH for "rexx").
 ---
  common/platform/unix/SysProcess.cpp           |  79 +++++-
  common/platform/unix/SysProcess.hpp           |  11 +
+ common/platform/unix/SysWasmHost.hpp          |   1 +
  interpreter/RexxClasses/StreamClasses.orx     |  10 +-
  interpreter/classes/RexxInfoClass.cpp         |   7 +
  interpreter/platform/unix/SysFileSystem.cpp   | 234 +++++++++++++++++-
  interpreter/platform/unix/SysFileSystem.hpp   |   1 +
- interpreter/platform/unix/SystemCommands.cpp  | 142 ++++++++++-
+ interpreter/platform/unix/SystemCommands.cpp  | 141 ++++++++++-
  .../platform/unix/SystemInterpreter.cpp       |  31 ++-
  interpreter/runtime/RexxUtilCommon.cpp        |  14 ++
  .../platform/unix/SysNodeConnection.cpp       |  18 +-
@@ -46,13 +47,13 @@ through REXX_PATH: cmd.exe would take rexx.js in PATH for "rexx").
  wasm/build-node.sh                            |   8 +-
  wasm/build-test.sh                            |   2 +
  wasm/node-pre.js                              |  36 ++-
- 14 files changed, 572 insertions(+), 37 deletions(-)
+ 15 files changed, 572 insertions(+), 37 deletions(-)
 
 diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
-index a6c467e..d7b4f4a 100644
+index e62b362..a1b8523 100644
 --- a/common/platform/unix/SysProcess.cpp
 +++ b/common/platform/unix/SysProcess.cpp
-@@ -258,15 +258,77 @@ int SysProcess::localErrno(int e)
+@@ -264,13 +264,21 @@ int SysProcess::localErrno(int e)
   */
  EM_JS(int, wasmScriptDirectory, (char *buf, int size), {
      if (typeof process !== 'object' || !process.versions || !process.versions.node ||
@@ -77,6 +78,26 @@ index a6c467e..d7b4f4a 100644
 +    stringToUTF8(dir, buf, size);
      return 1;
  });
+ 
+@@ -281,11 +289,12 @@ EM_JS(int, wasmScriptDirectory, (char *buf, int size), {
+  */
+ extern "C" int orxWasmExecutablePath(char *buf, int size)
+ {
+-    if (size < 5 || !wasmScriptDirectory(buf, size - 5))
++    // (Windows: rexx.cmd, wasm/build-node.sh makes both)
++    if (size < 9 || !wasmScriptDirectory(buf, size - 9))
+     {
+         return 0;
+     }
+-    strcat(buf, "rexx");
++    strcat(buf, SysProcess::isWindowsHost() ? "rexx.cmd" : "rexx");
+     return 1;
+ }
+ 
+@@ -308,6 +317,60 @@ extern "C" int orxWasmLibraryDirectory(char *buf, int size)
+     }
+     return 0;
+ }
 +
 +EM_JS(int, wasmWindowsHost, (void), {
 +    return (typeof process === 'object' && process.versions && process.versions.node &&
@@ -134,21 +155,8 @@ index a6c467e..d7b4f4a 100644
  #endif
  
  #if defined(__EMSCRIPTEN__)
-@@ -500,9 +562,10 @@ const char* SysProcess::getExecutableFullPath()
-     // WASM under Node: the `rexx` launcher next to rexx.js, if this file
-     // system can see it (NODERAWFS); realpath() below fails otherwise and
-     // the result is NULL (.nil), as in the browser.
--    if (wasmScriptDirectory(path, sizeof(path) - 5))
-+    // (Windows: rexx.cmd, wasm/build-node.sh makes both)
-+    if (wasmScriptDirectory(path, sizeof(path) - 9))
-     {
--        strcat(path, "rexx");
-+        strcat(path, isWindowsHost() ? "rexx.cmd" : "rexx");
-     }
- #else
-     // run Darwin/Solaris/BSD-specific functions to retrieve the path
-@@ -605,7 +668,7 @@ const char* SysProcess::getExecutableFullPath()
- #endif // __EMSCRIPTEN__
+@@ -646,7 +709,7 @@ const char* SysProcess::getExecutableFullPath()
+ #endif // ORX_WASM
  
      // this is the file location with any symbolic links resolved.
 -    char *modulePath = realpath(path_p, NULL);
@@ -156,9 +164,9 @@ index a6c467e..d7b4f4a 100644
      if (modulePath == NULL)
      {
          return NULL;
-@@ -635,7 +698,7 @@ const char* SysProcess::getLibraryLocation()
+@@ -677,7 +740,7 @@ const char* SysProcess::getLibraryLocation()
      char dir[PATH_MAX];
-     if (wasmScriptDirectory(dir, sizeof(dir)) && access(dir, F_OK) == 0)
+     if (orxWasmLibraryDirectory != NULL && orxWasmLibraryDirectory(dir, sizeof(dir)) && access(dir, F_OK) == 0)
      {
 -        char *resolved = realpath(dir, NULL);
 +        char *resolved = realPath(dir);
@@ -194,6 +202,18 @@ index 28f0600..399ce1a 100644
       static void beep(int frequency, int duration);
  
   protected:
+diff --git a/common/platform/unix/SysWasmHost.hpp b/common/platform/unix/SysWasmHost.hpp
+index 263c08f..92b62b3 100644
+--- a/common/platform/unix/SysWasmHost.hpp
++++ b/common/platform/unix/SysWasmHost.hpp
+@@ -37,6 +37,7 @@
+ #define WASM_CMD_OUTPUT     2      // collect the output (orxWasmCommandResultCopy(0))
+ #define WASM_CMD_ERROR      4      // collect the error output (orxWasmCommandResultCopy(1))
+ #define WASM_CMD_SAME       8      // OUTPUT and ERROR to the same target, interleaved
++#define WASM_CMD_VERBATIM  16      // Windows host: argv as it is (cmd.exe /s /c "...")
+ 
+ // orxWasmCommandRun(): the host has no processes
+ #define WASM_CMD_NO_PROCESSES  (-100000)
 diff --git a/interpreter/RexxClasses/StreamClasses.orx b/interpreter/RexxClasses/StreamClasses.orx
 index 0f64943..9e6db86 100644
 --- a/interpreter/RexxClasses/StreamClasses.orx
@@ -223,7 +243,7 @@ index 0f64943..9e6db86 100644
  
    sep = path~lastPos(separator)
 diff --git a/interpreter/classes/RexxInfoClass.cpp b/interpreter/classes/RexxInfoClass.cpp
-index f38cfd7..84ae366 100644
+index 321271a..61f3d96 100644
 --- a/interpreter/classes/RexxInfoClass.cpp
 +++ b/interpreter/classes/RexxInfoClass.cpp
 @@ -394,6 +394,13 @@ RexxString *RexxInfo::getFileEndOfLine()
@@ -241,7 +261,7 @@ index f38cfd7..84ae366 100644
  }
  
 diff --git a/interpreter/platform/unix/SysFileSystem.cpp b/interpreter/platform/unix/SysFileSystem.cpp
-index bdc98c0..5e3c0f6 100644
+index f4750e7..a3ed712 100644
 --- a/interpreter/platform/unix/SysFileSystem.cpp
 +++ b/interpreter/platform/unix/SysFileSystem.cpp
 @@ -68,6 +68,18 @@
@@ -263,7 +283,7 @@ index bdc98c0..5e3c0f6 100644
  
  const char SysFileSystem::EOF_Marker = 0x1A;
  const char *SysFileSystem::EOL_Marker = "\n";
-@@ -231,7 +243,7 @@ RexxString* SysFileSystem::extractDirectory(RexxString *file)
+@@ -148,7 +160,7 @@ RexxString* SysFileSystem::extractDirectory(RexxString *file)
      while (pathName < endPtr)
      {
          // find the first directory element?
@@ -272,7 +292,7 @@ index bdc98c0..5e3c0f6 100644
          {
              // extract the directory information, including the final delimiter
              // and return as a string object.
-@@ -263,7 +275,7 @@ RexxString* SysFileSystem::extractExtension(RexxString *file)
+@@ -180,7 +192,7 @@ RexxString* SysFileSystem::extractExtension(RexxString *file)
      while (pathName < endPtr)
      {
          // find the first directory element?
@@ -281,7 +301,7 @@ index bdc98c0..5e3c0f6 100644
          {
              return OREF_NULL;    // found a directory portion before an extension...we're extensionless
          }
-@@ -299,7 +311,7 @@ RexxString* SysFileSystem::extractFile(RexxString *file)
+@@ -216,7 +228,7 @@ RexxString* SysFileSystem::extractFile(RexxString *file)
      while (pathName < endPtr)
      {
          // find the first directory element?
@@ -290,7 +310,7 @@ index bdc98c0..5e3c0f6 100644
          {
              // extract the directory information, including the final delimiter
              // and return as a string object.
-@@ -328,7 +340,7 @@ bool SysFileSystem::hasExtension(const char *name)
+@@ -245,7 +257,7 @@ bool SysFileSystem::hasExtension(const char *name)
      while (name < endPtr)
      {
          // find the first directory element?
@@ -299,7 +319,7 @@ index bdc98c0..5e3c0f6 100644
          {
              return false;        // found a directory portion before an extension...we're extensionless
          }
-@@ -356,6 +368,15 @@ bool SysFileSystem::hasDirectory(const char *name)
+@@ -273,6 +285,15 @@ bool SysFileSystem::hasDirectory(const char *name)
  {
      // hasDirectory() means we have enough absolute directory
      // information at the beginning to bypass performing path searches.
@@ -315,7 +335,7 @@ index bdc98c0..5e3c0f6 100644
      return name[0] == '~' || name[0] == '/' ||
            (name[0] == '.' && name[1] == '/') ||
            (name[0] == '.' && name[1] == '.' && name[2] == '/');
-@@ -500,9 +521,11 @@ bool SysFileSystem::searchPath(const char *name, const char *path, FileNameBuffe
+@@ -417,9 +438,11 @@ bool SysFileSystem::searchPath(const char *name, const char *path, FileNameBuffe
      //
      // Most allocators let that pass unnoticed. OpenBSD's does not, and the test
      // suite died there with a SIGSEGV inside strchr called from this function.
@@ -328,7 +348,7 @@ index bdc98c0..5e3c0f6 100644
          size_t subLength = (q == NULL) ? strlen(p) : (size_t)(q - p);
  
          // skip empty entries, the "::" in a path case
-@@ -561,12 +584,22 @@ bool SysFileSystem::resolveTilde(FileNameBuffer &name)
+@@ -478,12 +501,22 @@ bool SysFileSystem::resolveTilde(FileNameBuffer &name)
      // does it start with the user home marker?
      // this is the typical case.  This is a directory based off of
      // the current users home directory.
@@ -353,7 +373,7 @@ index bdc98c0..5e3c0f6 100644
          // We don't need to add a slash : If we have "~" alone, then no final slash expected (same as for "~user"). If "~/..." then we have the slash already
          name += (const char *)tempName;
      }
-@@ -633,6 +666,11 @@ bool SysFileSystem::canonicalizeName(FileNameBuffer &name)
+@@ -550,6 +583,11 @@ bool SysFileSystem::canonicalizeName(FileNameBuffer &name)
          return false;
      }
  
@@ -365,7 +385,7 @@ index bdc98c0..5e3c0f6 100644
      // does it start with the user home marker?
      if (name.startsWith('~'))
      {
-@@ -672,6 +710,117 @@ bool SysFileSystem::canonicalizeName(FileNameBuffer &name)
+@@ -589,6 +627,117 @@ bool SysFileSystem::canonicalizeName(FileNameBuffer &name)
  }
  
  
@@ -483,7 +503,7 @@ index bdc98c0..5e3c0f6 100644
  /**
   * Normalize an absolute Unix path name.  Removes duplicate and trailing
   * slashes, resolves and removes ./ or ../  This works for any path name,
-@@ -802,6 +951,12 @@ int SysFileSystem::deleteFile(const char *name)
+@@ -719,6 +868,12 @@ int SysFileSystem::deleteFile(const char *name)
   */
  int SysFileSystem::deleteDirectory(const char *name)
  {
@@ -496,7 +516,7 @@ index bdc98c0..5e3c0f6 100644
      return remove(name) == 0 ? 0 : errno;
  }
  
-@@ -1281,6 +1436,11 @@ bool SysFileSystem::isCaseSensitive()
+@@ -1198,6 +1353,11 @@ bool SysFileSystem::isCaseSensitive()
   */
  bool SysFileSystem::isCaseSensitive(const char *name)
  {
@@ -508,7 +528,7 @@ index bdc98c0..5e3c0f6 100644
  #if defined HAVE_PC_CASE_SENSITIVE || defined HAVE_FS_CASEFOLD_FL
      AutoFree tmp = strdup(name);
  
-@@ -1344,6 +1504,25 @@ bool SysFileSystem::isCaseSensitive(const char *name)
+@@ -1261,6 +1421,25 @@ bool SysFileSystem::isCaseSensitive(const char *name)
   */
  int SysFileSystem::getRoots(FileNameBuffer &roots)
  {
@@ -534,7 +554,7 @@ index bdc98c0..5e3c0f6 100644
      // just one root to return
      roots = "/";
      return 1;
-@@ -1368,7 +1547,8 @@ const char* SysFileSystem::getSeparator()
+@@ -1285,7 +1464,8 @@ const char* SysFileSystem::getSeparator()
   */
  const char* SysFileSystem::getPathSeparator()
  {
@@ -544,7 +564,7 @@ index bdc98c0..5e3c0f6 100644
  }
  
  
-@@ -1396,6 +1576,17 @@ bool SysFileSystem::getCurrentDirectory(FileNameBuffer &directory)
+@@ -1313,6 +1493,17 @@ bool SysFileSystem::getCurrentDirectory(FileNameBuffer &directory)
      {
          if (getcwd(directory, directory.capacity()) != NULL)
          {
@@ -562,7 +582,7 @@ index bdc98c0..5e3c0f6 100644
              return true;
          }
          // erange indicates the buffer was too small. Anything else is a
-@@ -1435,7 +1626,7 @@ bool SysFileSystem::setCurrentDirectory(const char *directory)
+@@ -1352,7 +1543,7 @@ bool SysFileSystem::setCurrentDirectory(const char *directory)
   */
  bool samePaths(const char *path1, const char *path2)
  {
@@ -571,7 +591,7 @@ index bdc98c0..5e3c0f6 100644
  
      // realpath() gives a NULL return if the file does not exist. For this operation
      // at least one of the file must exist. If either does not exist, they cannot be bad.
-@@ -1444,7 +1635,7 @@ bool samePaths(const char *path1, const char *path2)
+@@ -1361,7 +1552,7 @@ bool samePaths(const char *path1, const char *path2)
          return false;
      }
  
@@ -580,7 +600,7 @@ index bdc98c0..5e3c0f6 100644
  
      if (actualPath2 == NULL)
      {
-@@ -1825,6 +2016,13 @@ int SysFileSystem::moveFile(const char *fromFile, const char *toFile)
+@@ -1746,6 +1937,13 @@ int SysFileSystem::moveFile(const char *fromFile, const char *toFile)
   */
  const char* SysFileSystem::getPathEnd(const char *name)
  {
@@ -594,7 +614,7 @@ index bdc98c0..5e3c0f6 100644
      return strrchr(name, PathDelimiter);             // find the last backslash in name
  }
  
-@@ -1839,6 +2037,11 @@ const char* SysFileSystem::getPathEnd(const char *name)
+@@ -1760,6 +1958,11 @@ const char* SysFileSystem::getPathEnd(const char *name)
   */
  const char* SysFileSystem::getPathStart(const char *name)
  {
@@ -606,7 +626,7 @@ index bdc98c0..5e3c0f6 100644
      // this always starts with the name
      return name;
  }
-@@ -1851,6 +2054,17 @@ const char* SysFileSystem::getPathStart(const char *name)
+@@ -1772,6 +1975,17 @@ const char* SysFileSystem::getPathStart(const char *name)
   */
  bool SysFileSystem::getTemporaryPath(FileNameBuffer &temporary)
  {
@@ -625,10 +645,10 @@ index bdc98c0..5e3c0f6 100644
      {
          temporary = "/tmp";
 diff --git a/interpreter/platform/unix/SysFileSystem.hpp b/interpreter/platform/unix/SysFileSystem.hpp
-index 91449b4..28f4a85 100644
+index d4c7091..e002660 100644
 --- a/interpreter/platform/unix/SysFileSystem.hpp
 +++ b/interpreter/platform/unix/SysFileSystem.hpp
-@@ -110,6 +110,7 @@ class SysFileSystem
+@@ -109,6 +109,7 @@ class SysFileSystem
       static bool  hasExtension(const char *name);
       static bool  hasDirectory(const char *name);
       static bool  canonicalizeName(FileNameBuffer &resolvedName);
@@ -637,18 +657,18 @@ index 91449b4..28f4a85 100644
       static RexxString* extractDirectory(RexxString *file);
       static RexxString* extractExtension(RexxString *file);
 diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform/unix/SystemCommands.cpp
-index 8a0f7aa..8c15816 100644
+index dbf06ea..c87e0b1 100644
 --- a/interpreter/platform/unix/SystemCommands.cpp
 +++ b/interpreter/platform/unix/SystemCommands.cpp
-@@ -58,6 +58,7 @@
- #include "SysInterpreterInstance.hpp"
+@@ -59,6 +59,7 @@
  #include "SysThread.hpp"
  #include "SysFile.hpp"                // HOST_ERRNO
+ #include "SysWasmHost.hpp"
 +#include "SysProcess.hpp"
  
  #include "RexxInternalApis.h"
  #include <sys/types.h>
-@@ -195,6 +196,14 @@ public:
+@@ -196,6 +197,14 @@ public:
   */
  RexxString *SystemInterpreter::getDefaultAddressName()
  {
@@ -663,7 +683,7 @@ index 8a0f7aa..8c15816 100644
      return GlobalNames::INITIALADDRESS;
  }
  
-@@ -476,7 +485,8 @@ char *unquote(const char *s)
+@@ -477,7 +486,8 @@ char *unquote(const char *s)
              *u++ = *s;
              escape = false;
          }
@@ -673,7 +693,7 @@ index 8a0f7aa..8c15816 100644
          {
              escape = true;
          }
-@@ -508,6 +518,12 @@ bool sys_process_cd(RexxExitContext *context, const char * cmd, RexxObjectPtr rc
+@@ -509,6 +519,12 @@ bool sys_process_cd(RexxExitContext *context, const char * cmd, RexxObjectPtr rc
      }
      if ((!*st) || (strlen(cmd) == 2))
      {
@@ -686,15 +706,20 @@ index 8a0f7aa..8c15816 100644
          home_dir = getenv("HOME");
          if (!home_dir)
          {
-@@ -843,6 +859,7 @@ RexxObjectPtr ErrorFailure(RexxExitContext *context, CSTRING commandString)
- #define WASM_CMD_OUTPUT     2
- #define WASM_CMD_ERROR      4
- #define WASM_CMD_SAME       8      // OUTPUT and ERROR to the same target
-+#define WASM_CMD_VERBATIM  16      // Windows: argv as it is (cmd.exe /s /c "...")
+@@ -846,9 +862,10 @@ static void wasmCommandDeliver(RexxIORedirectorContext *ioContext, int which)
+  * command runs as a process of the host (SysWasmHost.hpp), if it has any.
+  */
+ static RexxObjectPtr wasmCommandHandler(RexxExitContext *context, CSTRING commandString,
+-                                        char **argv, RexxIORedirectorContext *ioContext)
++                                        char **argv, RexxIORedirectorContext *ioContext,
++                                        bool verbatim)
+ {
+-    int flags = 0;
++    int flags = verbatim ? WASM_CMD_VERBATIM : 0;
+     CSTRING inputBuffer = NULL;
+     size_t inputLength = 0;
  
- // special return codes of wasmCommandRun
- #define WASM_CMD_NO_PROCESSES  (-100000)
-@@ -882,17 +899,73 @@ EM_JS(int, wasmCommandRun, (char **argv, char **envp, const char *cwd,
+@@ -988,17 +1005,73 @@ EM_JS(int, wasmNodeCommandRun, (char **argv, char **envp, const char *cwd,
  
      var file = args[0];
      var rest = args.slice(1);
@@ -771,7 +796,7 @@ index 8a0f7aa..8c15816 100644
      };
      if (flags & 1)
      {
-@@ -910,8 +983,17 @@ EM_JS(int, wasmCommandRun, (char **argv, char **envp, const char *cwd,
+@@ -1016,8 +1089,17 @@ EM_JS(int, wasmNodeCommandRun, (char **argv, char **envp, const char *cwd,
      }
      catch (e)
      {
@@ -789,20 +814,7 @@ index 8a0f7aa..8c15816 100644
      globalThis.__orxCmd = [r.stdout || null, r.stderr || null];
      if (r.error)
      {
-@@ -971,9 +1053,10 @@ static void wasmCommandDeliver(RexxIORedirectorContext *ioContext, int which)
-  * WASM version of the process part of ioCommandHandler (see above).
-  */
- static RexxObjectPtr wasmCommandHandler(RexxExitContext *context, CSTRING commandString,
--                                        char **argv, RexxIORedirectorContext *ioContext)
-+                                        char **argv, RexxIORedirectorContext *ioContext,
-+                                        bool verbatim)
- {
--    int flags = 0;
-+    int flags = verbatim ? WASM_CMD_VERBATIM : 0;
-     CSTRING inputBuffer = NULL;
-     size_t inputLength = 0;
- 
-@@ -1080,6 +1163,44 @@ RexxObjectPtr RexxEntry ioCommandHandler(RexxExitContext *context, RexxStringObj
+@@ -1099,6 +1181,44 @@ RexxObjectPtr RexxEntry ioCommandHandler(RexxExitContext *context, RexxStringObj
              argv[1] = NULL;
          }
      }
@@ -847,16 +859,16 @@ index 8a0f7aa..8c15816 100644
      else
      {   // Set up the full path to the requested shell.
          strcpy(shell, SYSSHELLPATH);
-@@ -1106,7 +1227,7 @@ RexxObjectPtr RexxEntry ioCommandHandler(RexxExitContext *context, RexxStringObj
+@@ -1125,7 +1245,7 @@ RexxObjectPtr RexxEntry ioCommandHandler(RexxExitContext *context, RexxStringObj
      }
  
- #if defined(__EMSCRIPTEN__)
+ #if defined(ORX_WASM)
 -    return wasmCommandHandler(context, commandString, argv, ioContext);
 +    return wasmCommandHandler(context, commandString, argv, ioContext, false);
  #else
      if (ioContext->IsRedirectionRequested())
      {
-@@ -1321,6 +1442,13 @@ void SysInterpreterInstance::registerCommandHandlers(InterpreterInstance *_insta
+@@ -1340,6 +1460,13 @@ void SysInterpreterInstance::registerCommandHandlers(InterpreterInstance *_insta
      _instance->addCommandHandler("",        (REXXPFN)ioCommandHandler, HandlerType::REDIRECTING);
      _instance->addCommandHandler("COMMAND", (REXXPFN)ioCommandHandler, HandlerType::REDIRECTING);
      _instance->addCommandHandler("SYSTEM",  (REXXPFN)ioCommandHandler, HandlerType::REDIRECTING);
@@ -871,7 +883,7 @@ index 8a0f7aa..8c15816 100644
      // The command handlers for shells other than "sh" will only work
      // if a shell with this named is installed on the system
 diff --git a/interpreter/platform/unix/SystemInterpreter.cpp b/interpreter/platform/unix/SystemInterpreter.cpp
-index 82f34e1..41ac9d8 100644
+index 0531c9d..b238e71 100644
 --- a/interpreter/platform/unix/SystemInterpreter.cpp
 +++ b/interpreter/platform/unix/SystemInterpreter.cpp
 @@ -43,6 +43,8 @@
@@ -883,7 +895,7 @@ index 82f34e1..41ac9d8 100644
  
  sigset_t SystemInterpreter::oldmask;
  sigset_t SystemInterpreter::newmask;
-@@ -135,7 +137,11 @@ extern "C" EMSCRIPTEN_KEEPALIVE int orxWasmSignal(int sig)
+@@ -135,7 +137,11 @@ extern "C" ORX_WASM_EXPORT(orxWasmSignal) int orxWasmSignal(int sig)
      RexxString *name = sig == SIGTERM ? GlobalNames::SIGTERM_STRING :
                         sig == SIGHUP ? GlobalNames::SIGHUP_STRING : GlobalNames::SIGINT_STRING;
      bool posted = Interpreter::haltAllActivities(name);
@@ -934,7 +946,7 @@ index 82f34e1..41ac9d8 100644
      if (value == NULL)
      {
 diff --git a/interpreter/runtime/RexxUtilCommon.cpp b/interpreter/runtime/RexxUtilCommon.cpp
-index b2dd38e..e87d207 100644
+index 255cc9e..c11629d 100644
 --- a/interpreter/runtime/RexxUtilCommon.cpp
 +++ b/interpreter/runtime/RexxUtilCommon.cpp
 @@ -54,6 +54,7 @@
@@ -1030,10 +1042,10 @@ index 01582d1..500ab26 100644
      stringToUTF8(name, buf, size);
      return 1;
 diff --git a/wasm/README.md b/wasm/README.md
-index dc74baa..7fc9189 100644
+index 0ad9a87..b94c93d 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -139,6 +139,22 @@ host name and interface address come from `node:os`
+@@ -155,6 +155,22 @@ host name and interface address come from `node:os`
      ./wasm/build-node.sh /tmp/oorexx-wasm-build
      ./wasm/tests/qualify-node-cli.sh /tmp/oorexx-wasm-build/bin-node
  

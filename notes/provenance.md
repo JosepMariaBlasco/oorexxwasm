@@ -1,10 +1,12 @@
 # Provenance of the patches
 
-## Tom Dyer's dev1 patch (now inside 0001)
+## Tom Dyer's dev1 patch (now inside 0001 and 0002)
 
 The port started from Tom Dyer's "dev1" patch. In the current series it lives
-on in `0001-wasm-build-and-base-runtime.patch`: about four fifths of its code
-lines (measured 04/10/2026). Its QUALIFICATION.md and evidence log were not
+on in `0001-wasm-generic-layer.patch` and
+`0002-wasm-emscripten-build-and-base-runtime.patch` (one patch,
+`0001-wasm-build-and-base-runtime.patch`, until 01/11/2026): about four
+fifths of its code lines (measured 04/10/2026). Its QUALIFICATION.md and evidence log were not
 carried over.
 
 - **Origin:** posted to the ooRexx developers' list (oorexx-devel,

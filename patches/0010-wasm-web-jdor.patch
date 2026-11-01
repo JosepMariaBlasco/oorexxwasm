@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
 Date: Mon, 12 Oct 2026 16:10:17 +0200
-Subject: [PATCH] WebAssembly port, browser: ADDRESS JDOR, drawing on the
+Subject: [PATCH 10/13] WebAssembly port, browser: ADDRESS JDOR, drawing on the
  canvas
 
 JDOR ("Java Drawing for ooRexx", Rony G. Flatscher), the drawing command
@@ -77,10 +77,10 @@ the HTML canvas, no Java involved.
  create mode 100644 wasm/web/polygon-clipping.umd.min.js
 
 diff --git a/interpreter/package/PackageManager.cpp b/interpreter/package/PackageManager.cpp
-index 2cc9eaf..28d1920 100644
+index 2de2cde..632877d 100644
 --- a/interpreter/package/PackageManager.cpp
 +++ b/interpreter/package/PackageManager.cpp
-@@ -95,8 +95,8 @@ const PackageManager::EmbeddedPackage PackageManager::embeddedPackages[] =
+@@ -100,8 +100,8 @@ const PackageManager::EmbeddedPackage PackageManager::embeddedPackages[] =
  };
  
  // More packages a particular WASM build links in (wasm/extra-packages.cpp:
@@ -92,10 +92,10 @@ index 2cc9eaf..28d1920 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index 7fc9189..666f45b 100644
+index b94c93d..4a4c08c 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -241,7 +241,81 @@ off, or changes the strings.
+@@ -257,7 +257,81 @@ off, or changes the strings.
  isolated (see above).  `wasm/tests/web-api.py BIN_WEB` runs assertions over the
  API in headless Chromium (Python Playwright): output, interactive and fixed
  stdin, EOF, stop, threads, files in and out, extension classes, rexxtry,
@@ -178,7 +178,7 @@ index 7fc9189..666f45b 100644
  
  ## The test suite's API groups (`wasm/build-test.sh`)
  
-@@ -496,7 +570,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -512,7 +586,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
@@ -359,7 +359,7 @@ index b13d517..cb5c6fa 100644
  };
  </script>
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index d3068ae..e615adb 100755
+index c0eddc7..5be30ce 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -42,7 +42,7 @@ Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP
@@ -3288,7 +3288,7 @@ index 0000000..63aa1a9
 +  };
 +})();
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
-index 77ebae7..6c1e717 100644
+index 1ba7d9f..f698c88 100644
 --- a/wasm/web-js.cpp
 +++ b/wasm/web-js.cpp
 @@ -739,6 +739,7 @@ static RexxObjectPtr toRexx(RexxThreadContext *c, const std::string &s, size_t &
@@ -3299,7 +3299,7 @@ index 77ebae7..6c1e717 100644
                  return c->String(r.data.c_str());
              }
              RexxArrayObject args = c->ArrayOfThree(c->String(r.data.substr(0, t1).c_str()),
-@@ -1193,6 +1194,13 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
+@@ -1197,6 +1198,13 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
      return NULLOBJECT;
  }
  

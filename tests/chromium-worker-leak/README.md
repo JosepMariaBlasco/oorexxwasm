@@ -1,7 +1,7 @@
 # Chromium: worker threads lost when a worker terminates its workers and is terminated right after
 
 A minimal reproduction, in plain JavaScript, of a Chromium bug that the
-browser build of ooRexx/WASM ran into (patch 0005 works around it, see
+browser build of ooRexx/WASM ran into (patch 0006 works around it, see
 `wasm/web-pre.js` and `wasm/web/ooRexx.js`).
 
 ## What it does

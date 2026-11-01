@@ -1,14 +1,13 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
 Date: Sun, 4 Oct 2026 11:46:20 +0200
-Subject: [PATCH 1/8] WebAssembly port: build and base runtime
+Subject: [PATCH 02/13] WebAssembly port, Emscripten: build and base runtime
 
 Build ooRexx for WebAssembly with Emscripten 6.0.12 (wasm/build-wasm.sh,
-cmake/wasm-emscripten-6.0.12-cache.cmake).  Everything is under
-if (EMSCRIPTEN) / #if defined(__EMSCRIPTEN__); native builds are unchanged.
+cmake/wasm-emscripten-6.0.12-cache.cmake), on the common WebAssembly layer
+(previous patch).  The code is under if (EMSCRIPTEN) /
+#if defined(__EMSCRIPTEN__); native builds are unchanged.
 
-- static librexx (linked --whole-archive so the _rexx_init() constructor
-  that creates the interpreter locks is kept) and librexxapi;
 - the interpreter runs on a pthread (PROXY_TO_PTHREAD, pool of 4 workers),
   no Asyncify, native WebAssembly exceptions in the standardized encoding
   (exnref: Chrome 137, Firefox 131, Safari 18.4, Node 22);
@@ -18,15 +17,6 @@ if (EMSCRIPTEN) / #if defined(__EMSCRIPTEN__); native builds are unchanged.
   through wasm frames, calibrated on each thread to a quarter of its stack;
 - the wall clock with sub-millisecond resolution (performance.timeOrigin +
   performance.now(); Emscripten's gettimeofday is Date.now(), whole ms);
-- the API server (queues, registrations, macrospace) linked in and reached
-  in-process (SysLoopbackConnection), so registered functions resolve as
-  natively (RxFuncAdd of classic library functions, RexxRegisterFunctionExe);
-- rxsock, rxregexp, rxmath, hostemu and rxunixsys embedded in the
-  interpreter (PackageManager::embeddedPackages; no dlopen);
-- other libraries a build links in described by a table SysLibrary looks
-  up instead of dlopen/dlsym (orx_wasm_static_libraries(), a weak symbol:
-  absent in the standard builds), so "LIBRARY name", RxFuncAdd() and the
-  Rexx*Dll() registrations find them unchanged;
 - getpwnam()/getpwuid() wrapped to return the user the process runs as
   (Emscripten has no passwd database): the host user under Node, the
   synthetic user "wasm" in the browser;
@@ -37,37 +27,24 @@ if (EMSCRIPTEN) / #if defined(__EMSCRIPTEN__); native builds are unchanged.
 Based on Tom Dyer's (Alchemy) dev1 WebAssembly port, contributed under the
 Common Public License 1.0.
 ---
- CMakeLists.txt                                | 160 ++++++++++++++++--
- api/oorexxapi.h                               |   7 +
- cmake/wasm-emscripten-6.0.12-cache.cmake      |  84 +++++++++
- common/platform/unix/SysLibrary.cpp           |  89 ++++++++++
- common/platform/unix/SysProcess.cpp           |  75 ++++++++
- extensions/rxsock/rxsockfn.cpp                | 108 ++++++++++++
- interpreter/concurrency/Activity.cpp          |  93 ++++++++++
- interpreter/concurrency/Activity.hpp          |   6 +
- interpreter/package/PackageManager.cpp        |  70 ++++++++
- interpreter/package/PackageManager.hpp        |   9 +
- interpreter/parser/LanguageParser.cpp         |  15 ++
- interpreter/parser/LanguageParser.hpp         |   3 +
- interpreter/platform/unix/SystemCommands.cpp  |  13 ++
- interpreter/platform/unix/TimeSupport.cpp     |  38 +++++
- rexxapi/client/LocalMacroSpaceManager.cpp     |   8 +-
- .../platform/unix/SysLocalAPIManager.cpp      |  11 ++
- .../platform/unix/SysLoopbackConnection.cpp   | 138 +++++++++++++++
- .../platform/unix/SysLoopbackConnection.hpp   |  47 +++++
- rexxapi/server/APIServer.cpp                  |  41 +++++
- rexxapi/server/APIServer.hpp                  |   3 +
- wasm/README.md                                | 118 +++++++++++++
- wasm/build-wasm.sh                            |  79 +++++++++
- wasm/node-ws-compat/index.js                  |  73 ++++++++
- wasm/tests/browser-index.html                 |  76 +++++++++
- wasm/tests/http_isolated.py                   |  48 ++++++
- wasm/tests/qualify-node.sh                    | 111 ++++++++++++
- wasm/tests/ws_echo.py                         |  46 +++++
- 27 files changed, 1549 insertions(+), 20 deletions(-)
+ CMakeLists.txt                            |  54 +++++++++
+ cmake/wasm-emscripten-6.0.12-cache.cmake  |  84 ++++++++++++++
+ common/platform/unix/SysProcess.cpp       |  78 +++++++++++++
+ extensions/rxsock/rxsockfn.cpp            | 108 +++++++++++++++++
+ interpreter/concurrency/Activity.cpp      |  93 +++++++++++++++
+ interpreter/concurrency/Activity.hpp      |   6 +
+ interpreter/parser/LanguageParser.cpp     |  15 +++
+ interpreter/parser/LanguageParser.hpp     |   3 +
+ interpreter/platform/unix/TimeSupport.cpp |  38 ++++++
+ wasm/README.md                            | 134 ++++++++++++++++++++++
+ wasm/build-wasm.sh                        |  79 +++++++++++++
+ wasm/node-ws-compat/index.js              |  73 ++++++++++++
+ wasm/tests/browser-index.html             |  76 ++++++++++++
+ wasm/tests/http_isolated.py               |  48 ++++++++
+ wasm/tests/qualify-node.sh                | 111 ++++++++++++++++++
+ wasm/tests/ws_echo.py                     |  46 ++++++++
+ 16 files changed, 1046 insertions(+)
  create mode 100644 cmake/wasm-emscripten-6.0.12-cache.cmake
- create mode 100644 rexxapi/common/platform/unix/SysLoopbackConnection.cpp
- create mode 100644 rexxapi/common/platform/unix/SysLoopbackConnection.hpp
  create mode 100644 wasm/README.md
  create mode 100755 wasm/build-wasm.sh
  create mode 100644 wasm/node-ws-compat/index.js
@@ -77,106 +54,10 @@ Common Public License 1.0.
  create mode 100755 wasm/tests/ws_echo.py
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 84d7946..03e6fa6 100644
+index ec18ec3..4090f73 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -183,7 +183,12 @@ if (WIN32)
-    set (ORX_IMAGE_OUTPUT_LOCATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
- else ()
-    set (ORX_PLATFORM_DIR platform/unix)
--   set (ORX_IMAGE_OUTPUT_LOCATION ${CMAKE_LIBRARY_OUTPUT_DIRECTORY})
-+   if (EMSCRIPTEN)
-+      # The WASM runtime embeds the image from the executable output directory.
-+      set (ORX_IMAGE_OUTPUT_LOCATION ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
-+   else ()
-+      set (ORX_IMAGE_OUTPUT_LOCATION ${CMAKE_LIBRARY_OUTPUT_DIRECTORY})
-+   endif ()
- endif ()
- # Set path to look for include files
- include_directories(BEFORE api api/${ORX_PLATFORM_DIR})
-@@ -435,10 +440,12 @@ if (NOT WIN32) # Unix header files, libraries, and functions
-   check_include_file(sys/signal.h HAVE_SYS_SIGNAL_H)
-   check_include_file(sys/xattr.h  HAVE_SYS_XATTR_H)
-   check_include_file(wordexp.h    HAVE_WORDEXP_H)
--  set (CURSES_NEED_NCURSES TRUE)
--  include(FindCurses) # sets CURSES_HAVE_NCURSES_H and CURSES_HAVE_NCURSES_NCURSES_H
--  message(STATUS "CURSES_HAVE_NCURSES_H is ${CURSES_HAVE_NCURSES_H}")
--  message(STATUS "CURSES_HAVE_NCURSES_NCURSES_H is ${CURSES_HAVE_NCURSES_NCURSES_H}")
-+  if (NOT EMSCRIPTEN)
-+    set (CURSES_NEED_NCURSES TRUE)
-+    include(FindCurses) # sets CURSES_HAVE_NCURSES_H and CURSES_HAVE_NCURSES_NCURSES_H
-+    message(STATUS "CURSES_HAVE_NCURSES_H is ${CURSES_HAVE_NCURSES_H}")
-+    message(STATUS "CURSES_HAVE_NCURSES_NCURSES_H is ${CURSES_HAVE_NCURSES_NCURSES_H}")
-+  endif ()
- 
-   message(STATUS "-- determine available libraries --")
-   set(CMAKE_REQUIRED_LIBRARIES ${CMAKE_DL_LIBS})
-@@ -674,9 +681,25 @@ else ()
-             ${build_rexxapi_common_platform_dir}/SysCSStream.cpp)
- endif ()
- # Library definition
--add_library(rexxapi SHARED
--            ${common_rexxapi_sources}
--            ${platform_rexxapi_sources})
-+if (EMSCRIPTEN)
-+  # No rxapi daemon in a WASM process: the API server (queues, registrations,
-+  # macrospace) is linked in and reached through SysLoopbackConnection.
-+  add_library(rexxapi STATIC
-+              ${common_rexxapi_sources}
-+              ${platform_rexxapi_sources}
-+              ${build_rexxapi_common_platform_dir}/SysLoopbackConnection.cpp
-+              ${build_rexxapi_server_dir}/APIServer.cpp
-+              ${build_rexxapi_server_dir}/APIServerInstance.cpp
-+              ${build_rexxapi_server_dir}/APIServerThread.cpp
-+              ${build_rexxapi_server_dir}/MacroSpaceManager.cpp
-+              ${build_rexxapi_server_dir}/QueueManager.cpp
-+              ${build_rexxapi_server_dir}/RegistrationManager.cpp)
-+  target_include_directories(rexxapi PRIVATE ${build_rexxapi_server_dir})
-+else ()
-+  add_library(rexxapi SHARED
-+              ${common_rexxapi_sources}
-+              ${platform_rexxapi_sources})
-+endif ()
- # Include file definition
- target_include_directories(rexxapi PUBLIC
-             ${build_rexxapi_client_dir}
-@@ -951,9 +974,32 @@ else ()
- endif ()
- 
- # Library definition
--add_library(rexx SHARED
--            ${common_interpreter_sources}
--            ${platform_interpreter_sources})
-+if (EMSCRIPTEN)
-+  # Browser/Node WASM builds statically embed the native extension packages
-+  # (see PackageManager::embeddedPackages).  Emscripten's pthread +
-+  # side-module combination is intentionally avoided here.
-+  set (wasm_embedded_package_sources
-+              ${build_extensions_rxsock_dir}/rxsock.cpp
-+              ${build_extensions_rxsock_dir}/rxsockfn.cpp
-+              ${build_extensions_rxregexp_dir}/automaton.cpp
-+              ${build_extensions_rxregexp_dir}/dblqueue.cpp
-+              ${build_extensions_rxregexp_dir}/rxregexp.cpp
-+              ${build_extensions_rxmath_dir}/rxmath.cpp
-+              ${build_extensions_hostemu_platform_dir}/hostemu.cpp
-+              ${build_extensions_hostemu_dir}/cmdparse.cpp
-+              ${build_extensions_platform_dir}/rxunixsys/rxunixsys.cpp)
-+  set_source_files_properties(${wasm_embedded_package_sources}
-+              PROPERTIES COMPILE_DEFINITIONS ORX_EMBEDDED_PACKAGE)
-+  add_library(rexx STATIC
-+              ${common_interpreter_sources}
-+              ${platform_interpreter_sources}
-+              ${wasm_embedded_package_sources})
-+  target_include_directories(rexx PRIVATE ${build_extensions_hostemu_dir})
-+else ()
-+  add_library(rexx SHARED
-+              ${common_interpreter_sources}
-+              ${platform_interpreter_sources})
-+endif ()
- 
- set (core_platform_classes ${build_interpreter_platform_dir}/PlatformObjects.orx)
- # Include file definition
-@@ -992,6 +1038,20 @@ if (CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+@@ -1054,6 +1054,20 @@ if (CMAKE_INTERPROCEDURAL_OPTIMIZATION)
          endif ()
      endif ()
  endif ()
@@ -197,35 +78,10 @@ index 84d7946..03e6fa6 100644
  install(TARGETS rexx RUNTIME DESTINATION ${INSTALL_LIB_DIR} COMPONENT Core
                       LIBRARY DESTINATION ${INSTALL_LIB_DIR} COMPONENT Core
                       ARCHIVE DESTINATION ${INSTALL_INCLUDE_DIR} COMPONENT DevLib)
-@@ -1030,7 +1090,16 @@ target_include_directories(rexx_exe PUBLIC
-             ${build_api_platform_dir}
-             ${build_messages_dir})
- # Extra link library definitions
--target_link_libraries(rexx_exe rexx rexxapi ${CMAKE_REQUIRED_LIBRARIES})
-+if (EMSCRIPTEN)
-+  # librexx is a static archive in the WASM build.  Nothing references
-+  # SystemInitialization.cpp, so without --whole-archive the linker drops it
-+  # together with the _rexx_init() constructor that creates the kernel and
-+  # resource locks; every SysMutex then stays uncreated, request() returns
-+  # false without locking, and the interpreter runs threads unsynchronized.
-+  target_link_libraries(rexx_exe "$<LINK_LIBRARY:WHOLE_ARCHIVE,rexx>" rexxapi ${CMAKE_REQUIRED_LIBRARIES})
-+else ()
-+  target_link_libraries(rexx_exe rexx rexxapi ${CMAKE_REQUIRED_LIBRARIES})
-+endif ()
- # Merge in extra manifestinformation on Windows
- if (WIN32)
- add_custom_command(TARGET rexx_exe POST_BUILD
-@@ -1059,7 +1128,24 @@ target_include_directories(rexximage PUBLIC
-             ${build_api_dir}
-             ${build_api_platform_dir})
- # Extra link library definitions
--target_link_libraries(rexximage rexx rexxapi ${CMAKE_REQUIRED_LIBRARIES})
-+if (EMSCRIPTEN)
-+  # see rexx_exe: keep the _rexx_init() constructor
-+  target_link_libraries(rexximage "$<LINK_LIBRARY:WHOLE_ARCHIVE,rexx>" rexxapi ${CMAKE_REQUIRED_LIBRARIES})
-+else ()
-+  target_link_libraries(rexximage rexx rexxapi ${CMAKE_REQUIRED_LIBRARIES})
-+endif ()
+@@ -1155,6 +1169,18 @@ if (ORX_WASM)
+ else ()
+   target_link_libraries(rexximage rexx rexxapi ${CMAKE_REQUIRED_LIBRARIES})
+ endif ()
 +if (EMSCRIPTEN)
 +  target_compile_options(rexximage PRIVATE -pthread ${ORX_WASM_EH})
 +  target_link_options(rexximage PRIVATE
@@ -241,25 +97,8 @@ index 84d7946..03e6fa6 100644
  
  # handy macro for copying files from the source into the build directory.
  macro (copy_build_file name source)
-@@ -1104,12 +1190,47 @@ if (WIN32)
+@@ -1214,6 +1240,34 @@ else ()
  endif ()
- 
- # Build the rexx.img file
--add_custom_command(OUTPUT ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img
--           COMMAND $<TARGET_FILE:rexximage> ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img
--           DEPENDS rexximage rxapi ${image_class_files} ${platform_rexx_img_depends}
--           WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
-+if (EMSCRIPTEN)
-+  add_custom_command(OUTPUT ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img
-+             COMMAND ${CMAKE_CROSSCOMPILING_EMULATOR} $<TARGET_FILE:rexximage> ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img
-+             DEPENDS rexximage ${image_class_files} ${platform_rexx_img_depends}
-+             WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
-+else ()
-+  add_custom_command(OUTPUT ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img
-+             COMMAND $<TARGET_FILE:rexximage> ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img
-+             DEPENDS rexximage rxapi ${image_class_files} ${platform_rexx_img_depends}
-+             WORKING_DIRECTORY ${CMAKE_RUNTIME_OUTPUT_DIRECTORY})
-+endif ()
  
  add_custom_target(rexx_img ALL DEPENDS ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img)
 +if (EMSCRIPTEN)
@@ -293,54 +132,6 @@ index 84d7946..03e6fa6 100644
  install(PROGRAMS ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img COMPONENT Core DESTINATION ${INSTALL_LIB_DIR} PERMISSIONS OWNER_EXECUTE GROUP_EXECUTE WORLD_EXECUTE OWNER_WRITE OWNER_READ GROUP_READ WORLD_READ)
  
  #################### rxapi (executable) #########################
-@@ -1309,6 +1430,8 @@ set_target_properties(rxmath PROPERTIES SOVERSION ${ORX_API_LEVEL})
- create_install_symlink(rxmath)
- 
- #################### librxsock.so ################
-+# WASM embeds RxSock into librexx; native platforms keep the shared package.
-+if (NOT EMSCRIPTEN)
- # additional source files required by specific platforms
- if (WIN32)
-    set (platform_rxsock_sources ${build_platform_dir}/verinfo.rc)
-@@ -1324,6 +1447,7 @@ install(TARGETS rxsock RUNTIME COMPONENT Core DESTINATION ${INSTALL_LIB_DIR}
-                        LIBRARY DESTINATION ${INSTALL_LIB_DIR} COMPONENT Core)
- set_target_properties(rxsock PROPERTIES SOVERSION ${ORX_API_LEVEL})
- create_install_symlink(rxsock)
-+endif ()
- 
- 
- #################### librxregexp.so ################
-@@ -1390,7 +1514,7 @@ install(TARGETS rxunixsys RUNTIME DESTINATION ${INSTALL_LIB_DIR}
- endif ()
- 
- #################### liborxncurses.so ################
--if (NOT WIN32)
-+if (NOT WIN32 AND NOT EMSCRIPTEN)
-    # need to copy this to the binary dir
-    copy_build_file(ncurses.cls ${build_extensions_orxncurses_dir})
-    # Sources for liborxncurses.so
-diff --git a/api/oorexxapi.h b/api/oorexxapi.h
-index f5e2df2..997f682 100644
---- a/api/oorexxapi.h
-+++ b/api/oorexxapi.h
-@@ -250,10 +250,17 @@ typedef struct _RexxMethodEntry
- 
- #define STANDARD_PACKAGE_HEADER sizeof(RexxPackageEntry), REXX_PACKAGE_API_NO,
- 
-+#if defined(ORX_EMBEDDED_PACKAGE)
-+// The package is linked into the interpreter itself (WebAssembly build) and is
-+// registered through PackageManager's embedded package table, so it must not
-+// export the RexxGetPackage() loading stub (several such packages would clash).
-+#define OOREXX_GET_PACKAGE(name)
-+#else
- #define OOREXX_GET_PACKAGE(name) \
-     BEGIN_EXTERN_C()\
-     REXXEXPORT RexxPackageEntry *RexxGetPackage(void) { return &name##_package_entry; }\
-     END_EXTERN_C()
-+#endif
- 
- 
- typedef void (RexxEntry *RexxPackageLoader)(RexxThreadContext *);
 diff --git a/cmake/wasm-emscripten-6.0.12-cache.cmake b/cmake/wasm-emscripten-6.0.12-cache.cmake
 new file mode 100644
 index 0000000..4c24522
@@ -431,132 +222,21 @@ index 0000000..4c24522
 +set(HAVE_STAT_ST_MTIM 1 CACHE INTERNAL "")
 +set(HAVE_STAT_ST_MTIMESPEC 0 CACHE INTERNAL "")
 +set(HAVE_PRAGMA_GCC_STRINGOPOVERFLOW 0 CACHE INTERNAL "")
-diff --git a/common/platform/unix/SysLibrary.cpp b/common/platform/unix/SysLibrary.cpp
-index c6c0386..c20a2e8 100644
---- a/common/platform/unix/SysLibrary.cpp
-+++ b/common/platform/unix/SysLibrary.cpp
-@@ -53,6 +53,59 @@
- #include <dlfcn.h>
- 
- 
-+#if defined(__EMSCRIPTEN__)
-+// There is no dlopen in WebAssembly.  A build may instead link libraries in
-+// and describe them with this table (a weak symbol: NULL in the builds that
-+// link none): load() finds a library by name, getProcedure() a symbol in it,
-+// so ::METHOD ... EXTERNAL "LIBRARY name ...", RxFuncAdd() and the
-+// Rexx*Dll() registrations work for them unchanged.  A library may take
-+// several entries (one per source file); the table ends with a NULL name.
-+extern "C"
-+{
-+typedef struct { const char *name; void *address; } OrxWasmStaticSymbol;
-+typedef struct { const char *name; const OrxWasmStaticSymbol *symbols; } OrxWasmStaticLibrary;
-+const OrxWasmStaticLibrary *orx_wasm_static_libraries(void) __attribute__((weak));
-+}
-+
-+/**
-+ * Return the first static library entry called name, or NULL.
-+ */
-+static const OrxWasmStaticLibrary *findStaticLibrary(const char *name)
-+{
-+    if (orx_wasm_static_libraries == NULL)
-+    {
-+        return NULL;
-+    }
-+    for (const OrxWasmStaticLibrary *l = orx_wasm_static_libraries(); l->name != NULL; l++)
-+    {
-+        if (strcmp(l->name, name) == 0)
-+        {
-+            return l;
-+        }
-+    }
-+    return NULL;
-+}
-+
-+/**
-+ * Is this handle one of the static library entries?
-+ */
-+static bool isStaticLibrary(void *handle)
-+{
-+    if (handle == NULL || orx_wasm_static_libraries == NULL)
-+    {
-+        return false;
-+    }
-+    for (const OrxWasmStaticLibrary *l = orx_wasm_static_libraries(); l->name != NULL; l++)
-+    {
-+        if ((void *)l == handle)
-+        {
-+            return true;
-+        }
-+    }
-+    return false;
-+}
-+#endif
-+
- #define MAX_LIBRARY_NAME_LENGTH 250
- #define LIBARY_NAME_BUFFER_LENGTH (1 + MAX_LIBRARY_NAME_LENGTH + sizeof("/usr/lib/lib") + sizeof(ORX_SHARED_LIBRARY_EXT))
- 
-@@ -68,6 +121,27 @@ void * SysLibrary::getProcedure(
- /* Function:  Resolve a named procedure in a library                          */
- /******************************************************************************/
- {
-+#if defined(__EMSCRIPTEN__)
-+    if (isStaticLibrary(libraryHandle))
-+    {
-+        const char *library = ((const OrxWasmStaticLibrary *)libraryHandle)->name;
-+        for (const OrxWasmStaticLibrary *l = (const OrxWasmStaticLibrary *)libraryHandle; l->name != NULL; l++)
-+        {
-+            if (strcmp(l->name, library) != 0)
-+            {
-+                continue;
-+            }
-+            for (const OrxWasmStaticSymbol *s = l->symbols; s->name != NULL; s++)
-+            {
-+                if (strcmp(s->name, name) == 0)
-+                {
-+                    return s->address;
-+                }
-+            }
-+        }
-+        return NULL;
-+    }
-+#endif
-     return dlsym(libraryHandle, name);
- }
- 
-@@ -85,6 +159,15 @@ bool SysLibrary::load(
-         return false;
-     }
- 
-+#if defined(__EMSCRIPTEN__)
-+    const OrxWasmStaticLibrary *linkedIn = findStaticLibrary(name);
-+    if (linkedIn != NULL)
-+    {
-+        libraryHandle = (void *)linkedIn;
-+        return true;
-+    }
-+#endif
-+
-     snprintf(nameBuffer, LIBARY_NAME_BUFFER_LENGTH, "lib%s%s", name, ORX_SHARED_LIBRARY_EXT);
-     // try loading directly
-     libraryHandle = dlopen(nameBuffer, RTLD_LAZY);
-@@ -110,6 +193,12 @@ bool SysLibrary::load(
-  */
- bool SysLibrary::unload()
- {
-+#if defined(__EMSCRIPTEN__)
-+    if (isStaticLibrary(libraryHandle))
-+    {
-+        return true;           // linked in: nothing to unload
-+    }
-+#endif
-     if (libraryHandle != NULL)
-     {
-         dlclose(libraryHandle);
 diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
-index 69b1869..485a701 100644
+index 7d0b2fd..ab57a5b 100644
 --- a/common/platform/unix/SysProcess.cpp
 +++ b/common/platform/unix/SysProcess.cpp
-@@ -179,6 +179,81 @@ void SysProcess::getUserID(char *buffer)
+@@ -75,6 +75,9 @@ const char *SysProcess::executableFullPath = NULL;
+ // directory of our Rexx shared libraries
+ const char *SysProcess::libraryLocation = NULL;
+ 
++#if defined(__EMSCRIPTEN__)
++#include <emscripten.h>
++#endif
+ #include "SysWasmHost.hpp"
+ 
+ #if defined(ORX_WASM)
+@@ -355,6 +358,81 @@ void SysProcess::getUserID(char *buffer)
      buffer[MAX_USERID_LENGTH-1] = '\0';
  }
  
@@ -780,10 +460,10 @@ index f2539df..fd47f6b 100644
      // set the errno information
      setErrno(context, rc >= 0);
 diff --git a/interpreter/concurrency/Activity.cpp b/interpreter/concurrency/Activity.cpp
-index e8b6936..8848967 100644
+index 7bd530a..67f312f 100644
 --- a/interpreter/concurrency/Activity.cpp
 +++ b/interpreter/concurrency/Activity.cpp
-@@ -190,6 +190,9 @@ void Activity::runThread()
+@@ -192,6 +192,9 @@ void Activity::runThread()
      // highest address downward. When it hits the line in the sand we've drawn,
      // we raise a control stack full error.
      stackLimit = currentThread.getStackBase() + errorRecoveryStack;
@@ -793,7 +473,7 @@ index e8b6936..8848967 100644
  
      for (;;)
      {
-@@ -406,6 +409,9 @@ Activity::Activity(GlobalProtectedObject &p, bool createThread)
+@@ -408,6 +411,9 @@ Activity::Activity(GlobalProtectedObject &p, bool createThread)
          // reset the stack base for this thread.
          // establish the stack base pointer for control stack full detection.
          stackLimit = currentThread.getStackBase() + errorRecoveryStack;
@@ -803,7 +483,7 @@ index e8b6936..8848967 100644
      }
  }
  
-@@ -2276,6 +2282,60 @@ void Activity::setupCurrentActivity()
+@@ -2444,6 +2450,60 @@ void Activity::setupCurrentActivity()
      Numerics::setCurrentSettings(numericSettings);
  }
  
@@ -864,7 +544,7 @@ index e8b6936..8848967 100644
  void Activity::checkStackSpace()
  /******************************************************************************/
  /* Function:  Make sure there is enough stack space to run a method           */
-@@ -2307,8 +2367,38 @@ void Activity::checkStackSpace()
+@@ -2475,8 +2535,38 @@ void Activity::checkStackSpace()
      {
          reportException(Error_Control_stack_full);
      }
@@ -903,7 +583,7 @@ index e8b6936..8848967 100644
  
  
  /**
-@@ -3401,6 +3491,9 @@ void Activity::run(ActivityDispatcher &target)
+@@ -3569,6 +3659,9 @@ void Activity::run(ActivityDispatcher &target)
  
      // update the stack base
      stackLimit = currentThread.getStackBase() + errorRecoveryStack;
@@ -914,10 +594,10 @@ index e8b6936..8848967 100644
      // get a new random seed
      generateRandomNumberSeed();
 diff --git a/interpreter/concurrency/Activity.hpp b/interpreter/concurrency/Activity.hpp
-index 213314a..96da70e 100644
+index 97fdb0f..f3e617e 100644
 --- a/interpreter/concurrency/Activity.hpp
 +++ b/interpreter/concurrency/Activity.hpp
-@@ -193,6 +193,9 @@ class Activity : public RexxInternalObject
+@@ -214,6 +214,9 @@ class Activity : public RexxInternalObject
      void        requestAccess();
      void        setupCurrentActivity();
      void        checkStackSpace();
@@ -927,7 +607,7 @@ index 213314a..96da70e 100644
      void        cleanupActivityResources();
      void        terminatePoolActivity();
      thread_id_t threadIdMethod();
-@@ -422,6 +425,9 @@ class Activity : public RexxInternalObject
+@@ -448,6 +451,9 @@ class Activity : public RexxInternalObject
      size_t   attachCount;               // extent of nested attaches
      bool     newThreadAttached;         // Indicates this thread was a "side door" attach.
      char    *stackLimit;                // pointer to base to the C stack location that will trigger a control stack error
@@ -937,130 +617,6 @@ index 213314a..96da70e 100644
      bool        clauseExitUsed;         // halt/trace sys exit not set ==> 1
      uint64_t    randomSeed;             // random number seed
      ProtectedBase *protectedObjects;    // list of stack-based object protectors
-diff --git a/interpreter/package/PackageManager.cpp b/interpreter/package/PackageManager.cpp
-index 60d8c1e..9324d0b 100644
---- a/interpreter/package/PackageManager.cpp
-+++ b/interpreter/package/PackageManager.cpp
-@@ -73,6 +73,48 @@ StringTable *PackageManager::packageRoutines = OREF_NULL;     // table of functi
- StringTable *PackageManager::registeredRoutines = OREF_NULL;
- StringTable *PackageManager::loadedRequires = OREF_NULL;
- 
-+#if defined(__EMSCRIPTEN__)
-+extern RexxPackageEntry rxsock_package_entry;
-+extern RexxPackageEntry rxregexp_package_entry;
-+extern RexxPackageEntry rxmath_package_entry;
-+extern RexxPackageEntry hostemu_package_entry;
-+extern RexxPackageEntry orxnixclib_package_entry;
-+
-+// Extension packages linked into the WASM interpreter (there is no dlopen).
-+// They are registered as internal packages when the image is built, so
-+// ::REQUIRES of their .cls files and RxFuncAdd() find them without loading
-+// a shared library.
-+const PackageManager::EmbeddedPackage PackageManager::embeddedPackages[] =
-+{
-+    { "rxsock",   &rxsock_package_entry,   true },
-+    { "rxregexp", &rxregexp_package_entry, true },
-+    { "rxmath",   &rxmath_package_entry,   true },
-+    { "hostemu",  &hostemu_package_entry,  false },
-+    { "rxunixsys", &orxnixclib_package_entry, false },
-+    { NULL, NULL, false }
-+};
-+
-+
-+/**
-+ * Find the embedded package entry matching a restored internal package.
-+ *
-+ * @param package The library package restored from the image.
-+ *
-+ * @return The package entry, or NULL if this is not an embedded package.
-+ */
-+RexxPackageEntry *PackageManager::findEmbeddedPackage(LibraryPackage *package)
-+{
-+    for (const EmbeddedPackage *e = embeddedPackages; e->name != NULL; e++)
-+    {
-+        if (package->isPackage(new_string(e->name)))
-+        {
-+            return e->entry;
-+        }
-+    }
-+    return NULL;
-+}
-+#endif
-+
- /**
-  * Initialize the package manager global state.
-  */
-@@ -86,6 +128,15 @@ void PackageManager::initialize()
-     loadInternalPackage(GlobalNames::REXX, rexxPackage);
-     // REXXUTIL is also an internally contained package
-     loadInternalPackage(GlobalNames::REXXUTIL, rexxutilPackage);
-+#if defined(__EMSCRIPTEN__)
-+    for (const EmbeddedPackage *e = embeddedPackages; e->name != NULL; e++)
-+    {
-+        if (e->inImage)
-+        {
-+            loadInternalPackage(new_string(e->name), e->entry);
-+        }
-+    }
-+#endif
- }
- 
- 
-@@ -155,8 +206,13 @@ void PackageManager::restore()
-             }
-             else
-             {
-+#if defined(__EMSCRIPTEN__)
-+                RexxPackageEntry *embedded = findEmbeddedPackage(package);
-+                package->reload(embedded != NULL ? embedded : rexxutilPackage);
-+#else
-                 // the only other choice is the REXXUTIL package
-                 package->reload(rexxutilPackage);
-+#endif
-             }
-         }
-     }
-@@ -231,6 +287,20 @@ LibraryPackage *PackageManager::loadLibrary(RexxString *name)
-     // have we already loaded this package?
-     // may need to bootstrap it up first.
-     LibraryPackage *package = (LibraryPackage *)packages->get(name);
-+#if defined(__EMSCRIPTEN__)
-+    // an embedded package that is loaded on first request?
-+    if (package == NULL)
-+    {
-+        for (const EmbeddedPackage *e = embeddedPackages; e->name != NULL; e++)
-+        {
-+            if (!e->inImage && name->strCaselessCompare(e->name))
-+            {
-+                loadInternalPackage(name, e->entry);
-+                return (LibraryPackage *)packages->get(name);
-+            }
-+        }
-+    }
-+#endif
-     if (package == NULL)
-     {
-         package = new LibraryPackage(name);
-diff --git a/interpreter/package/PackageManager.hpp b/interpreter/package/PackageManager.hpp
-index 416ab1f..30a4d87 100644
---- a/interpreter/package/PackageManager.hpp
-+++ b/interpreter/package/PackageManager.hpp
-@@ -123,6 +123,15 @@ protected:
- 
-     static RexxPackageEntry *rexxPackage;       // internal generated REXX package
-     static RexxPackageEntry *rexxutilPackage;   // internal generated REXXUTIL package
-+#if defined(__EMSCRIPTEN__)
-+    // native extension packages statically linked into the WASM interpreter
-+    // inImage: registered when the image is built (functions usable without
-+    // RxFuncAdd); otherwise loaded on first request, which runs its loader
-+    // in the current process (needed e.g. by hostemu's subcom registration)
-+    struct EmbeddedPackage { const char *name; RexxPackageEntry *entry; bool inImage; };
-+    static const EmbeddedPackage embeddedPackages[];
-+    static RexxPackageEntry *findEmbeddedPackage(LibraryPackage *package);
-+#endif
- };
- 
- #endif
 diff --git a/interpreter/parser/LanguageParser.cpp b/interpreter/parser/LanguageParser.cpp
 index b490386..5658f4f 100644
 --- a/interpreter/parser/LanguageParser.cpp
@@ -1101,37 +657,6 @@ index 41bb1e6..31211e8 100644
      size_t           maxStack;           // maximum stack depth
      size_t           variableIndex;      // current variable index slot
      size_t           constantMaxStack;           // maximum stack depth for the evaluated constants
-diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform/unix/SystemCommands.cpp
-index 2c336ee..5abf65b 100644
---- a/interpreter/platform/unix/SystemCommands.cpp
-+++ b/interpreter/platform/unix/SystemCommands.cpp
-@@ -826,6 +826,18 @@ RexxObjectPtr RexxEntry ioCommandHandler(RexxExitContext *context, RexxStringObj
-     CSTRING environment = context->CString(address);
-     CSTRING commandString = context->CString(command);
- 
-+#if defined(__EMSCRIPTEN__)
-+    // There is no child-process model in the browser WASM profile.  Keep
-+    // commands handled entirely in-process (cd/set/unset/export), and fail
-+    // closed for commands that would require posix_spawnp().
-+    RexxObjectPtr internalRc = NULLOBJECT;
-+    if (handleCommandInternally(context, (char *)commandString, internalRc))
-+    {
-+        return internalRc;
-+    }
-+    return ErrorFailure(context, commandString);
-+#else
-+
-     if (Utilities::strCaselessCompare("path", environment) == 0)
-     {   // For the no-shell "direct" environment we need to break the command
-         // string into a command name and separate arguments each (we have no
-@@ -1061,6 +1073,7 @@ RexxObjectPtr RexxEntry ioCommandHandler(RexxExitContext *context, RexxStringObj
-         return NULLOBJECT;
-     }
-     return context->False(); // zero return code
-+#endif
- }
- 
- 
 diff --git a/interpreter/platform/unix/TimeSupport.cpp b/interpreter/platform/unix/TimeSupport.cpp
 index 9f44c51..2c15c8b 100644
 --- a/interpreter/platform/unix/TimeSupport.cpp
@@ -1197,345 +722,12 @@ index 9f44c51..2c15c8b 100644
  }
  
  
-diff --git a/rexxapi/client/LocalMacroSpaceManager.cpp b/rexxapi/client/LocalMacroSpaceManager.cpp
-index 6a5a342..9c1bb8a 100644
---- a/rexxapi/client/LocalMacroSpaceManager.cpp
-+++ b/rexxapi/client/LocalMacroSpaceManager.cpp
-@@ -607,6 +607,11 @@ void LocalMacroSpaceManager::translateRexxProgram(const char *sourceFile, Manage
-     // translated the file, we're finished with the source, so it can be released
-     // once we exit the block.
-     {
-+        RexxReturnCode (RexxEntry *compiler)(const char *, CONSTRXSTRING *, RXSTRING *);
-+#if defined(__EMSCRIPTEN__)
-+        // no dlopen() in a WASM process; the interpreter is linked in
-+        compiler = RexxTranslateInstoreProgram;
-+#else
-         SysLibrary lib;
-         if (!lib.load("rexx"))
-         {
-@@ -619,9 +624,8 @@ void LocalMacroSpaceManager::translateRexxProgram(const char *sourceFile, Manage
-             throw new ServiceException(MACRO_TRANSLATION_ERROR, "Unable to compile Rexx program");
-         }
- 
--        RexxReturnCode (RexxEntry *compiler)(const char *, CONSTRXSTRING *, RXSTRING *);
--
-         compiler = (RexxReturnCode (RexxEntry *)(const char *, CONSTRXSTRING *, RXSTRING *))proc;
-+#endif
- 
-         ManagedRxstring sourceData;
-         readRxstringFromFile(fileInst, sourceData, (size_t)fsize);
-diff --git a/rexxapi/client/platform/unix/SysLocalAPIManager.cpp b/rexxapi/client/platform/unix/SysLocalAPIManager.cpp
-index d7f16d3..1b3f8d8 100644
---- a/rexxapi/client/platform/unix/SysLocalAPIManager.cpp
-+++ b/rexxapi/client/platform/unix/SysLocalAPIManager.cpp
-@@ -49,6 +49,9 @@
- #include <signal.h>
- #include <sys/types.h>
- #include "SysProcess.hpp"
-+#if defined(__EMSCRIPTEN__)
-+#include "SysLoopbackConnection.hpp"
-+#endif
- 
- #ifdef AIX
- extern "C"
-@@ -73,6 +76,9 @@ int _rexxapi_fini()
-  */
- void SysLocalAPIManager::startServerProcess()
- {
-+#if defined(__EMSCRIPTEN__)
-+    throw new ServiceException(API_FAILURE, "rxapi service is unavailable in the WASM profile");
-+#else
- #define RXAPI "rxapi"
- #define DOTDOT_BIN_RXAPI "../bin/" RXAPI
- #define DOT_RXAPI "./" RXAPI
-@@ -140,6 +146,7 @@ void SysLocalAPIManager::startServerProcess()
-     // still no luck? This is a launch failure. Because we are the forked process,
-     // we need to exit immediately.
-     exit(1);
-+#endif
- }
- 
- 
-@@ -188,6 +195,10 @@ void SysLocalAPIManager::setActiveSessionQueue(QueueHandle sessionQueue)
-  */
- ApiConnection *SysLocalAPIManager::newClientConnection()
- {
-+#if defined(__EMSCRIPTEN__)
-+    // no rxapi daemon in a WASM process: talk to the server linked in-process
-+    return new SysLoopbackConnection();
-+#endif
-     SysLocalSocketConnection *connection = new SysLocalSocketConnection();
- 
-     // open the pipe to the server
-diff --git a/rexxapi/common/platform/unix/SysLoopbackConnection.cpp b/rexxapi/common/platform/unix/SysLoopbackConnection.cpp
-new file mode 100644
-index 0000000..a905676
---- /dev/null
-+++ b/rexxapi/common/platform/unix/SysLoopbackConnection.cpp
-@@ -0,0 +1,138 @@
-+/*----------------------------------------------------------------------------*/
-+/*                                                                            */
-+/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
-+/*                                                                            */
-+/* This program and the accompanying materials are made available under       */
-+/* the terms of the Common Public License v1.0 which accompanies this         */
-+/* distribution. A copy is also available at the following address:           */
-+/* https://www.oorexx.org/license.html                                        */
-+/*                                                                            */
-+/*----------------------------------------------------------------------------*/
-+/**
-+ * In-process transport to the Rexx API server; see SysLoopbackConnection.hpp.
-+ */
-+
-+#include "SysLoopbackConnection.hpp"
-+#include "ServiceMessage.hpp"
-+#include "APIServer.hpp"
-+#include <string.h>
-+
-+namespace
-+{
-+/**
-+ * The server end of a loopback exchange: reads the pending request and
-+ * collects the reply.
-+ */
-+class ServerEnd : public ApiConnection
-+{
-+public:
-+    ServerEnd(std::vector<char> &in, std::vector<char> &out) : ApiConnection(), input(in), output(out), pos(0) { }
-+
-+    bool read(void *buf, size_t bufsize, size_t *bytesread) override
-+    {
-+        size_t n = input.size() - pos;
-+        if (n > bufsize)
-+        {
-+            n = bufsize;
-+        }
-+        memcpy(buf, input.data() + pos, n);
-+        pos += n;
-+        *bytesread = n;
-+        return n > 0 || bufsize == 0;
-+    }
-+
-+    bool write(void *buf, size_t bufsize, size_t *byteswritten) override
-+    {
-+        output.insert(output.end(), (char *)buf, (char *)buf + bufsize);
-+        *byteswritten = bufsize;
-+        return true;
-+    }
-+
-+    bool write(void *buf, size_t bufsize, void *buf2, size_t buf2size, size_t *byteswritten) override
-+    {
-+        output.insert(output.end(), (char *)buf, (char *)buf + bufsize);
-+        output.insert(output.end(), (char *)buf2, (char *)buf2 + buf2size);
-+        *byteswritten = bufsize + buf2size;
-+        return true;
-+    }
-+
-+    bool disconnect() override { return true; }
-+
-+private:
-+    std::vector<char> &input;
-+    std::vector<char> &output;
-+    size_t pos;
-+};
-+
-+
-+/**
-+ * The single in-process server instance (created on first use).
-+ */
-+APIServer &inProcessServer()
-+{
-+    static APIServer *server = []()
-+    {
-+        APIServer *s = new APIServer();
-+        s->initServer(NULL);
-+        return s;
-+    }();
-+    return *server;
-+}
-+}
-+
-+
-+/**
-+ * Run the server on the request collected so far, replacing any old reply.
-+ */
-+void SysLoopbackConnection::serve()
-+{
-+    reply.clear();
-+    replyPos = 0;
-+    ServerEnd end(request, reply);
-+    ServiceMessage message;
-+    message.readMessage(&end);
-+    inProcessServer().processMessage(message);
-+    message.writeResult(&end);
-+    request.clear();
-+}
-+
-+
-+bool SysLoopbackConnection::read(void *buf, size_t bufsize, size_t *bytesread)
-+{
-+    // first read after a request: serve it now, on this thread
-+    if (replyPos >= reply.size() && !request.empty())
-+    {
-+        serve();
-+    }
-+    size_t n = reply.size() - replyPos;
-+    if (n > bufsize)
-+    {
-+        n = bufsize;
-+    }
-+    memcpy(buf, reply.data() + replyPos, n);
-+    replyPos += n;
-+    *bytesread = n;
-+    if (n == 0 && bufsize != 0)
-+    {
-+        errcode = CSERROR_IO_FAILED;
-+        return false;
-+    }
-+    return true;
-+}
-+
-+
-+bool SysLoopbackConnection::write(void *buf, size_t bufsize, size_t *byteswritten)
-+{
-+    request.insert(request.end(), (char *)buf, (char *)buf + bufsize);
-+    *byteswritten = bufsize;
-+    return true;
-+}
-+
-+
-+bool SysLoopbackConnection::write(void *buf, size_t bufsize, void *buf2, size_t buf2size, size_t *byteswritten)
-+{
-+    request.insert(request.end(), (char *)buf, (char *)buf + bufsize);
-+    request.insert(request.end(), (char *)buf2, (char *)buf2 + buf2size);
-+    *byteswritten = bufsize + buf2size;
-+    return true;
-+}
-diff --git a/rexxapi/common/platform/unix/SysLoopbackConnection.hpp b/rexxapi/common/platform/unix/SysLoopbackConnection.hpp
-new file mode 100644
-index 0000000..3b4318f
---- /dev/null
-+++ b/rexxapi/common/platform/unix/SysLoopbackConnection.hpp
-@@ -0,0 +1,47 @@
-+/*----------------------------------------------------------------------------*/
-+/*                                                                            */
-+/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
-+/*                                                                            */
-+/* This program and the accompanying materials are made available under       */
-+/* the terms of the Common Public License v1.0 which accompanies this         */
-+/* distribution. A copy is also available at the following address:           */
-+/* https://www.oorexx.org/license.html                                        */
-+/*                                                                            */
-+/*----------------------------------------------------------------------------*/
-+/**
-+ * In-process connection to the Rexx API server (WebAssembly build).
-+ *
-+ * A WASM process cannot start or reach the rxapi daemon, so the server code
-+ * (queues, registrations, macrospace) is linked into the interpreter and the
-+ * client talks to it through this connection: the request written by
-+ * ClientMessage is decoded and dispatched on the calling thread when the
-+ * client starts reading the reply.  The message protocol and the server code
-+ * are unchanged; only the transport is replaced.
-+ */
-+#ifndef SysLoopbackConnection_Included
-+#define SysLoopbackConnection_Included
-+
-+#include <stddef.h>
-+#include <stdlib.h>
-+#include "CSStream.hpp"
-+#include <vector>
-+
-+class SysLoopbackConnection : public ApiConnection
-+{
-+public:
-+    SysLoopbackConnection() : ApiConnection(), replyPos(0) { }
-+    ~SysLoopbackConnection() { }
-+    bool read(void *buf, size_t bufsize, size_t *bytesread) override;
-+    bool write(void *buf, size_t bufsize, size_t *byteswritten) override;
-+    bool write(void *buf, size_t bufsize, void *buf2, size_t buf2size, size_t *byteswritten) override;
-+    bool disconnect() override { return true; }
-+
-+protected:
-+    void serve();
-+
-+    std::vector<char> request;   // bytes written by the client, not yet served
-+    std::vector<char> reply;     // the server's answer
-+    size_t replyPos;             // read position in the reply
-+};
-+
-+#endif
-diff --git a/rexxapi/server/APIServer.cpp b/rexxapi/server/APIServer.cpp
-index f388983..dbbfe2f 100644
---- a/rexxapi/server/APIServer.cpp
-+++ b/rexxapi/server/APIServer.cpp
-@@ -214,6 +214,47 @@ void APIServer::processMessages(ApiConnection *connection)
- }
- 
- 
-+#if defined(__EMSCRIPTEN__)
-+/**
-+ * Process a single message for an in-process client (WebAssembly build, see
-+ * SysLoopbackConnection): the same dispatching as processMessages(), without
-+ * a connection to read from or reply to.
-+ *
-+ * @param message The request; the result is placed back into it.
-+ */
-+void APIServer::processMessage(ServiceMessage &message)
-+{
-+    message.result = MESSAGE_OK;     // unconditionally zero the result
-+    try
-+    {
-+        switch (message.messageTarget)
-+        {
-+            case QueueManager:
-+            case RegistrationManager:
-+            case MacroSpaceManager:
-+            {
-+                getInstance(message)->dispatch(message);
-+                break;
-+            }
-+
-+            case APIManager:
-+            {
-+                // there is no connection to close in process
-+                if (message.operation != CLOSE_CONNECTION)
-+                {
-+                    dispatch(message);
-+                }
-+                break;
-+            }
-+        }
-+    } catch (std::bad_alloc &)
-+    {
-+        message.result = SERVER_ERROR;
-+    }
-+}
-+#endif
-+
-+
- /**
-  * Dispatch an API server control message.
-  *
-diff --git a/rexxapi/server/APIServer.hpp b/rexxapi/server/APIServer.hpp
-index e448335..ec9e137 100644
---- a/rexxapi/server/APIServer.hpp
-+++ b/rexxapi/server/APIServer.hpp
-@@ -70,6 +70,9 @@ public:
-     void dispatch(ServiceMessage &message);
-     void sessionTerminated(APIServerThread *thread);
-     void cleanupTerminatedSessions();
-+#if defined(__EMSCRIPTEN__)
-+    void processMessage(ServiceMessage &message);
-+#endif
- 
- protected:
- 
 diff --git a/wasm/README.md b/wasm/README.md
 new file mode 100644
-index 0000000..b0942ef
+index 0000000..487bf41
 --- /dev/null
 +++ b/wasm/README.md
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,134 @@
 +# ooRexx 5.3 WebAssembly / RxSock development port
 +
 +Baseline: ooRexx 5.3.0, trunk r13254.  Toolchain qualification: Emscripten 6.0.12.
@@ -1545,6 +737,22 @@ index 0000000..b0942ef
 +image into the runtime MEMFS, and embeds the stock RxSock package into the
 +interpreter.  RxSock keeps its Rexx API; Emscripten SOCKFS supplies a WebSocket
 +transport for stream sockets.
++
++## Two layers
++
++The changes to ooRexx come in two layers.  The first is common to every
++WebAssembly build, Emscripten or WASI (`ORX_WASM`, defined by CMakeLists.txt
++for both; `ORX_WASI` too for WASI): static `rexx` and `rexxapi`, the API
++server in-process, the embedded extension packages, libraries linked in
++instead of `dlopen()` (`orx_wasm_static_libraries()`), the Linux errno values
++Rexx programs see (`HOST_ERRNO`), HALT from the host (`orxWasmSignal()`),
++`rexxc`, `rxqueue` and `rxsubcom` in the `rexx` executable (multi-call,
++`--orx-wasm-TOOL`), and no IPO.  What the interpreter needs from its host,
++external commands and the paths of `.RexxInfo`, goes through the host
++functions declared in `common/platform/unix/SysWasmHost.hpp`: weak symbols
++that a runtime defines when it has the facility.  The second layer is
++Emscripten's: this directory's build, the browser and Node runtimes, and the
++`__EMSCRIPTEN__` code below.
 +
 +## WASM platform policy
 +

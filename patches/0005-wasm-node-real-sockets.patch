@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
 Date: Sun, 11 Oct 2026 11:18:26 +0200
-Subject: [PATCH 4/8] WebAssembly port, Node: real TCP/UDP sockets and name
+Subject: [PATCH 05/13] WebAssembly port, Node: real TCP/UDP sockets and name
  resolution
 
 The Node command-line build (wasm/build-node.sh, now with NODERAWSOCKETS)
@@ -25,10 +25,10 @@ name resolution.
  create mode 100644 wasm/node-sockets-pre.js
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 58983f3..800ba2c 100644
+index 522e71c..4fb8d8e 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1152,6 +1152,8 @@ if (EMSCRIPTEN)
+@@ -1179,6 +1179,8 @@ if (EMSCRIPTEN)
        -sNODERAWFS=1
        # passwd entry of the current user (see SysProcess.cpp)
        -Wl,--wrap=getpwnam,--wrap=getpwuid
@@ -37,7 +37,7 @@ index 58983f3..800ba2c 100644
        -sEXIT_RUNTIME=1
        -sSTACK_SIZE=8388608
        -sINITIAL_MEMORY=67108864
-@@ -1231,6 +1233,8 @@ if (EMSCRIPTEN)
+@@ -1260,6 +1262,8 @@ if (EMSCRIPTEN)
        # (each new worker loads the whole module); timing-sensitive tests
        # (GUARD, TRACE of REPLY) depend on it
        -sPTHREAD_POOL_SIZE=4
@@ -273,7 +273,7 @@ index fd47f6b..b459669 100644
      // set the errno information
      setErrno(context, rc >= 0);
 diff --git a/wasm/README.md b/wasm/README.md
-index 7b90a2e..155575d 100644
+index 8a77152..cf611cc 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -6,7 +6,8 @@ This development port compiles the ooRexx interpreter and API statically to
@@ -284,9 +284,9 @@ index 7b90a2e..155575d 100644
 +transport for stream sockets in the browser, while the Node command-line build
 +(below) uses real TCP/UDP sockets.
  
- ## WASM platform policy
+ ## Two layers
  
-@@ -49,9 +50,11 @@ transport for stream sockets.
+@@ -65,9 +66,11 @@ Emscripten's: this directory's build, the browser and Node runtimes, and the
  * `rexx.img`, `socket.cls`, `streamsocket.cls` and `rxregexp.cls` preloaded
    into MEMFS.
  
@@ -301,7 +301,7 @@ index 7b90a2e..155575d 100644
  Nonblocking sockets preserve `EINPROGRESS` and readiness/SO_ERROR completion
  semantics. Emscripten's fake-DNS lookup (`gethostbyname`) also runs on the
  main thread (proxied since Emscripten 6.0.12), so host names resolve
-@@ -97,10 +100,11 @@ connection refusal, DNS/localhost, and the unchanged `.StreamSocket` wrapper.
+@@ -113,10 +116,11 @@ connection refusal, DNS/localhost, and the unchanged `.StreamSocket` wrapper.
  
  `wasm/build-node.sh [BUILD_DIR]` relinks the runtime (no recompilation) into
  `BUILD_DIR/bin-node` as a Node-only command-line ooRexx (`-sNODERAWFS=1
@@ -317,7 +317,7 @@ index 7b90a2e..155575d 100644
  `bin-node/rexx` and `bin-node/rexxc` are launchers; `rexxc` is a multi-call
  entry of the same `rexx.js` (`wasm/rexxc-main.cpp`).  Error numbers seen by
  Rexx programs (RC of CD, stream `ERROR:n`, SysMkDir, ...) are the Linux ones,
-@@ -122,6 +126,16 @@ event loop), not on the JS main thread, so that the RexxAPI keeps working
+@@ -138,6 +142,16 @@ event loop), not on the JS main thread, so that the RexxAPI keeps working
  while that thread waits for a Rexx thread.
  `bin-node/rxqueue` and `bin-node/rxsubcom` are multi-call entries as well.
  
@@ -334,7 +334,7 @@ index 7b90a2e..155575d 100644
      ./wasm/build-node.sh /tmp/oorexx-wasm-build
      ./wasm/tests/qualify-node-cli.sh /tmp/oorexx-wasm-build/bin-node
  
-@@ -139,11 +153,11 @@ browser; see the limits below).
+@@ -155,11 +169,11 @@ browser; see the limits below).
  
  ## Known limitations / deliberate non-claims
  

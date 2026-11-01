@@ -1,7 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
 Date: Mon, 19 Oct 2026 13:29:52 +0200
-Subject: [PATCH] wasm: command environments (ADDRESS) written in JavaScript
+Subject: [PATCH 13/13] wasm: command environments (ADDRESS) written in
+ JavaScript
 
 .JSCommandHandler (wasm/web/js.cls) makes a JavaScript function, of any
 realm, one of the interpreter's command handlers (RFE #882, trunk
@@ -45,10 +46,10 @@ Not part of the posted RFE.
  create mode 100644 wasm/tests/js-commands.rex
 
 diff --git a/wasm/README.md b/wasm/README.md
-index 666f45b..64c9072 100644
+index 4a4c08c..3fa6fcd 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -545,6 +545,21 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -561,6 +561,21 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    `prepare`, `attach`, `instrument`; see `web/ooRexx.js`).  Tests:
    `tests/web-api.py` (session eval, session page, rexx scripts with
    `tests/web-scripts.html`, the debugger hook with `tests/web-debugger.js`).

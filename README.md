@@ -24,9 +24,10 @@ pages and for the Playground: see [`INSTALL.md`](INSTALL.md).
 
 This repository is not a fork of ooRexx. It holds a **series of patches** on
 top of ooRexx SVN trunk, plus the scripts, tests and pages built around them.
-Patches 0001–0008 are proposed for inclusion in ooRexx in
-[RFE #879](https://sourceforge.net/p/oorexx/feature-requests/879/); the
-updates to that request are now published in [`rfe/`](rfe/).
+The port was proposed for inclusion in ooRexx in
+[RFE #879](https://sourceforge.net/p/oorexx/feature-requests/879/) (the
+updates to that request are in [`rfe/`](rfe/)); development goes on here, and
+the series is cut as the work needs.
 
 ## The patch series
 
@@ -35,29 +36,34 @@ Applied in order on top of ooRexx SVN trunk **r13346** (the minimum)
 
 | Patch | What it adds |
 |---|---|
-| 0001 | The WASM build (`wasm/build-wasm.sh`, CMake cache for Emscripten) and the base runtime: threads as pthreads, stack checks, the RexxAPI in-process, MEMFS |
-| 0002 | Node command line: external commands as host processes, `rexxc`, errno, stdin `LINES()`, `rexxtry` |
-| 0003 | Node: the RexxAPI (queues, registrations, macrospace) shared between processes through a daemon, like native `rxapi` |
-| 0004 | Node: real TCP/UDP sockets and DNS |
-| 0005 | The browser runtime: `wasm/web/ooRexx.js`, one Web Worker per run, interactive stdin, output streams marked as plain / trace / error |
-| 0006 | Build variants with the test suite's native libraries linked in (`wasm/build-test.sh`), so the API test groups run under Node and in the browsers |
-| 0007 | `.JSObject`: JavaScript objects from Rexx (the worker's and the page's), events, Rexx objects in JavaScript, Rexx from the page |
-| 0008 | Node on Windows: Windows file names (written `C:/dir/file`), `;` in `PATH` lists, commands through `cmd.exe` (`ADDRESS CMD`), the RexxAPI daemon on a named pipe, `.cmd` launchers |
-| 0009 | `ADDRESS JDOR`: Rony G. Flatscher's JDOR drawing commands on the browser's canvas (an example environment) |
-| 0010 | `ADDRESS FETCH`: HTTP from Rexx commands (an example environment) |
-| 0011 | `ADDRESS DOM`: building and driving the page from Rexx commands (an example environment) |
-| 0012 | Command environments written in JavaScript: `.JSCommandHandler`, a JavaScript function as one of the interpreter's `.CommandHandler`s |
+| 0001 | The layer common to every WebAssembly build, Emscripten or WASI (`ORX_WASM`): static libraries, the RexxAPI in-process, embedded extension packages, libraries linked in instead of `dlopen()`, host errno values, HALT from the host, `rexxc`/`rxqueue`/`rxsubcom` in the `rexx` executable, and the host functions for commands and paths (`SysWasmHost.hpp`) |
+| 0002 | Emscripten: the WASM build (`wasm/build-wasm.sh`, CMake cache) and the base runtime: threads as pthreads, stack checks, the clock, the user, rxsock over WebSockets, MEMFS |
+| 0003 | Node command line: external commands as host processes, `.RexxInfo` paths, signals, stdin `LINES()`, `rexxtry` |
+| 0004 | Node: the RexxAPI (queues, registrations, macrospace) shared between processes through a daemon, like native `rxapi` |
+| 0005 | Node: real TCP/UDP sockets and DNS |
+| 0006 | The browser runtime: `wasm/web/ooRexx.js`, one Web Worker per run, interactive stdin, output streams marked as plain / trace / error |
+| 0007 | Build variants with the test suite's native libraries linked in (`wasm/build-test.sh`), so the API test groups run under Node and in the browsers |
+| 0008 | `.JSObject`: JavaScript objects from Rexx (the worker's and the page's), events, Rexx objects in JavaScript, Rexx from the page |
+| 0009 | Node on Windows: Windows file names (written `C:/dir/file`), `;` in `PATH` lists, commands through `cmd.exe` (`ADDRESS CMD`), the RexxAPI daemon on a named pipe, `.cmd` launchers |
+| 0010 | `ADDRESS JDOR`: Rony G. Flatscher's JDOR drawing commands on the browser's canvas (an example environment) |
+| 0011 | `ADDRESS FETCH`: HTTP from Rexx commands (an example environment) |
+| 0012 | `ADDRESS DOM`: building and driving the page from Rexx commands (an example environment) |
+| 0013 | Command environments written in JavaScript: `.JSCommandHandler`, a JavaScript function as one of the interpreter's `.CommandHandler`s |
 
-0001–0008 are the RFE: the port, and `.JSObject`, which
+0001 is all a WASI build needs from this series (ooRexx on the JVM,
+[`oorexxjava`](https://github.com/JosepMariaBlasco/oorexxjava), applies it
+and adds what is WASI's alone); 0002 onwards are Emscripten's. 0001–0009
+are the port and `.JSObject`, which
 [`docs/ooRexx-WASM-and-JavaScript.md`](docs/ooRexx-WASM-and-JavaScript.md)
-specifies. 0009, 0010 and 0011 are example command environments built on
-them; 0010 and 0011 are written in Rexx on the interpreter's own command
+specifies. 0010, 0011 and 0012 are example command environments built on
+them; 0011 and 0012 are written in Rexx on the interpreter's own command
 environments written in Rexx (`.CommandHandler`, since trunk r13288:
 [RFE #882](https://sourceforge.net/p/oorexx/feature-requests/882/)), and
-0012 makes JavaScript functions command environments of the same kind, as
+0013 makes JavaScript functions command environments of the same kind, as
 `.JSObject`'s specification describes. (Until r13288 the series carried
 that mechanism as a patch of its own, `cmdhandler`; the core's version
-replaced it.) The
+replaced it. Until 01/11/2026 the first two patches were one, 0001, and
+every later patch had a number one lower.) The
 patches are in git format and apply with `svn patch` or `git am`;
 `patches/SHA256SUMS` lists their hashes.
 

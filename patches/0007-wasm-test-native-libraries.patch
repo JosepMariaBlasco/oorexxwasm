@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
 Date: Sun, 11 Oct 2026 14:40:17 +0200
-Subject: [PATCH 6/8] WebAssembly port: build variants for the test suite's
+Subject: [PATCH 07/13] WebAssembly port: build variants for the test suite's
  native libraries
 
 The API test groups of the test suite (API/classic, API/oo) load the
@@ -13,57 +13,30 @@ builds with those libraries linked in (BUILD_DIR/bin-node-test,
 BUILD_DIR/bin-web-test):
 
 - the libraries are compiled as they are and described by the table
-  orx_wasm_static_libraries() that SysLibrary looks up (patch 1/6); the
+  orx_wasm_static_libraries() that SysLibrary looks up (patch 1); the
   names more than one library defines get a prefix per library, mapped
   back in the table, and the API macros that put a name in a method or
   routine table are redefined to keep the name as written;
 - rexxinstance is one more tool in the Node variant's rexx.wasm, as rexxc
   is (rexx.js --orx-wasm-rexxinstance, and a launcher), through a weak
-  hook in rexx.cpp's dispatcher, orxWasmExtraTool();
+  hook in rexx.cpp's dispatcher (patch 1), orxWasmExtraTool();
 - build-node.sh and build-web.sh link EXTRA_OBJECTS.
 
 With them, the eight API groups pass under Node and in the browsers, as
 natively (796 tests).  The standard builds are unchanged.
 ---
- utilities/rexx/platform/unix/rexx.cpp |   8 ++
- wasm/README.md                        |  23 +++
- wasm/build-node.sh                    |   4 +-
- wasm/build-test.sh                    | 198 ++++++++++++++++++++++++++
- wasm/build-web.sh                     |   4 +-
- 5 files changed, 235 insertions(+), 2 deletions(-)
+ wasm/README.md     |  23 ++++++
+ wasm/build-node.sh |   4 +-
+ wasm/build-test.sh | 198 +++++++++++++++++++++++++++++++++++++++++++++
+ wasm/build-web.sh  |   4 +-
+ 4 files changed, 227 insertions(+), 2 deletions(-)
  create mode 100755 wasm/build-test.sh
 
-diff --git a/utilities/rexx/platform/unix/rexx.cpp b/utilities/rexx/platform/unix/rexx.cpp
-index e78f195..56ffb5b 100644
---- a/utilities/rexx/platform/unix/rexx.cpp
-+++ b/utilities/rexx/platform/unix/rexx.cpp
-@@ -63,6 +63,10 @@ int orxWasmRxsubcomMain(int argc, char **argv, char **envp);
- extern char **environ;
- // the WASM rxapi daemon (rexxapi/common/platform/unix/SysNodeConnection.cpp)
- int orxWasmRxapiMain();
-+// more tools a particular build links in (wasm/build-test.sh: the test
-+// suite's rexxinstance); a weak symbol, NULL in the builds that have none.
-+// Returns true, with the tool's return code in *rc, if it knows the tool.
-+extern "C" bool orxWasmExtraTool(const char *tool, int argc, char **argv, int *rc) __attribute__((weak));
- #endif
- 
- int main (int argc, char **argv) {
-@@ -110,6 +114,10 @@ int main (int argc, char **argv) {
-         {
-             return orxWasmRxapiMain();
-         }
-+        if (orxWasmExtraTool != NULL && orxWasmExtraTool(tool, argc - 1, argv + 1, &rc))
-+        {
-+            return rc;
-+        }
-         argv[1] = (char *)tool - 11;           // unknown: leave it to Rexx
-     }
- #endif
 diff --git a/wasm/README.md b/wasm/README.md
-index b48d6f3..ceeb311 100644
+index 9eecae3..88e8833 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -227,6 +227,29 @@ API in headless Chromium (Python Playwright): output, interactive and fixed
+@@ -243,6 +243,29 @@ API in headless Chromium (Python Playwright): output, interactive and fixed
  stdin, EOF, stop, threads, files in and out, extension classes, rexxtry,
  trace and error marks, debug input.
  

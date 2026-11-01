@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
 Date: Sun, 4 Oct 2026 11:46:41 +0200
-Subject: [PATCH 5/8] WebAssembly port: browser runtime for web pages
+Subject: [PATCH 06/13] WebAssembly port: browser runtime for web pages
 
 wasm/build-web.sh relinks the build into a modular browser runtime
 (createOoRexx) with a small page API, wasm/web/ooRexx.js:
@@ -38,7 +38,7 @@ onInput}) -> {write, close, stop, done}.
 - test page wasm/tests/web-api.html, and wasm/tests/web-api.py: assertions
   over the API in headless Chromium.
 ---
- common/platform/unix/SysProcess.cpp  |   9 ++
+ common/platform/unix/SysProcess.cpp  |  17 ++-
  interpreter/concurrency/Activity.cpp |  54 +++++++
  wasm/README.md                       |  76 ++++++++++
  wasm/build-web.sh                    |  97 ++++++++++++
@@ -48,7 +48,7 @@ onInput}) -> {write, close, stop, done}.
  wasm/web-stdin.cpp                   | 157 +++++++++++++++++++
  wasm/web/ooRexx-worker.js            | 127 ++++++++++++++++
  wasm/web/ooRexx.js                   | 212 ++++++++++++++++++++++++++
- 10 files changed, 1188 insertions(+)
+ 10 files changed, 1195 insertions(+), 1 deletion(-)
  create mode 100755 wasm/build-web.sh
  create mode 100644 wasm/tests/web-api.html
  create mode 100755 wasm/tests/web-api.py
@@ -58,27 +58,35 @@ onInput}) -> {write, close, stop, done}.
  create mode 100644 wasm/web/ooRexx.js
 
 diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
-index 01c7232..a6c467e 100644
+index ca6a0f2..e62b362 100644
 --- a/common/platform/unix/SysProcess.cpp
 +++ b/common/platform/unix/SysProcess.cpp
-@@ -653,6 +653,15 @@ const char* SysProcess::getLibraryLocation()
-             free(resolved);
-         }
-     }
+@@ -291,7 +291,22 @@ extern "C" int orxWasmExecutablePath(char *buf, int size)
+ 
+ extern "C" int orxWasmLibraryDirectory(char *buf, int size)
+ {
+-    return wasmScriptDirectory(buf, size);
++    if (wasmScriptDirectory(buf, size) && access(buf, F_OK) == 0)
++    {
++        return 1;
++    }
 +    // The browser build (wasm/build-web.sh) cannot see rexx.js: the executable
 +    // (rexx.wasm and rexx.js) was loaded from a URL, or the browser's cache,
 +    // not from the program's file system, so there is no File to give for it
 +    // (.RexxInfo~executable stays .nil).  Its library is the directory it
 +    // preloads the extension classes into, which is in that file system.
-+    if (libraryLocation == NULL && access("/usr/lib/ooRexx/", F_OK) == 0)
++    const char *preloaded = "/usr/lib/ooRexx/";
++    if (access(preloaded, F_OK) == 0 && (int)strlen(preloaded) < size)
 +    {
-+        libraryLocation = "/usr/lib/ooRexx/";
++        strcpy(buf, preloaded);
++        return 1;
 +    }
-     return libraryLocation;
- #elif defined(HAVE_DLADDR)
-     Dl_info dlInfo;
++    return 0;
+ }
+ #endif
+ 
 diff --git a/interpreter/concurrency/Activity.cpp b/interpreter/concurrency/Activity.cpp
-index 8848967..3b1f460 100644
+index 67f312f..6f54ca9 100644
 --- a/interpreter/concurrency/Activity.cpp
 +++ b/interpreter/concurrency/Activity.cpp
 @@ -85,6 +85,52 @@
@@ -134,7 +142,7 @@ index 8848967..3b1f460 100644
  
  const size_t ACT_STACK_SIZE = 20;
  
-@@ -1440,6 +1486,9 @@ void Activity::display(DirectoryClass *exobj)
+@@ -1592,6 +1638,9 @@ void Activity::display(DirectoryClass *exobj)
          }
      }
  
@@ -144,7 +152,7 @@ index 8848967..3b1f460 100644
      // get the error code, and format a message header
      RexxString *rc = (RexxString *)exobj->get(GlobalNames::RC);
      wholenumber_t errorCode = Interpreter::messageNumber(rc);
-@@ -1497,6 +1546,8 @@ void Activity::display(DirectoryClass *exobj)
+@@ -1649,6 +1698,8 @@ void Activity::display(DirectoryClass *exobj)
   */
  void Activity::displayDebug(DirectoryClass *exobj)
  {
@@ -153,7 +161,7 @@ index 8848967..3b1f460 100644
      // get the leading part to indicate this is a debug error, then compose the full
      // message
      RexxString *text = Interpreter::getMessageText(Message_Translations_debug_error);
-@@ -3260,6 +3311,8 @@ SecurityManager* Activity::getInstanceSecurityManager()
+@@ -3428,6 +3479,8 @@ SecurityManager* Activity::getInstanceSecurityManager()
   */
  void Activity::traceOutput(RexxActivation *activation, RexxString *line, StringTable *traceObject)
  {
@@ -162,7 +170,7 @@ index 8848967..3b1f460 100644
      if (callTraceExit(activation, line))
      {
          // if in profiling mode we only let collect the traceObjects,
-@@ -3330,6 +3383,7 @@ void Activity::sayOutput(RexxActivation *activation, RexxString *line)
+@@ -3498,6 +3551,7 @@ void Activity::sayOutput(RexxActivation *activation, RexxString *line)
  RexxString* Activity::traceInput(RexxActivation *activation)
  {
      RexxString *value;
@@ -171,10 +179,10 @@ index 8848967..3b1f460 100644
      if (callDebugInputExit(activation, value))
      {
 diff --git a/wasm/README.md b/wasm/README.md
-index 155575d..b48d6f3 100644
+index cf611cc..9eecae3 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -151,6 +151,82 @@ threads, SysSleep, RxSock and `.StreamSocket` over WebSocket, external data
+@@ -167,6 +167,82 @@ threads, SysSleep, RxSock and `.StreamSocket` over WebSocket, external data
  queue, rxregexp, rxmath, deep recursion (Error 11, at a depth set by the
  browser; see the limits below).
  

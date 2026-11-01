@@ -1,13 +1,13 @@
 # RexxAPI shared between Node processes: the WASM rxapi daemon
 
-*Written 04/10/2026; describes patch 0003 of the current series
-(`patches/0003-wasm-node-rxapi-daemon.patch`).*
+*Written 04/10/2026; describes patch 0004 of the current series
+(`patches/0004-wasm-node-rxapi-daemon.patch`; 0003 until 01/11/2026).*
 
 Only `__EMSCRIPTEN__` code paths change.
 
 ## Problem
 
-With the base runtime (patch 0001) every WASM process has its own API server
+With the base runtime (patches 0001 and 0002) every WASM process has its own API server
 linked in (`SysLoopbackConnection`). Native ooRexx processes share queues,
 registrations and the macrospace through the rxapi daemon, and a child
 process finds its parent's session queue through `RXQUEUESESSION`, which is a

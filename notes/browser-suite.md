@@ -63,27 +63,27 @@ headless on Linux; WebKit there is the engine of Safari, not Safari itself.
    instead of Error 11. The native stack probe was JS (`apply` with 32768
    arguments); in Firefox it never fails while wasm frames already overflow.
    Now the probe recurses through wasm frames (`orxWasmStackProbe`) and is
-   calibrated on each thread to a quarter of the stack. → 0001.
+   calibrated on each thread to a quarter of the stack. → 0002.
 2. **WebKit: 5-10% of runs hung** (at start or mid-run). WebKit sometimes
    loses an `Atomics.waitAsync` wakeup; Emscripten uses it to tell the
    runtime's thread that a pthread proxied a system call to it (MEMFS lives
    there). Reproduced without ooRexx (a C program doing 2000 `stat()` from a
    pthread: 20/200 runs hang in WebKit, 0 in Chromium; 0/300 with waitAsync
    hidden). Fix: `web-pre.js` hides `Atomics.waitAsync`; Emscripten falls
-   back to postMessage, no measurable cost. → 0005. Worth reporting to
+   back to postMessage, no measurable cost. → 0006. Worth reporting to
    WebKit (and maybe Emscripten: a switch to avoid waitAsync).
 3. **WebKit: a C++ exception thrown on a secondary thread escaped** with the
    legacy wasm exception encoding (a Rexx error in a START'ed method killed
    the run; Message/Object groups). Fix: the standardized encoding (exnref,
    `-sWASM_LEGACY_EXCEPTIONS=0`) everywhere — Chromium refuses a module that
    mixes encodings, so `build-web.sh` compiles `web-jdor.cpp` with it too.
-   Needs Chrome 137, Firefox 131, Safari 18.4, Node 22. → 0001, 0006.
+   Needs Chrome 137, Firefox 131, Safari 18.4, Node 22. → 0002, 0007.
 4. **The clock had millisecond resolution**: Emscripten's `gettimeofday()`
    and `CLOCK_REALTIME` are `Date.now()`, so TIME('L') microseconds were 000
    and SysSleep(1e-8) measured 0. Now `performance.timeOrigin +
-   performance.now()` (TimeSupport.cpp) → 0001; and `Date.now()` with that
+   performance.now()` (TimeSupport.cpp) → 0002; and `Date.now()` with that
    resolution in the web runtime, so MEMFS stamps files with the same clock
-   (File~lastModified test) → 0005. Emscripten still reads file times back
+   (File~lastModified test) → 0006. Emscripten still reads file times back
    in whole ms (`stat()` goes through a JS Date), in MEMFS and in NODERAWFS:
    the 2 File `*_FRACTIONS` tests (they allow for FAT elsewhere) now fail
    in the browsers and under Node; before, they passed only because the
@@ -118,7 +118,7 @@ ms times), CALL stack depth (Chromium, Firefox), rxsock socketClass, TRACE
 Decision: `.RexxInfo~executable` stays .nil in the browser — the executable
 (rexx.wasm + rexx.js) exists but was loaded from a URL or the cache, not from
 the program's file system, so there is no File for it (and it is not called
-rexx); `libraryPath` = `/usr/lib/ooRexx/` (0005).
+rexx); `libraryPath` = `/usr/lib/ooRexx/` (0006).
 
 ## Open
 

@@ -1,7 +1,8 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
 Date: Sun, 4 Oct 2026 12:06:15 +0200
-Subject: [PATCH 3/8] WebAssembly port, Node: RexxAPI shared between processes
+Subject: [PATCH 04/13] WebAssembly port, Node: RexxAPI shared between
+ processes
 
 Under Node the API server runs as a daemon (rexx.js --orx-wasm-rxapi,
 started on first use like rxapi, outlives the session) reached over a Unix
@@ -15,33 +16,29 @@ multi-call tools of the rexx executable (launchers from wasm/build-node.sh);
 getpid()/getppid() return the real process ids under Node (the daemon keys
 sessions by pid).  qualify-node-cli.sh checks queues across processes.
 ---
- CMakeLists.txt                                |  15 +-
+ CMakeLists.txt                                |   7 +-
  common/platform/unix/SysProcess.cpp           |  31 +
  rexxapi/client/LocalAPIManager.cpp            |  14 +
- .../platform/unix/SysLocalAPIManager.cpp      |  42 +-
+ .../platform/unix/SysLocalAPIManager.cpp      |  49 +-
  .../platform/unix/SysLocalAPIManager.hpp      |   4 +
  .../platform/unix/SysNodeConnection.cpp       | 850 ++++++++++++++++++
  .../platform/unix/SysNodeConnection.hpp       |  89 ++
- utilities/rexx/platform/unix/rexx.cpp         |  29 +-
+ utilities/rexx/platform/unix/rexx.cpp         |  10 +
  wasm/README.md                                |  19 +-
  wasm/build-node.sh                            |   7 +-
- wasm/rxqueue-main.cpp                         |  43 +
- wasm/rxsubcom-main.cpp                        |  43 +
  wasm/tests/qualify-node-cli.sh                |  13 +
- 13 files changed, 1183 insertions(+), 16 deletions(-)
+ 11 files changed, 1082 insertions(+), 11 deletions(-)
  create mode 100644 rexxapi/common/platform/unix/SysNodeConnection.cpp
  create mode 100644 rexxapi/common/platform/unix/SysNodeConnection.hpp
- create mode 100644 wasm/rxqueue-main.cpp
- create mode 100644 wasm/rxsubcom-main.cpp
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 7d4af4f..58983f3 100644
+index 4090f73..522e71c 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -682,12 +682,15 @@ else ()
+@@ -694,12 +694,15 @@ else ()
  endif ()
  # Library definition
- if (EMSCRIPTEN)
+ if (ORX_WASM)
 -  # No rxapi daemon in a WASM process: the API server (queues, registrations,
 -  # macrospace) is linked in and reached through SysLoopbackConnection.
 +  # The API server (queues, registrations, macrospace) is linked in.  Under
@@ -56,27 +53,12 @@ index 7d4af4f..58983f3 100644
                ${build_rexxapi_server_dir}/APIServer.cpp
                ${build_rexxapi_server_dir}/APIServerInstance.cpp
                ${build_rexxapi_server_dir}/APIServerThread.cpp
-@@ -1067,8 +1070,12 @@ endif ()
- add_executable(rexx_exe ${build_utilities_rexx_dir}/rexx.cpp
-                         ${platform_rexx_exe_sources})
- if (EMSCRIPTEN)
--  # rexxc is part of the WASM rexx executable (multi-call, see the file)
--  target_sources(rexx_exe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/wasm/rexxc-main.cpp)
-+  # rexxc, rxqueue and rxsubcom are part of the WASM rexx executable
-+  # (multi-call, see wasm/rexxc-main.cpp)
-+  target_sources(rexx_exe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/wasm/rexxc-main.cpp
-+                                  ${CMAKE_CURRENT_SOURCE_DIR}/wasm/rxqueue-main.cpp
-+                                  ${CMAKE_CURRENT_SOURCE_DIR}/wasm/rxsubcom-main.cpp)
-+  target_include_directories(rexx_exe PRIVATE ${build_interpreter_platform_dir})
- endif ()
- # This allows the executable to have the same name as the library.
- SET_TARGET_PROPERTIES(rexx_exe
 diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
-index 5481206..01c7232 100644
+index c9773d8..ca6a0f2 100644
 --- a/common/platform/unix/SysProcess.cpp
 +++ b/common/platform/unix/SysProcess.cpp
-@@ -269,6 +269,37 @@ EM_JS(int, wasmScriptDirectory, (char *buf, int size), {
- });
+@@ -295,6 +295,37 @@ extern "C" int orxWasmLibraryDirectory(char *buf, int size)
+ }
  #endif
  
 +#if defined(__EMSCRIPTEN__)
@@ -147,13 +129,14 @@ index 6c987a8..dbba146 100644
      }
  }
 diff --git a/rexxapi/client/platform/unix/SysLocalAPIManager.cpp b/rexxapi/client/platform/unix/SysLocalAPIManager.cpp
-index 1b3f8d8..f727d82 100644
+index 21402b3..8b16ee0 100644
 --- a/rexxapi/client/platform/unix/SysLocalAPIManager.cpp
 +++ b/rexxapi/client/platform/unix/SysLocalAPIManager.cpp
-@@ -51,6 +51,27 @@
- #include "SysProcess.hpp"
- #if defined(__EMSCRIPTEN__)
+@@ -52,6 +52,29 @@
+ #if defined(ORX_WASM)
  #include "SysLoopbackConnection.hpp"
+ #endif
++#if defined(__EMSCRIPTEN__)
 +#include "SysNodeConnection.hpp"
 +
 +// WASM: use the in-process server instead of the Node rxapi daemon (browser,
@@ -175,29 +158,33 @@ index 1b3f8d8..f727d82 100644
 +    useInProcessServer = true;
 +    return true;
 +}
- #endif
++#endif
  
  #ifdef AIX
-@@ -77,7 +98,12 @@ int _rexxapi_fini()
+ extern "C"
+@@ -76,7 +99,14 @@ int _rexxapi_fini()
+  */
  void SysLocalAPIManager::startServerProcess()
  {
- #if defined(__EMSCRIPTEN__)
--    throw new ServiceException(API_FAILURE, "rxapi service is unavailable in the WASM profile");
+-#if defined(ORX_WASM)
++#if defined(__EMSCRIPTEN__)
 +    // Node: launch `rexx.js --orx-wasm-rxapi` detached (see SysNodeConnection);
 +    // anywhere else, or if that fails, use the in-process server
 +    if (useInProcessServer || !SysNodeConnection::available() || !SysNodeConnection::startDaemon())
 +    {
 +        useInProcessServer = true;
 +    }
++#elif defined(ORX_WASM)
+     throw new ServiceException(API_FAILURE, "rxapi service is unavailable in the WASM profile");
  #else
  #define RXAPI "rxapi"
- #define DOTDOT_BIN_RXAPI "../bin/" RXAPI
-@@ -196,8 +222,18 @@ void SysLocalAPIManager::setActiveSessionQueue(QueueHandle sessionQueue)
+@@ -195,8 +225,21 @@ void SysLocalAPIManager::setActiveSessionQueue(QueueHandle sessionQueue)
+  */
  ApiConnection *SysLocalAPIManager::newClientConnection()
  {
- #if defined(__EMSCRIPTEN__)
+-#if defined(ORX_WASM)
 -    // no rxapi daemon in a WASM process: talk to the server linked in-process
--    return new SysLoopbackConnection();
++#if defined(__EMSCRIPTEN__)
 +    if (useInProcessServer || !SysNodeConnection::available())
 +    {
 +        // browser (or fallback): the server linked in-process
@@ -210,9 +197,11 @@ index 1b3f8d8..f727d82 100644
 +        throw new ServiceException(CONNECTION_FAILURE, "Failure connecting to rxapi server");
 +    }
 +    return nodeConnection;
++#elif defined(ORX_WASM)
++    // no rxapi daemon: talk to the server linked in-process
+     return new SysLoopbackConnection();
  #endif
      SysLocalSocketConnection *connection = new SysLocalSocketConnection();
- 
 diff --git a/rexxapi/client/platform/unix/SysLocalAPIManager.hpp b/rexxapi/client/platform/unix/SysLocalAPIManager.hpp
 index 339f053..87ca6c7 100644
 --- a/rexxapi/client/platform/unix/SysLocalAPIManager.hpp
@@ -1180,60 +1169,38 @@ index 0000000..492f36f
 +#endif
 +#endif
 diff --git a/utilities/rexx/platform/unix/rexx.cpp b/utilities/rexx/platform/unix/rexx.cpp
-index 6d0b5ff..e78f195 100644
+index 6736c3a..42581f9 100644
 --- a/utilities/rexx/platform/unix/rexx.cpp
 +++ b/utilities/rexx/platform/unix/rexx.cpp
-@@ -55,8 +55,14 @@
- #include <oorexxapi.h>
- 
- #if defined(__EMSCRIPTEN__)
--// rexxc is linked into the WASM rexx executable (see wasm/rexxc-main.cpp)
-+// rexxc, rxqueue and rxsubcom are linked into the WASM rexx executable
-+// (multi-call, see wasm/rexxc-main.cpp)
- int orxWasmRexxcMain(int argc, char **argv);
-+int orxWasmRxqueueMain(int argc, char **argv);
-+int orxWasmRxsubcomMain(int argc, char **argv, char **envp);
-+extern char **environ;
-+// the WASM rxapi daemon (rexxapi/common/platform/unix/SysNodeConnection.cpp)
+@@ -61,6 +61,10 @@ int orxWasmRexxcMain(int argc, char **argv);
+ int orxWasmRxqueueMain(int argc, char **argv);
+ int orxWasmRxsubcomMain(int argc, char **argv, char **envp);
+ extern char **environ;
++#if defined(__EMSCRIPTEN__)
++// the WASM rxapi daemon under Node (rexxapi/common/platform/unix/SysNodeConnection.cpp)
 +int orxWasmRxapiMain();
- #endif
- 
- int main (int argc, char **argv) {
-@@ -84,10 +90,27 @@ int main (int argc, char **argv) {
-     char          overrideString[512] = ""; // "::OPTIONS" directive string
- 
- #if defined(__EMSCRIPTEN__)
--    if (argc > 1 && strcmp(argv[1], "--orx-wasm-rexxc") == 0)
-+    if (argc > 1 && strncmp(argv[1], "--orx-wasm-", 11) == 0)
-     {
-+        const char *tool = argv[1] + 11;
-         argv[1] = argv[0];
--        return orxWasmRexxcMain(argc - 1, argv + 1);
-+        if (strcmp(tool, "rexxc") == 0)
-+        {
-+            return orxWasmRexxcMain(argc - 1, argv + 1);
-+        }
-+        if (strcmp(tool, "rxqueue") == 0)
-+        {
-+            return orxWasmRxqueueMain(argc - 1, argv + 1);
-+        }
-+        if (strcmp(tool, "rxsubcom") == 0)
-+        {
-+            return orxWasmRxsubcomMain(argc - 1, argv + 1, environ);
-+        }
++#endif
+ // more tools a particular build links in (wasm/build-test.sh: the test
+ // suite's rexxinstance); a weak symbol, NULL in the builds that have none.
+ // Returns true, with the tool's return code in *rc, if it knows the tool.
+@@ -108,6 +112,12 @@ int main (int argc, char **argv) {
+         {
+             return orxWasmRxsubcomMain(argc - 1, argv + 1, environ);
+         }
++#if defined(__EMSCRIPTEN__)
 +        if (strcmp(tool, "rxapi") == 0)
 +        {
 +            return orxWasmRxapiMain();
 +        }
-+        argv[1] = (char *)tool - 11;           // unknown: leave it to Rexx
-     }
- #endif
- 
++#endif
+         if (orxWasmExtraTool != NULL && orxWasmExtraTool(tool, argc - 1, argv + 1, &rc))
+         {
+             return rc;
 diff --git a/wasm/README.md b/wasm/README.md
-index 86da947..7b90a2e 100644
+index 67abaf3..8a77152 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -13,9 +13,11 @@ transport for stream sockets.
+@@ -29,9 +29,11 @@ Emscripten's: this directory's build, the browser and Node runtimes, and the
  * no curses / orxncurses;
  * external commands: under Node run as host processes (`child_process`); in
    the browser they fail closed (RC 127);
@@ -1248,7 +1215,7 @@ index 86da947..7b90a2e 100644
  * user identity: Emscripten has no passwd database, so `getpwnam()` and
    `getpwuid()` are wrapped to return the user the process runs as (the host
    user under Node, the synthetic user `wasm` in the browser), for `USERID()`,
-@@ -109,6 +111,17 @@ on the JS main thread and calls `orxWasmSignal()`, which does what the native
+@@ -125,6 +127,17 @@ on the JS main thread and calls `orxWasmSignal()`, which does what the native
  signal handler does; a SysSleep in progress ends at once (result 4, EINTR).
  SIGQUIT (Ctrl-\) still ends the process.
  
@@ -1296,104 +1263,6 @@ index bc6b47b..90cbc5d 100755
    launcher $tool --orx-wasm-$tool
  done
  ls -l "$OUT" | awk 'NR>1 && $9 !~ /\.cls$/ {print $5, $9}'
-diff --git a/wasm/rxqueue-main.cpp b/wasm/rxqueue-main.cpp
-new file mode 100644
-index 0000000..4395521
---- /dev/null
-+++ b/wasm/rxqueue-main.cpp
-@@ -0,0 +1,43 @@
-+/*----------------------------------------------------------------------------*/
-+/*                                                                            */
-+/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
-+/*                                                                            */
-+/* This program and the accompanying materials are made available under       */
-+/* the terms of the Common Public License v1.0 which accompanies this         */
-+/* distribution. A copy is also available at the following address:           */
-+/* https://www.oorexx.org/license.html                                        */
-+/*                                                                            */
-+/* Redistribution and use in source and binary forms, with or                 */
-+/* without modification, are permitted provided that the following            */
-+/* conditions are met:                                                        */
-+/*                                                                            */
-+/* Redistributions of source code must retain the above copyright             */
-+/* notice, this list of conditions and the following disclaimer.              */
-+/* Redistributions in binary form must reproduce the above copyright          */
-+/* notice, this list of conditions and the following disclaimer in            */
-+/* the documentation and/or other materials provided with the distribution.   */
-+/*                                                                            */
-+/* Neither the name of Rexx Language Association nor the names                */
-+/* of its contributors may be used to endorse or promote products             */
-+/* derived from this software without specific prior written permission.      */
-+/*                                                                            */
-+/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
-+/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
-+/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
-+/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
-+/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
-+/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
-+/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
-+/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
-+/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
-+/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
-+/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
-+/*                                                                            */
-+/*----------------------------------------------------------------------------*/
-+/*----------------------------------------------------------------------------*/
-+/* WASM build: rxqueue linked into the rexx executable (multi-call), like rexxc  */
-+/* (see rexxc-main.cpp).  rexx.cpp dispatches to it for --orx-wasm-rxqueue, which */
-+/* is what the Node `rxqueue` launcher passes.                                   */
-+/*----------------------------------------------------------------------------*/
-+#define main orxWasmRxqueueMain
-+#include "../utilities/rxqueue/platform/unix/rxqueue.cpp"
-diff --git a/wasm/rxsubcom-main.cpp b/wasm/rxsubcom-main.cpp
-new file mode 100644
-index 0000000..2b6bbf4
---- /dev/null
-+++ b/wasm/rxsubcom-main.cpp
-@@ -0,0 +1,43 @@
-+/*----------------------------------------------------------------------------*/
-+/*                                                                            */
-+/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
-+/*                                                                            */
-+/* This program and the accompanying materials are made available under       */
-+/* the terms of the Common Public License v1.0 which accompanies this         */
-+/* distribution. A copy is also available at the following address:           */
-+/* https://www.oorexx.org/license.html                                        */
-+/*                                                                            */
-+/* Redistribution and use in source and binary forms, with or                 */
-+/* without modification, are permitted provided that the following            */
-+/* conditions are met:                                                        */
-+/*                                                                            */
-+/* Redistributions of source code must retain the above copyright             */
-+/* notice, this list of conditions and the following disclaimer.              */
-+/* Redistributions in binary form must reproduce the above copyright          */
-+/* notice, this list of conditions and the following disclaimer in            */
-+/* the documentation and/or other materials provided with the distribution.   */
-+/*                                                                            */
-+/* Neither the name of Rexx Language Association nor the names                */
-+/* of its contributors may be used to endorse or promote products             */
-+/* derived from this software without specific prior written permission.      */
-+/*                                                                            */
-+/* THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS        */
-+/* "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT          */
-+/* LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS          */
-+/* FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT   */
-+/* OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,      */
-+/* SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED   */
-+/* TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,        */
-+/* OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY     */
-+/* OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING    */
-+/* NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS         */
-+/* SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.               */
-+/*                                                                            */
-+/*----------------------------------------------------------------------------*/
-+/*----------------------------------------------------------------------------*/
-+/* WASM build: rxsubcom linked into the rexx executable (multi-call), like rexxc  */
-+/* (see rexxc-main.cpp).  rexx.cpp dispatches to it for --orx-wasm-rxsubcom, which */
-+/* is what the Node `rxsubcom` launcher passes.                                   */
-+/*----------------------------------------------------------------------------*/
-+#define main orxWasmRxsubcomMain
-+#include "../utilities/rxsubcom/platform/unix/rxsubcom.cpp"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
 index 0c6c433..351b211 100755
 --- a/wasm/tests/qualify-node-cli.sh

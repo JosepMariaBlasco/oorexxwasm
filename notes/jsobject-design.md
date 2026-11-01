@@ -1,8 +1,9 @@
 # `.JSObject`: a JavaScript bridge for ooRexx/WASM
 
-*Written 06/10/2026–08/10/2026; describes patch 0007 (`wasm-js-objects`) of
-the current series (0008 until 12/10/2026, when it moved before JDOR and
-became part of the RFE). Model: OLEObject on Windows.*
+*Written 06/10/2026–08/10/2026; describes patch 0008 (`wasm-js-objects`) of
+the current series (0008 until 12/10/2026, then 0007 when it moved before
+JDOR and became part of the RFE, 0008 again since 01/11/2026, when the first
+patch was split in two). Model: OLEObject on Windows.*
 
 The first part of this note is the design as proposed; the sections on the
 phases record what was built and where the implementation departed from the

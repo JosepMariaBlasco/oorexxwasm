@@ -1,7 +1,7 @@
 # ooRexx Playground
 
 A public web page where anyone can write ooRexx and run it in the browser,
-on the real interpreter compiled to WebAssembly (patch 0005 adds the browser
+on the real interpreter compiled to WebAssembly (patch 0006 adds the browser
 build: `oorexx/wasm/build-web.sh`, `wasm/web/ooRexx.js`). Live at
 https://rexx.epbcn.com/oorexx-wasm/ (Apache). It borrows the look of the RVM
 Workbench, a separate page.
@@ -200,7 +200,7 @@ in headless Chromium.
   restarts up to 3 times if it dies.
 - Console streams: stdout, stderr (red by
   default), trace, input and debug input have their own colors (CSS
-  `--c-out|err|trace|in|dbg`). The runtime (patch 0005, `orx_wasm_mark`)
+  `--c-out|err|trace|in|dbg`). The runtime (patch 0006, `orx_wasm_mark`)
   marks every output chunk as plain/trace/error message and every input
   request as .debugInput's or not (`onOut/onErr(text, kind)`,
   `onInput({debug})`), whatever stream they end up on. Without marks (an
@@ -218,7 +218,7 @@ in headless Chromium.
   handled in Rexx: `.js~handler` + `.js~runEventLoop`). A program that is
   stopped leaves what it added to the page until a reload (its event
   handlers do nothing any more).
-- JDOR: `ADDRESS JDOR` (wasm/web-jdor.*, patch 0008) draws on
+- JDOR: `ADDRESS JDOR` (wasm/web-jdor.*, patch 0010) draws on
   OffscreenCanvases in the run's worker; `onJdor` messages create windows
   here: fixed-position panels over the page (`.jdorwin`), dragged by the
   title bar (frameless ones anywhere; their x shows on hover), closed with x,

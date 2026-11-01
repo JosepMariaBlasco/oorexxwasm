@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Josep Maria Blasco <josep.maria.blasco@epbcn.com>
 Date: Tue, 6 Oct 2026 19:22:22 +0200
-Subject: [PATCH 7/8] WebAssembly port: JavaScript objects as Rexx objects
+Subject: [PATCH 08/13] WebAssembly port: JavaScript objects as Rexx objects
  (.js, .JSObject)
 
 js.cls lets Rexx programs use JavaScript objects with ordinary messages,
@@ -192,10 +192,10 @@ Rexx has read it, even if JavaScript collects the proxy meanwhile.
  create mode 100644 wasm/web/js.cls
 
 diff --git a/interpreter/package/PackageManager.cpp b/interpreter/package/PackageManager.cpp
-index fe43e6d..2cc9eaf 100644
+index b446b9e..2de2cde 100644
 --- a/interpreter/package/PackageManager.cpp
 +++ b/interpreter/package/PackageManager.cpp
-@@ -94,6 +94,11 @@ const PackageManager::EmbeddedPackage PackageManager::embeddedPackages[] =
+@@ -99,6 +99,11 @@ const PackageManager::EmbeddedPackage PackageManager::embeddedPackages[] =
      { NULL, NULL, false }
  };
  
@@ -207,7 +207,7 @@ index fe43e6d..2cc9eaf 100644
  
  /**
   * Find the embedded package entry matching a restored internal package.
-@@ -299,6 +304,17 @@ LibraryPackage *PackageManager::loadLibrary(RexxString *name)
+@@ -304,6 +309,17 @@ LibraryPackage *PackageManager::loadLibrary(RexxString *name)
                  return (LibraryPackage *)packages->get(name);
              }
          }
@@ -226,10 +226,10 @@ index fe43e6d..2cc9eaf 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index ceeb311..dc74baa 100644
+index 88e8833..0ad9a87 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -250,6 +250,229 @@ from the test suite's directory:
+@@ -266,6 +266,229 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -459,7 +459,7 @@ index ceeb311..dc74baa 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -258,6 +481,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -274,6 +497,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).

@@ -1,9 +1,12 @@
 # External commands under Node
 
-*Written 04/10/2026; describes patch 0002 of the current series
-(`patches/0002-wasm-node-commands-rexxc-errno.patch`).*
+*Written 04/10/2026; describes what is now patch 0003 of the current series
+(`patches/0003-wasm-node-commands.patch`; it was 0002 until 01/11/2026, when
+the errno mapping, `rexxc`, `orxWasmSignal()` and the C side of commands
+moved to 0001, the layer common to every WebAssembly build, and the
+JavaScript side became the host functions of `SysWasmHost.hpp`).*
 
-The changes described here are part of patch 0002 (the stdin
+The changes described here are part of patches 0001 and 0003 (the stdin
 `LINES()`/`CHARS()` and `rexxtry` parts of that patch are not covered in this
 note). A native build of the same tree compiles and gives the same results as
 before on the affected test groups (ADDRESS, OPTIONS, STREAM, Stream,
@@ -115,8 +118,8 @@ The 23 groups that still failed at that point:
 | listening sockets (SockListen EOPNOTSUPP) | socketClass (9 F), samples/scclient, scserver, sfclient, sfserver — the last four were "ok" before only because the sample was never launched |
 | timing-flaky (also native under load) | TRACE |
 
-The RexxAPI groups are addressed by patch 0003 (see `node-rxapi.md`) and
-the socket groups by patch 0004 (see `node-sockets.md`).
+The RexxAPI groups are addressed by patch 0004 (see `node-rxapi.md`) and
+the socket groups by patch 0005 (see `node-sockets.md`).
 
 ## 7. Minor native observation
 
