@@ -38,10 +38,10 @@ Not part of the posted RFE.
  wasm/tests/js-commands.rex     | 348 +++++++++++++++++++++++++++++++++
  wasm/tests/qualify-node-cli.sh |   5 +
  wasm/tests/web-api.py          |  50 +++++
- wasm/web-js.cpp                |  92 ++++++++-
+ wasm/web-js.cpp                | 101 +++++++++-
  wasm/web/js.cls                |  70 +++++++
  wasm/web/ooRexx.js             |  33 +++-
- 7 files changed, 606 insertions(+), 7 deletions(-)
+ 7 files changed, 612 insertions(+), 10 deletions(-)
  create mode 100644 wasm/tests/js-commands.rex
 
 diff --git a/wasm/README.md b/wasm/README.md
@@ -425,7 +425,7 @@ index 0000000..162cd01
 +::routine haltsHere
 +  raise halt
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 6f058ec..5fabb50 100755
+index e6e6dd0..5d815a5 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -505,6 +505,11 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
@@ -441,7 +441,7 @@ index 6f058ec..5fabb50 100755
  "$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
  FETCH_SRV=$!; sleep 0.5
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 8596c05..b7b8ad5 100755
+index 0d650fc..c414d5c 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -99,6 +99,28 @@ CASES = [
@@ -509,7 +509,7 @@ index 8596c05..b7b8ad5 100755
      const s = await rexxLib.start({ js: { page: true } });
      await s.eval('d = .js~page~document; b = d~createElement("button"); b~id = "rx"; d~body~appendChild(b)\\n' +
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
-index 6c1e717..627ea57 100644
+index f698c88..ed21a66 100644
 --- a/wasm/web-js.cpp
 +++ b/wasm/web-js.cpp
 @@ -340,10 +340,28 @@ static void answered(SyncCall *sc)
@@ -541,19 +541,28 @@ index 6c1e717..627ea57 100644
      // Under Node, the RexxAPI's sockets need an event loop that runs while
      // the main runtime thread waits for a synchronous handler: their own
      // thread's.  Starting it takes the main runtime thread, which is free
-@@ -1173,7 +1191,10 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
+@@ -1174,10 +1192,16 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
          RexxObjectPtr cond = toRexx(c, reply, pos);
          if (isHaltSyntax(c, cond))
          {
--            c->HaltThread();
+-            RexxObjectPtr d = c->DirectoryAt((RexxDirectoryObject)cond, "DESCRIPTION");
+-            RexxStringObject desc = d != NULLOBJECT && c->IsString(d) && c->StringLength((RexxStringObject)d) > 0
+-                ? (RexxStringObject)d : NULLOBJECT;
+-            c->RaiseCondition("HALT", desc, NULLOBJECT, NULLOBJECT);
 +            // the reply to a request of a .JSCommandHandler's COMMAND: the
 +            // HALT goes back through the command's context (js_command)
 +            if (replyDepth == commandHaltDepth) commandHalted = true;
-+            else c->HaltThread();
++            else
++            {
++                RexxObjectPtr d = c->DirectoryAt((RexxDirectoryObject)cond, "DESCRIPTION");
++                RexxStringObject desc = d != NULLOBJECT && c->IsString(d) && c->StringLength((RexxStringObject)d) > 0
++                    ? (RexxStringObject)d : NULLOBJECT;
++                c->RaiseCondition("HALT", desc, NULLOBJECT, NULLOBJECT);
++            }
              return c->Nil();
          }
          reraise(c, cond);
-@@ -1564,6 +1585,74 @@ RexxMethod0(RexxObjectPtr, js_await)
+@@ -1568,6 +1592,74 @@ RexxMethod0(RexxObjectPtr, js_await)
      return request(context->threadContext, OP_AWAIT, s);
  }
  
@@ -628,7 +637,7 @@ index 6c1e717..627ea57 100644
  // introspection: TYPEOF, CLASSNAME, PROPERTYNAMES, MAKEARRAY, SUPPLIER (its data), BYTESTRING,
  // INSTANCEOF(c), HASPROPERTY(n)
  static RexxObjectPtr info(RexxMethodContext *context, const char *what, RexxObjectPtr arg)
-@@ -2009,6 +2098,7 @@ static RexxMethodEntry jsMethods[] =
+@@ -2013,6 +2105,7 @@ static RexxMethodEntry jsMethods[] =
      REXX_METHOD(js_has, js_has),
      REXX_METHOD(js_info, js_info),
      REXX_METHOD(js_uninit, js_uninit),
