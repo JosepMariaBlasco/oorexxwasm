@@ -20,7 +20,9 @@ exception); a condition of Rexx that the function lets through is raised
 there as itself, and so is any other condition that Rexx code the
 function calls raises (USER: COMMAND is a native method, js_command in
 web-js.cpp, so no Rexx activation stands in between); a HALT that such
-code leaves untrapped is a HALT there.  .JSCommandHandler~new(.nil), or of anything but a
+code leaves untrapped is a HALT there, given back through the command's
+context (caller~raise("HALT", 0): RC 0, as RAISE HALT in a handler written
+in Rexx).  .JSCommandHandler~new(.nil), or of anything but a
 function, is SYNTAX 93.900.
 - From the page (ooRexx.js): a session's addCommandEnvironment(name, fn)
   and removeCommandEnvironment(name) (.JSSession: register and
@@ -33,13 +35,13 @@ function, is SYNTAX 93.900.
 Not part of the posted RFE.
 ---
  wasm/README.md                 |  15 ++
- wasm/tests/js-commands.rex     | 360 +++++++++++++++++++++++++++++++++
+ wasm/tests/js-commands.rex     | 348 +++++++++++++++++++++++++++++++++
  wasm/tests/qualify-node-cli.sh |   5 +
  wasm/tests/web-api.py          |  50 +++++
- wasm/web-js.cpp                |  38 ++++
+ wasm/web-js.cpp                |  92 ++++++++-
  wasm/web/js.cls                |  70 +++++++
- wasm/web/ooRexx.js             |  33 ++-
- 7 files changed, 565 insertions(+), 6 deletions(-)
+ wasm/web/ooRexx.js             |  33 +++-
+ 7 files changed, 606 insertions(+), 7 deletions(-)
  create mode 100644 wasm/tests/js-commands.rex
 
 diff --git a/wasm/README.md b/wasm/README.md
@@ -70,10 +72,10 @@ index 666f45b..64c9072 100644
    passed synchronously to the main runtime thread, where `js-bridge.js` (a
 diff --git a/wasm/tests/js-commands.rex b/wasm/tests/js-commands.rex
 new file mode 100644
-index 0000000..25941d5
+index 0000000..162cd01
 --- /dev/null
 +++ b/wasm/tests/js-commands.rex
-@@ -0,0 +1,360 @@
+@@ -0,0 +1,348 @@
 +/*----------------------------------------------------------------------------*/
 +/* Command environments written in JavaScript (.JSCommandHandler, one of    */
 +/* the interpreter's .CommandHandlers), in the realm of .js: the worker's in */
@@ -207,15 +209,16 @@ index 0000000..25941d5
 +-- a HALT: ctx.raise("HALT") is a HALT for the code that issued the command,
 +-- as for the interpreter's command handlers; so is a HALT that Rexx code the
 +-- JavaScript function calls leaves untrapped (there is JavaScript in between:
-+-- a HALT given back as a HALT), while a HALT raised in a routine that a
-+-- handler written in Rexx calls reaches the issuer as SYNTAX 4.1, as in plain
-+-- Rexx
++-- a HALT given back as a HALT, through the command's context, RC 0; after a
++-- condition the function asked for, with HaltThread), while a HALT raised in
++-- a routine that a handler written in Rexx calls reaches the issuer as
++-- SYNTAX 4.1, as in plain Rexx
 +.js~globalThis["thing"] = .Thing~new
 +call check "raisehalt: SIGNAL ON HALT traps it", haltSignalOn("raisehalt") == "HALT"
 +call check "raisehalt: CALL ON HALT after the next clause", haltCallOn("raisehalt") == "HALT rc 5"
 +call check "raisehalt: untrapped, SYNTAX 4.1", haltUntrapped("raisehalt") == "SYNTAX 4.1"
-+call checkKnown "halt (Rexx code the function calls): SIGNAL ON HALT traps it", haltSignalOn("halt"), "HALT"
-+call checkKnown "halt (Rexx code the function calls): CALL ON HALT after the next clause", haltCallOn("halt"), "HALT rc 0"
++call check "halt (Rexx code the function calls): SIGNAL ON HALT traps it", haltSignalOn("halt") == "HALT"
++call check "halt (Rexx code the function calls): CALL ON HALT after the next clause", haltCallOn("halt") == "HALT rc 0"
 +call check "halt (Rexx code the function calls): untrapped, SYNTAX 4.1", haltUntrapped("halt") == "SYNTAX 4.1"
 +-- RAISE HALT in a method that JavaScript calls on the issuer's thread: the
 +-- SIGNAL ON HALT of the issuer (and COMMAND's own) must not unwind through
@@ -223,8 +226,8 @@ index 0000000..25941d5
 +call check "raise halt in a method JavaScript calls: SIGNAL ON HALT traps it", haltSignalOn("halthere") == "HALT"
 +call check "raise halt in a method JavaScript calls: CALL ON HALT after the next clause", haltCallOn("halthere") == "HALT rc 6"
 +call check "raise halt in a method JavaScript calls: untrapped, SYNTAX 4.1", haltUntrapped("halthere") == "SYNTAX 4.1"
-+call checkKnown "halt after ctx.raiseError: SIGNAL ON HALT traps the HALT", haltSignalOn("errorhalt"), "HALT"
-+call checkKnown "halt after ctx.raiseError: CALL ON gets both, ERROR first", haltErrorCallOn(), "ERROR HALT rc 5"
++call check "halt after ctx.raiseError: SIGNAL ON HALT traps the HALT", haltSignalOn("errorhalt") == "HALT"
++call check "halt after ctx.raiseError: CALL ON gets both, ERROR first", haltErrorCallOn() == "ERROR HALT rc 5"
 +.CommandHandler~register("REXXHALT", .HaltingHandler~new)
 +call check "a handler in Rexx: a routine's HALT is SYNTAX 4.1, as in plain Rexx", haltSignalOn("halt", "REXXHALT") == "SYNTAX 4.1"
 +
@@ -393,19 +396,6 @@ index 0000000..25941d5
 +  else do; .local~bad += 1; say "FAIL" what; end
 +  return
 +
-+checkKnown: procedure                -- a check that a known ooRexx fault may fail
-+  parse arg what, got, want
-+  -- ooRexx r13334-r13344: a halt that native code asks for (HaltThread) is
-+  -- aimed at the depth of the native frame, so the .CommandContext's FINISH,
-+  -- which the core runs after COMMAND at that depth, takes it: SYNTAX 4.1
-+  if got \== want & got == "SYNTAX 4.1" then do
-+    .local~ok += 1
-+    say "ok  " what "(KNOWN: ooRexx, the halt taken by .CommandContext~FINISH; got" got || ")"
-+    return
-+  end
-+  call check what, got == want
-+  return
-+
 +::requires "js.cls"
 +
 +::class Thing
@@ -519,23 +509,95 @@ index 8596c05..b7b8ad5 100755
      const s = await rexxLib.start({ js: { page: true } });
      await s.eval('d = .js~page~document; b = d~createElement("button"); b~id = "rx"; d~body~appendChild(b)\\n' +
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
-index 6c1e717..1d13834 100644
+index 6c1e717..627ea57 100644
 --- a/wasm/web-js.cpp
 +++ b/wasm/web-js.cpp
-@@ -1564,6 +1564,43 @@ RexxMethod0(RexxObjectPtr, js_await)
+@@ -340,10 +340,28 @@ static void answered(SyncCall *sc)
+ // the RexxAPI's I/O thread (rexxapi/common/platform/unix/SysNodeConnection.cpp)
+ extern "C" int orxNetIoStart();
+ 
++// how deep this thread is in jsCall (a request waiting for its reply runs
++// the page's calls of Rexx, which may make requests of their own), and the
++// depth of the request whose reply jsCall gave last: result() decodes that
++// reply.  A HALT given back by the request of a .JSCommandHandler's COMMAND
++// (commandHaltDepth, see js_command) goes back through the command's context
++static thread_local int jsCallDepth = 0;
++static thread_local int replyDepth = 0;
++static thread_local int commandHaltDepth = -1;
++static thread_local bool commandHalted = false;
++
++struct JsCallDepth
++{
++    int depth;
++    JsCallDepth() : depth(++jsCallDepth) {}
++    ~JsCallDepth() { --jsCallDepth; replyDepth = depth; }
++};
++
+ // pass a request to the main runtime thread and wait for the reply, running
+ // the synchronous handlers JavaScript calls meanwhile
+ static std::string jsCall(RexxThreadContext *c, int op, const std::string &data)
+ {
++    JsCallDepth inCall;
+     // Under Node, the RexxAPI's sockets need an event loop that runs while
+     // the main runtime thread waits for a synchronous handler: their own
+     // thread's.  Starting it takes the main runtime thread, which is free
+@@ -1173,7 +1191,10 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
+         RexxObjectPtr cond = toRexx(c, reply, pos);
+         if (isHaltSyntax(c, cond))
+         {
+-            c->HaltThread();
++            // the reply to a request of a .JSCommandHandler's COMMAND: the
++            // HALT goes back through the command's context (js_command)
++            if (replyDepth == commandHaltDepth) commandHalted = true;
++            else c->HaltThread();
+             return c->Nil();
+         }
+         reraise(c, cond);
+@@ -1564,6 +1585,74 @@ RexxMethod0(RexxObjectPtr, js_await)
      return request(context->threadContext, OP_AWAIT, s);
  }
  
++static RexxObjectPtr jsCommandCall(RexxMethodContext *context, RexxThreadContext *c,
++                                   RexxObjectPtr command, RexxObjectPtr caller);
++
 +// COMMAND(command, caller) of a .JSCommandHandler (js.cls): fn(command, ctx),
 +// ctx a .JSCommandContext on caller; what fn gives is RC (undefined or null:
 +// 0; a thenable is waited for).  Native, so that no Rexx activation stands
 +// between the code that issued the command and JavaScript: a condition that
-+// Rexx code the function calls raises (USER ... RETURN, a HALT given back as
-+// a HALT) reaches that code as itself; one that the API holds when this
-+// returns (a SYNTAX) is raised there by the interpreter
++// Rexx code the function calls raises (USER ... RETURN) reaches that code as
++// itself; one that the API holds when this returns (a SYNTAX) is raised there
++// by the interpreter.  A HALT that the function lets through (a SYNTAX 4.1 of
++// Rexx code it called) goes back through the command's context:
++// caller~raise("HALT", 0), RC 0, what a handler written in Rexx gives with
++// RAISE HALT (the family's rule 1 for command handlers); when the function
++// asked for a condition already (ctx.raiseError...), which RAISE refuses to
++// replace, with HaltThread() after it
 +RexxMethod2(RexxObjectPtr, js_command, RexxObjectPtr, command, RexxObjectPtr, caller)
 +{
 +    RexxThreadContext *c = context->threadContext;
++    struct CommandHalt                   // the requests below, and nothing deeper
++    {
++        int depth; bool halted;
++        CommandHalt() : depth(commandHaltDepth), halted(commandHalted)
++        { commandHaltDepth = jsCallDepth + 1; commandHalted = false; }
++        ~CommandHalt() { commandHaltDepth = depth; commandHalted = halted; }
++    } inCommand;
++    RexxObjectPtr r = jsCommandCall(context, c, command, caller);
++    if (!commandHalted) return r;
++    if (c->CheckCondition()) return NULLOBJECT;
++    c->SendMessage2(caller, "RAISE", c->String("HALT"), c->WholeNumberToObject(0));
++    if (c->CheckCondition())             // a condition asked for already
++    {
++        c->ClearCondition();
++        c->HaltThread();
++    }
++    return context->WholeNumberToObject(0);
++}
++
++// js_command's call of the function
++static RexxObjectPtr jsCommandCall(RexxMethodContext *context, RexxThreadContext *c,
++                                   RexxObjectPtr command, RexxObjectPtr caller)
++{
 +    RexxObjectPtr fn = context->GetObjectVariable("FN");
 +    RexxClassObject ctxClass = context->FindContextClass("JSCOMMANDCONTEXT");
 +    if (fn == NULLOBJECT || ctxClass == NULLOBJECT) return context->WholeNumberToObject(0);
@@ -566,7 +628,7 @@ index 6c1e717..1d13834 100644
  // introspection: TYPEOF, CLASSNAME, PROPERTYNAMES, MAKEARRAY, SUPPLIER (its data), BYTESTRING,
  // INSTANCEOF(c), HASPROPERTY(n)
  static RexxObjectPtr info(RexxMethodContext *context, const char *what, RexxObjectPtr arg)
-@@ -2009,6 +2046,7 @@ static RexxMethodEntry jsMethods[] =
+@@ -2009,6 +2098,7 @@ static RexxMethodEntry jsMethods[] =
      REXX_METHOD(js_has, js_has),
      REXX_METHOD(js_info, js_info),
      REXX_METHOD(js_uninit, js_uninit),
