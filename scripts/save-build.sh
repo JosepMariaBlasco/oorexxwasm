@@ -28,6 +28,8 @@ fi
 if [[ -d "$BUILD/bin-node-test" ]]; then
   mkdir -p "$S/bin-node-test"
   (cd "$BUILD/bin-node-test" && cp -a rexx rexxc rxqueue rxsubcom rexxinstance *.cmd rexx.js rexx.wasm rexx.img *.cls "$S/bin-node-test/")
+  # the launchers of the extra test tools (wasm/build-test.sh), when built
+  [[ -f "$BUILD/bin-node-test/detach_root_terminate" ]] && cp -a "$BUILD/bin-node-test/detach_root_terminate" "$S/bin-node-test/"
 fi
 if [[ -d "$BUILD/bin-web-test" ]]; then
   mkdir -p "$S/bin-web-test" && cp -a "$BUILD/bin-web-test/." "$S/bin-web-test/"
