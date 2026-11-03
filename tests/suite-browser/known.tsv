@@ -25,7 +25,7 @@ processes	utilities/rexxc/rexxc	runs rexxc as a command
 processes	utilities/rxqueue/rxQueue	runs rxqueue as a command
 processes	utilities/rxsubcom/rxsubcom	runs rxsubcom as a command
 processes	API/oo/METHOD	TEST_REXXC_WITH_NEWROUTINE_LOADPACKAGEFROMDATA: rexxc RC 127 (the API groups need wasm/build-test.sh's bin-web-test)
-processes	API/oo/ProcessInvocation	runs testbinaries' rexxinstance as a command
+processes	API/oo/ProcessInvocation	runs testbinaries' rexxinstance and detach_root_terminate as commands
 processes	API/oo/ProcessRexxStart	runs testbinaries' rexxinstance as a command
 sockets	extensions/rxsock/socketClass	server/client tests (no listen) and socket options (.nil)
 stack	base/keyword/CALL	TEST_STACKSIZE: Error 11 at ~900 (Chromium), ~1300 (Firefox) levels; WebKit passes (~5000) or not (3614 with the WebKit of the GitHub runners): it depends on the engine build
