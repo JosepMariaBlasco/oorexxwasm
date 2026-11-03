@@ -953,7 +953,7 @@ index 5bd484f..f51abef 100644
  #include <io.h>
  #include <fcntl.h>
 diff --git a/interpreter/package/PackageManager.cpp b/interpreter/package/PackageManager.cpp
-index 483af29..b446b9e 100644
+index f342100..48104c0 100644
 --- a/interpreter/package/PackageManager.cpp
 +++ b/interpreter/package/PackageManager.cpp
 @@ -73,6 +73,53 @@ StringTable *PackageManager::packageRoutines = OREF_NULL;     // table of functi

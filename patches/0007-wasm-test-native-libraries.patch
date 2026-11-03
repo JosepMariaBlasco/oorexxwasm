@@ -19,17 +19,19 @@ BUILD_DIR/bin-web-test):
   routine table are redefined to keep the name as written;
 - rexxinstance is one more tool in the Node variant's rexx.wasm, as rexxc
   is (rexx.js --orx-wasm-rexxinstance, and a launcher), through a weak
-  hook in rexx.cpp's dispatcher (patch 1), orxWasmExtraTool();
+  hook in rexx.cpp's dispatcher (patch 1), orxWasmExtraTool(); so is
+  detach_root_terminate, which ProcessInvocation's Terminate() tests run
+  as a command (when the tree has it, trunk r13349 and later);
 - build-node.sh and build-web.sh link EXTRA_OBJECTS.
 
 With them, the eight API groups pass under Node and in the browsers, as
 natively (796 tests).  The standard builds are unchanged.
 ---
- wasm/README.md     |  23 ++++++
+ wasm/README.md     |  23 +++++
  wasm/build-node.sh |   4 +-
- wasm/build-test.sh | 198 +++++++++++++++++++++++++++++++++++++++++++++
+ wasm/build-test.sh | 222 +++++++++++++++++++++++++++++++++++++++++++++
  wasm/build-web.sh  |   4 +-
- 4 files changed, 227 insertions(+), 2 deletions(-)
+ 4 files changed, 251 insertions(+), 2 deletions(-)
  create mode 100755 wasm/build-test.sh
 
 diff --git a/wasm/README.md b/wasm/README.md
@@ -90,10 +92,10 @@ index 6be72d9..f153370 100755
  # rexxtry, as native installs have it next to rexx (rexx rexxtry)
 diff --git a/wasm/build-test.sh b/wasm/build-test.sh
 new file mode 100755
-index 0000000..eda1d7c
+index 0000000..6d39774
 --- /dev/null
 +++ b/wasm/build-test.sh
-@@ -0,0 +1,198 @@
+@@ -0,0 +1,222 @@
 +#!/usr/bin/env bash
 +#/*----------------------------------------------------------------------------*/
 +#/*                                                                            */
@@ -148,13 +150,15 @@ index 0000000..eda1d7c
 +# written, and the table maps the prefixed names back.  In the Node variant,
 +# testbinaries/rexxinstance (run as a command by the ProcessInvocation and
 +# ProcessRexxStart groups) is one more tool in the same rexx.wasm, as rexxc
-+# is: rexx.js --orx-wasm-rexxinstance, and an OUTDIR/rexxinstance launcher.
++# is: rexx.js --orx-wasm-rexxinstance, and an OUTDIR/rexxinstance launcher;
++# so is testbinaries/detach_root_terminate (ProcessInvocation's Terminate()
++# tests, when the tree has it).
 +#
 +# Usage: wasm/build-test.sh [BUILD_DIR=build-wasm] [node|web|both=both]
 +#   (BUILD_DIR: a build made by wasm/build-wasm.sh; EM_CONFIG from it)
 +# Output: BUILD_DIR/bin-node-test (build-node.sh's bin-node, plus the
-+#   rexxinstance launcher) and/or BUILD_DIR/bin-web-test (build-web.sh's
-+#   bin-web)
++#   rexxinstance and detach_root_terminate launchers) and/or
++#   BUILD_DIR/bin-web-test (build-web.sh's bin-web)
 +set -euo pipefail
 +SRC=$(cd "$(dirname "$0")/.." && pwd)
 +BUILD=$(cd "${1:-$SRC/build-wasm}" && pwd)
@@ -265,9 +269,18 @@ index 0000000..eda1d7c
 +  defs=()
 +  for c in $CLASHES; do defs+=("-D$c=orxexits__$c"); done
 +  compile "$SRC/testbinaries/rexxinstance.cpp" "$WORK/rexxinstance.o" "${defs[@]}" -Dmain=orxWasmRexxinstanceMain
++  # detach_root_terminate (ProcessInvocation's Terminate() tests, run as a
++  # command; trunk r13349 and later)
++  extra=()
++  if [[ -f "$SRC/testbinaries/detach_root_terminate.cpp" ]]; then
++    compile "$SRC/testbinaries/detach_root_terminate.cpp" "$WORK/detach_root_terminate.o" \
++      -Dmain=orxWasmDetachRootTerminateMain
++    extra+=("$WORK/detach_root_terminate.o")
++  fi
 +  cat > "$WORK/extra-tool.cpp" <<'CPP'
 +#include <string.h>
 +int orxWasmRexxinstanceMain(int argc, char **argv);
++int orxWasmDetachRootTerminateMain(int argc, char **argv) __attribute__((weak));
 +// rexx.cpp: the tools a build adds (rexx.js --orx-wasm-TOOL)
 +extern "C" bool orxWasmExtraTool(const char *tool, int argc, char **argv, int *rc)
 +{
@@ -276,11 +289,16 @@ index 0000000..eda1d7c
 +        *rc = orxWasmRexxinstanceMain(argc, argv);
 +        return true;
 +    }
++    if (strcmp(tool, "detach_root_terminate") == 0 && orxWasmDetachRootTerminateMain)
++    {
++        *rc = orxWasmDetachRootTerminateMain(argc, argv);
++        return true;
++    }
 +    return false;
 +}
 +CPP
 +  compile "$WORK/extra-tool.cpp" "$WORK/extra-tool.o"
-+  EXTRA_OBJECTS="${objects[*]} $WORK/rexxinstance.o $WORK/extra-tool.o" \
++  EXTRA_OBJECTS="${objects[*]} $WORK/rexxinstance.o ${extra[*]} $WORK/extra-tool.o" \
 +    "$SRC/wasm/build-node.sh" "$BUILD" "$BUILD/bin-node-test"
 +  cat > "$BUILD/bin-node-test/rexxinstance" <<'SH'
 +#!/usr/bin/env bash
@@ -288,6 +306,14 @@ index 0000000..eda1d7c
 +PATH="$DIR:$PATH" exec node "$DIR/rexx.js" --orx-wasm-rexxinstance "$@"
 +SH
 +  chmod +x "$BUILD/bin-node-test/rexxinstance"
++  if [[ ${#extra[@]} -gt 0 ]]; then
++    cat > "$BUILD/bin-node-test/detach_root_terminate" <<'SH'
++#!/usr/bin/env bash
++DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
++exec node "$DIR/rexx.js" --orx-wasm-detach_root_terminate "$@"
++SH
++    chmod +x "$BUILD/bin-node-test/detach_root_terminate"
++  fi
 +fi
 +if [[ $WHICH != node ]]; then
 +  EXTRA_OBJECTS="${objects[*]}" "$SRC/wasm/build-web.sh" "$BUILD" "$BUILD/bin-web-test"

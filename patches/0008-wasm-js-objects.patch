@@ -192,7 +192,7 @@ Rexx has read it, even if JavaScript collects the proxy meanwhile.
  create mode 100644 wasm/web/js.cls
 
 diff --git a/interpreter/package/PackageManager.cpp b/interpreter/package/PackageManager.cpp
-index b446b9e..2de2cde 100644
+index 48104c0..e44cdb1 100644
 --- a/interpreter/package/PackageManager.cpp
 +++ b/interpreter/package/PackageManager.cpp
 @@ -99,6 +99,11 @@ const PackageManager::EmbeddedPackage PackageManager::embeddedPackages[] =

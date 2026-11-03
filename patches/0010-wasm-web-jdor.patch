@@ -77,7 +77,7 @@ the HTML canvas, no Java involved.
  create mode 100644 wasm/web/polygon-clipping.umd.min.js
 
 diff --git a/interpreter/package/PackageManager.cpp b/interpreter/package/PackageManager.cpp
-index 2de2cde..632877d 100644
+index e44cdb1..d6cd9aa 100644
 --- a/interpreter/package/PackageManager.cpp
 +++ b/interpreter/package/PackageManager.cpp
 @@ -100,8 +100,8 @@ const PackageManager::EmbeddedPackage PackageManager::embeddedPackages[] =

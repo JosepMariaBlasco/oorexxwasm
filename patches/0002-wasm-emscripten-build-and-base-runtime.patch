@@ -618,7 +618,7 @@ index 97fdb0f..f3e617e 100644
      uint64_t    randomSeed;             // random number seed
      ProtectedBase *protectedObjects;    // list of stack-based object protectors
 diff --git a/interpreter/parser/LanguageParser.cpp b/interpreter/parser/LanguageParser.cpp
-index b490386..5658f4f 100644
+index fe468e1..b239357 100644
 --- a/interpreter/parser/LanguageParser.cpp
 +++ b/interpreter/parser/LanguageParser.cpp
 @@ -3759,6 +3759,21 @@ RexxInternalObject* LanguageParser::parseSubTerm(int terminators)

@@ -45,9 +45,9 @@ through REXX_PATH: cmd.exe would take rexx.js in PATH for "rexx").
  .../platform/unix/SysNodeConnection.cpp       |  18 +-
  wasm/README.md                                |  16 ++
  wasm/build-node.sh                            |   8 +-
- wasm/build-test.sh                            |   2 +
+ wasm/build-test.sh                            |   6 +
  wasm/node-pre.js                              |  36 ++-
- 15 files changed, 572 insertions(+), 37 deletions(-)
+ 15 files changed, 576 insertions(+), 37 deletions(-)
 
 diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
 index e62b362..a1b8523 100644
@@ -1095,15 +1095,19 @@ index ddb6e69..9525374 100755
  launcher rexx
  # multi-call tools of the same rexx.js/rexx.wasm (see wasm/rexxc-main.cpp)
 diff --git a/wasm/build-test.sh b/wasm/build-test.sh
-index eda1d7c..cd0c09f 100755
+index 6d39774..b2e7383 100755
 --- a/wasm/build-test.sh
 +++ b/wasm/build-test.sh
-@@ -192,6 +192,8 @@ DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
- PATH="$DIR:$PATH" exec node "$DIR/rexx.js" --orx-wasm-rexxinstance "$@"
+@@ -216,6 +216,12 @@ exec node "$DIR/rexx.js" --orx-wasm-detach_root_terminate "$@"
  SH
-   chmod +x "$BUILD/bin-node-test/rexxinstance"
+     chmod +x "$BUILD/bin-node-test/detach_root_terminate"
+   fi
 +  printf '@echo off\r\nsetlocal\r\nset "REXX_PATH=%%~dp0;%%REXX_PATH%%"\r\nnode "%%~dp0rexx.js" --orx-wasm-rexxinstance %%*\r\n' \
 +    > "$BUILD/bin-node-test/rexxinstance.cmd"
++  if [[ ${#extra[@]} -gt 0 ]]; then
++    printf '@echo off\r\nnode "%%~dp0rexx.js" --orx-wasm-detach_root_terminate %%*\r\n' \
++      > "$BUILD/bin-node-test/detach_root_terminate.cmd"
++  fi
  fi
  if [[ $WHICH != node ]]; then
    EXTRA_OBJECTS="${objects[*]}" "$SRC/wasm/build-web.sh" "$BUILD" "$BUILD/bin-web-test"
