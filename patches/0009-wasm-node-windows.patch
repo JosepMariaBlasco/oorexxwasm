@@ -978,7 +978,7 @@ index 255cc9e..c11629d 100644
      validateFileSpec();
      // process the SysFileTreeOptions
 diff --git a/rexxapi/common/platform/unix/SysNodeConnection.cpp b/rexxapi/common/platform/unix/SysNodeConnection.cpp
-index 01582d1..500ab26 100644
+index 9b120d4..35bcd93 100644
 --- a/rexxapi/common/platform/unix/SysNodeConnection.cpp
 +++ b/rexxapi/common/platform/unix/SysNodeConnection.cpp
 @@ -271,6 +271,10 @@ EM_JS(void, orxNetStart, (em_proxying_ctx *ctx, void *op), {

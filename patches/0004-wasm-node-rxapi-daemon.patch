@@ -219,7 +219,7 @@ index 339f053..87ca6c7 100644
  #endif
 diff --git a/rexxapi/common/platform/unix/SysNodeConnection.cpp b/rexxapi/common/platform/unix/SysNodeConnection.cpp
 new file mode 100644
-index 0000000..01582d1
+index 0000000..9b120d4
 --- /dev/null
 +++ b/rexxapi/common/platform/unix/SysNodeConnection.cpp
 @@ -0,0 +1,850 @@
@@ -229,7 +229,7 @@ index 0000000..01582d1
 +/*                                                                            */
 +/* This program and the accompanying materials are made available under      */
 +/* the terms of the Common Public License v1.0 which accompanies this         */
-+/* distribution. A copy is also available at the following address:          */
++/* distribution. A copy is also available at the following address:           */
 +/* https://www.oorexx.org/license.html                                        */
 +/*                                                                            */
 +/*----------------------------------------------------------------------------*/
@@ -1075,7 +1075,7 @@ index 0000000..01582d1
 +#endif
 diff --git a/rexxapi/common/platform/unix/SysNodeConnection.hpp b/rexxapi/common/platform/unix/SysNodeConnection.hpp
 new file mode 100644
-index 0000000..492f36f
+index 0000000..79186a0
 --- /dev/null
 +++ b/rexxapi/common/platform/unix/SysNodeConnection.hpp
 @@ -0,0 +1,89 @@
@@ -1085,7 +1085,7 @@ index 0000000..492f36f
 +/*                                                                            */
 +/* This program and the accompanying materials are made available under      */
 +/* the terms of the Common Public License v1.0 which accompanies this         */
-+/* distribution. A copy is also available at the following address:          */
++/* distribution. A copy is also available at the following address:           */
 +/* https://www.oorexx.org/license.html                                        */
 +/*                                                                            */
 +/*----------------------------------------------------------------------------*/
