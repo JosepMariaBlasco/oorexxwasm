@@ -1169,10 +1169,10 @@ index 0000000..492f36f
 +#endif
 +#endif
 diff --git a/utilities/rexx/platform/unix/rexx.cpp b/utilities/rexx/platform/unix/rexx.cpp
-index 6736c3a..42581f9 100644
+index dc04468..0346d6d 100644
 --- a/utilities/rexx/platform/unix/rexx.cpp
 +++ b/utilities/rexx/platform/unix/rexx.cpp
-@@ -61,6 +61,10 @@ int orxWasmRexxcMain(int argc, char **argv);
+@@ -62,6 +62,10 @@ int orxWasmRexxcMain(int argc, char **argv);
  int orxWasmRxqueueMain(int argc, char **argv);
  int orxWasmRxsubcomMain(int argc, char **argv, char **envp);
  extern char **environ;
@@ -1183,7 +1183,7 @@ index 6736c3a..42581f9 100644
  // more tools a particular build links in (wasm/build-test.sh: the test
  // suite's rexxinstance); a weak symbol, NULL in the builds that have none.
  // Returns true, with the tool's return code in *rc, if it knows the tool.
-@@ -108,6 +112,12 @@ int main (int argc, char **argv) {
+@@ -109,6 +113,12 @@ int main (int argc, char **argv) {
          {
              return orxWasmRxsubcomMain(argc - 1, argv + 1, environ);
          }

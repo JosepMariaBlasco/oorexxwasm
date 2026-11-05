@@ -15,7 +15,8 @@ onInput}) -> {write, close, stop, done}.
 - interactive stdin (wasm/web-stdin.cpp, --wrap=read): fd 0 is served on
   the calling pthread from a ring in shared memory with a futex wait;
   LINES()/CHARS() work on it;
-- raw stdout/stderr, input files and cwd, files collected after the run;
+- raw stdout/stderr, input files and cwd (HOME created too, whatever the
+  cwd), files collected after the run;
 - onOut/onErr say what each piece is ('plain', 'trace', 'error' message)
   and onInput whether the read is interactive trace's: a weak hook in
   Activity.cpp (orx_wasm_mark) marks it per thread, and each write to
@@ -44,11 +45,11 @@ onInput}) -> {write, close, stop, done}.
  wasm/build-web.sh                    |  97 ++++++++++++
  wasm/tests/web-api.html              |  76 ++++++++++
  wasm/tests/web-api.py                | 163 ++++++++++++++++++++
- wasm/web-pre.js                      | 217 +++++++++++++++++++++++++++
+ wasm/web-pre.js                      | 219 +++++++++++++++++++++++++++
  wasm/web-stdin.cpp                   | 157 +++++++++++++++++++
  wasm/web/ooRexx-worker.js            | 127 ++++++++++++++++
  wasm/web/ooRexx.js                   | 212 ++++++++++++++++++++++++++
- 10 files changed, 1195 insertions(+), 1 deletion(-)
+ 10 files changed, 1197 insertions(+), 1 deletion(-)
  create mode 100755 wasm/build-web.sh
  create mode 100644 wasm/tests/web-api.html
  create mode 100755 wasm/tests/web-api.py
@@ -86,7 +87,7 @@ index ca6a0f2..e62b362 100644
  #endif
  
 diff --git a/interpreter/concurrency/Activity.cpp b/interpreter/concurrency/Activity.cpp
-index 67f312f..6f54ca9 100644
+index 7e2bba3..8af9418 100644
 --- a/interpreter/concurrency/Activity.cpp
 +++ b/interpreter/concurrency/Activity.cpp
 @@ -85,6 +85,52 @@
@@ -621,10 +622,10 @@ index 0000000..3940711
 +sys.exit(1 if fails else 0)
 diff --git a/wasm/web-pre.js b/wasm/web-pre.js
 new file mode 100644
-index 0000000..7046ae0
+index 0000000..f5620b4
 --- /dev/null
 +++ b/wasm/web-pre.js
-@@ -0,0 +1,217 @@
+@@ -0,0 +1,219 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -809,7 +810,8 @@ index 0000000..7046ae0
 +
 +  // ---- files ----------------------------------------------------------------
 +  // Module.orxFiles: {path: Uint8Array} written before the program starts;
-+  // Module.orxCwd: the working directory (created if needed).
++  // Module.orxCwd: the working directory (created if needed); HOME is
++  // created too.
 +  function mkdirs(dir) {
 +    var parts = dir.split('/').filter(Boolean), p = '';
 +    for (var i = 0; i < parts.length; i++) {
@@ -822,6 +824,7 @@ index 0000000..7046ae0
 +    mkdirs(path.slice(0, path.lastIndexOf('/')));
 +    FS.writeFile(path, files[path]);
 +  }
++  if (ENV['HOME']) mkdirs(ENV['HOME']);    // ~ is a directory, whatever the cwd
 +  if (Module['orxCwd']) { mkdirs(Module['orxCwd']); FS.chdir(Module['orxCwd']); }
 +
 +  // Module.orxCollect(dir): {path: Uint8Array} of the regular files under dir

@@ -460,7 +460,7 @@ index f2539df..fd47f6b 100644
      // set the errno information
      setErrno(context, rc >= 0);
 diff --git a/interpreter/concurrency/Activity.cpp b/interpreter/concurrency/Activity.cpp
-index 7bd530a..67f312f 100644
+index 091edb0..7e2bba3 100644
 --- a/interpreter/concurrency/Activity.cpp
 +++ b/interpreter/concurrency/Activity.cpp
 @@ -192,6 +192,9 @@ void Activity::runThread()
@@ -594,10 +594,10 @@ index 7bd530a..67f312f 100644
      // get a new random seed
      generateRandomNumberSeed();
 diff --git a/interpreter/concurrency/Activity.hpp b/interpreter/concurrency/Activity.hpp
-index 97fdb0f..f3e617e 100644
+index b75a6b5..f4dd9cb 100644
 --- a/interpreter/concurrency/Activity.hpp
 +++ b/interpreter/concurrency/Activity.hpp
-@@ -214,6 +214,9 @@ class Activity : public RexxInternalObject
+@@ -215,6 +215,9 @@ class Activity : public RexxInternalObject
      void        requestAccess();
      void        setupCurrentActivity();
      void        checkStackSpace();
@@ -607,7 +607,7 @@ index 97fdb0f..f3e617e 100644
      void        cleanupActivityResources();
      void        terminatePoolActivity();
      thread_id_t threadIdMethod();
-@@ -448,6 +451,9 @@ class Activity : public RexxInternalObject
+@@ -462,6 +465,9 @@ class Activity : public RexxInternalObject
      size_t   attachCount;               // extent of nested attaches
      bool     newThreadAttached;         // Indicates this thread was a "side door" attach.
      char    *stackLimit;                // pointer to base to the C stack location that will trigger a control stack error
@@ -618,10 +618,10 @@ index 97fdb0f..f3e617e 100644
      uint64_t    randomSeed;             // random number seed
      ProtectedBase *protectedObjects;    // list of stack-based object protectors
 diff --git a/interpreter/parser/LanguageParser.cpp b/interpreter/parser/LanguageParser.cpp
-index fe468e1..b239357 100644
+index 0e43443..709dd58 100644
 --- a/interpreter/parser/LanguageParser.cpp
 +++ b/interpreter/parser/LanguageParser.cpp
-@@ -3759,6 +3759,21 @@ RexxInternalObject* LanguageParser::parseSubTerm(int terminators)
+@@ -3767,6 +3767,21 @@ RexxInternalObject* LanguageParser::parseSubTerm(int terminators)
      // with very complex instructions, it is possible to recurse quite deeply here.
      // so give a look at the stack space on each call so we can terminate "nicely"
      ActivityManager::currentActivity.load()->checkStackSpace();

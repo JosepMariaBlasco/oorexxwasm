@@ -953,7 +953,7 @@ index 5bd484f..f51abef 100644
  #include <io.h>
  #include <fcntl.h>
 diff --git a/interpreter/package/PackageManager.cpp b/interpreter/package/PackageManager.cpp
-index f342100..48104c0 100644
+index e3549d4..086dd21 100644
 --- a/interpreter/package/PackageManager.cpp
 +++ b/interpreter/package/PackageManager.cpp
 @@ -73,6 +73,53 @@ StringTable *PackageManager::packageRoutines = OREF_NULL;     // table of functi
@@ -1797,10 +1797,10 @@ index e448335..e6f1154 100644
  protected:
  
 diff --git a/utilities/rexx/platform/unix/rexx.cpp b/utilities/rexx/platform/unix/rexx.cpp
-index 7ebfbe0..6736c3a 100644
+index 3a9a327..dc04468 100644
 --- a/utilities/rexx/platform/unix/rexx.cpp
 +++ b/utilities/rexx/platform/unix/rexx.cpp
-@@ -54,6 +54,19 @@
+@@ -55,6 +55,19 @@
  
  #include <oorexxapi.h>
  
@@ -1820,7 +1820,7 @@ index 7ebfbe0..6736c3a 100644
  int main (int argc, char **argv) {
      int   i;                             /* loop counter                      */
      int   rc = 0;                        /* actually running program RC       */
-@@ -78,6 +91,31 @@ int main (int argc, char **argv) {
+@@ -79,6 +92,31 @@ int main (int argc, char **argv) {
      wholenumber_t overrideCount = 0;        // +1 one time (switch -o), -1 always=global (switch -og)
      char          overrideString[512] = ""; // "::OPTIONS" directive string
  
