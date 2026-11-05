@@ -1,0 +1,2 @@
+# The sources of the example command environments: shown as text
+AddType "text/plain; charset=utf-8" .cls

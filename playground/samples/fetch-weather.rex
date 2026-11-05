@@ -8,7 +8,9 @@
 /* with no documentation, as they are no more than proofs of concept.       */
 /* Both are written in Rexx itself, as subclasses of ooRexx's               */
 /* .CommandHandler (dom.cls, fetch.cls): a command environment can be a     */
-/* Rexx class.                                                              */
+/* Rexx class.  Their source is in this group of samples, and at            */
+/* https://rexx.epbcn.com/oorexx-wasm/src/ (dom.cls, fetch.cls and          */
+/* commandwords.cls, which splits the commands of both).                    */
 address dom
 NEW '"Weather"' AS win
 CREATE '- h3 "Weather in any city"'

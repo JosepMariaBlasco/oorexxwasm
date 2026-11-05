@@ -53,6 +53,9 @@ Workbench, a separate page.
   the browser distribution's example page (`../example/`, deployed on its
   own). Linked from the playground's footer. Checked by
   `tests/examples_check.py`.
+- `src/` (built) — the sources of the example command environments, `dom.cls`,
+  `fetch.cls` and `commandwords.cls`, as text (`src-htaccess` → `src/.htaccess`),
+  for links; the sample list shows them too (`"from": "wasm"` in `samples.json`).
 - `build-site.sh [BIN_WEB] [OUT]` — assembles the site (default
   `$ORX_WASM_WORK/site`; `$ORX_WASM_WORK` is the directory that contains this
   repository's clone, see the top README).

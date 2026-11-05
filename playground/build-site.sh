@@ -29,6 +29,11 @@ mkdir -p "$OUT/grok"
 cp "$HERE"/grok/index.html "$HERE"/grok/grok-live.rex "$HERE"/grok/oryx.svg "$OUT/grok/"
 # small web pages written in Rexx (<script type="text/rexx">), on this site's runtime
 cp -R "$HERE/examples" "$OUT/examples"
+# src/: the sources of the example command environments (ADDRESS DOM, FETCH),
+# as text, for links (the samples list shows them too)
+mkdir -p "$OUT/src"
+cp "$OOREXX"/wasm/web/dom.cls "$OOREXX"/wasm/web/fetch.cls "$OOREXX"/wasm/web/commandwords.cls "$OUT/src/"
+cp "$HERE/src-htaccess" "$OUT/src/.htaccess"
 # the Rexx Parser (vendored subset, import-rexx-parser.sh): CSS for the editor
 mkdir -p "$OUT/rexx-parser"
 # every style for the style chooser, as on the Parser's site ("test*" are dev fixtures)
@@ -45,7 +50,8 @@ def read(path):
     return open(path, encoding="utf-8", errors="surrogateescape").read()
 import shutil
 for s in m["samples"]:
-    base = {"oorexx": f"{oorexx}/samples", "bsf4oorexx": f"{here}/samples/bsf4oorexx"}.get(s.get("from"), f"{here}/samples")
+    base = {"oorexx": f"{oorexx}/samples", "bsf4oorexx": f"{here}/samples/bsf4oorexx",
+            "wasm": f"{oorexx}/wasm/web"}.get(s.get("from"), f"{here}/samples")
     text = read(f"{base}/{s['file']}")
     if text.startswith("#!@"):          # unconfigured SVN template (#!@OOREXX_SHEBANG_PROGRAM@)
         text = text.split("\n", 1)[1]
