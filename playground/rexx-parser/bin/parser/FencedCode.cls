@@ -39,6 +39,31 @@
 /* 20260912         Add program=.                                             */
 /* 20260923         A fence can open after a list marker (`- ```rexx`)        */
 /* 20260926         Add FenceWordIsKnown (for md2slides' WarnFenceWords)      */
+/* 20261018         Slices start their counter with --rx-start                */
+/*                  start-from= is startFrom= (a dash is a capital), and a    */
+/*                  bad option says the line of its block (FenceOptions)      */
+/* 20261025         source= on a block that is not Rexx: its file goes in     */
+/*                  (InlineSourceFile; Rony)                                  */
+/* 20261025         spot= drawn at once when the pipeline asks (STATICSPOTS:  */
+/*                  Spots.cls); background=, border=, border-width= and       */
+/*                  border-color= (Rony: frames and grounds for the blocks)   */
+/* 20261026         [WORD]{.kw} is a keyword mention, `WORD`{.rexx keyword}   */
+/*                  (KeywordSpans; Rony: keywords in the text as in the code) */
+/*                  The lines of a block that is not Rexx are not prose: a    */
+/*                  mention written there, as an example, is left as it is    */
+/*                  A grid table: each cell is a document of its own, and the */
+/*                  table is drawn again as wide as its cells now are         */
+/*                  (GridTables.cls; Rony's "Rosetta Stone", fences in the    */
+/*                  cells). The line an error names is the document's         */
+/* 20261027         spot= on a program= listing: drawn on its pieces when the */
+/*                  pipeline asks, and the spot= of a later fragment is added */
+/*                  to the first one's for that piece (was lost)              */
+/* 20261027         A Rexx fence is caseless, by the rules of Rexx (Rony):    */
+/*                  ```REXX, {.NumberLines}, {BLANKS} (CanonicalRexxFences,   */
+/*                  ParseOptions, FenceWordIsKnown)                           */
+/* 20261103         spot= drawn at once: a beat takes the pen of its place in */
+/*                  the page, not in its block (PageBeatPens; Rony: "one      */
+/*                  colour per beat for the whole page")                      */
 /*                                                                            */
 /******************************************************************************/
 
@@ -194,6 +219,8 @@ package~loadPackage(parentDir"/HLDrivers/HTML.Driver.cls")
 ::Requires "StylePatch.cls"
 ::Requires "ANSI.ErrorText.cls"
 ::Requires "HTMLClasses.cls"
+::Requires "Spots.cls"
+::Requires "GridTables.cls"
 
 --------------------------------------------------------------------------------
 -- Main routine                                                               --
@@ -216,10 +243,32 @@ package~loadPackage(parentDir"/HLDrivers/HTML.Driver.cls")
   OK.["executor{"  ] = 1                -- "~~~executor{<attributes>}"
   OK.["executor"tab] = 1                -- "~~~executor<tab><attributes>"
 
+  -- A Rexx fence is caseless: ```REXX is ```rexx for everything below
+  source = CanonicalRexxFences( source )
+
   -- Continue when an error is found
   continue = defaultOptions.continue
 
-  accum     = 0                         -- Accumulates read lines
+  -- spot= drawn once and for all (Spots.cls): the outputs that do not move
+  -- ask for it (md2html, md2pdf, md2epub, the CGI, md2latex); md2slides,
+  -- whose runtime lights the beats one after another, does not
+  staticSpots = defaultOptions.["STATICSPOTS"] == 1
+
+  -- The pens of the beats, by their first place in the page (v380): the
+  -- same beat has the same colour in every block. A cell of a grid table
+  -- is part of a page: it gets the page's (INCELL, PAGEPENS: GridCells)
+  pagePens = ""
+  If staticSpots Then Do
+    If defaultOptions.["INCELL"] == 1 Then
+      pagePens = defaultOptions.["PAGEPENS"]
+    Else
+      pagePens = PageBeatPens( source )
+  End
+
+  -- Accumulates read lines. A cell of a grid table is a document of its
+  -- own, and LINEBASE is the line before its first one (see GridCells)
+  accum     = defaultOptions.["LINEBASE"]
+  If \DataType(accum, "W") Then accum = 0
 
   processed = .Array~new
 
@@ -267,8 +316,12 @@ package~loadPackage(parentDir"/HLDrivers/HTML.Driver.cls")
   programBlocks.        = 0
   programBlocks.!count  = 0
   source = ProcessPrograms( filename, source, defaultStyle, defaultOptions., -
-                            continue, programBlocks. )
+                            continue, programBlocks., pagePens )
   havePrograms = programBlocks.!count > 0
+
+  -- The lines of the blocks that are not Rexx (by their number in source):
+  -- they are code, not prose, and a mention there is an example of one
+  verbatim = .Set~new
 
   -- We need a WHILE condition because the source array may change
   Loop Label Outer lineNo = 1 By 1 While lineNo < source~items
@@ -293,15 +346,59 @@ package~loadPackage(parentDir"/HLDrivers/HTML.Driver.cls")
     indent  = Length(line) - Length( Strip(line, "Leading") )
     bare    = SubStr(line, indent + 1)
     itemPrefix = ""
+
+    -- A grid table. A cell can hold a fence, and the highlighted listing, or
+    -- a mention made HTML, changes the length of its lines: the "|" are no
+    -- longer under the "+", and Pandoc sees no table (Rony, 26/10/2026: his
+    -- "Rosetta Stone", ooRexx and VBA side by side). Each cell is a document
+    -- of its own here, and the table is drawn again as wide as its cells
+    -- are now. A table none of whose cells changes is left as it is, and its
+    -- lines are not scanned as prose: a mention in a cell has been looked
+    -- for there already.
+    If bare[1] == "+", .GridTable~isBorder( source, lineNo ) Then Do
+      table = .GridTable~at( source, lineNo )
+      -- Not a table for Pandoc either (a "|" not under its "+"): the whole
+      -- run of "+" and "|" lines is left as it is, or its line under the
+      -- header would be taken for the top of another table
+      If table == .Nil Then Do
+        last = .GridTable~runEnd( source, lineNo )
+        Do k = lineNo To last; verbatim~put(k); End
+        lineNo = last
+        Iterate
+      End
+      Else Do
+        If \GridCells( filename, table, defaultStyle, defaultOptions., accum, -
+                        pagePens ) Then Do
+          Do k = lineNo To table~last; verbatim~put(k); End
+          lineNo = table~last
+          Iterate
+        End
+        Do i = 1 To lineNo - 1
+          If verbatim~hasIndex(i) Then processed~append( source[i] )
+          Else processed~append( ScanProseMentions( source[i], proseHTMLClass, defaultStyle, proseOptions. ) )
+        End
+        processed~appendAll( table~lines )
+        source   = source~section( table~last + 1 )
+        verbatim = .Set~new
+        accum   += table~last
+        lineNo   = 0
+        Iterate
+      End
+    End
+
     If bare[1,3] \== "```", bare[1,3] \== "~~~" Then Do
       -- `-     ```rexx`: an indented code block that starts with a fence-like
       -- line. Its closing ``` must not be taken for an opening one.
       skip = FenceInIndentedItem( line )
       If skip \== "" Then Do
+        first = lineNo
         Loop
           lineNo += 1
           If lineNo >= source~items Then Leave Outer
-          If Strip( Strip(source[lineNo],"T"), "Leading" ) == skip Then Iterate Outer
+          If Strip( Strip(source[lineNo],"T"), "Leading" ) == skip Then Do
+            Do k = first To lineNo; verbatim~put(k); End
+            Iterate Outer
+          End
         End
       End
       indent = FenceMarkerPrefix( line )
@@ -316,6 +413,11 @@ package~loadPackage(parentDir"/HLDrivers/HTML.Driver.cls")
 
     -- Remember how many backticks or twiddles we found
     chars = Length(bare) - Length(attributes)
+
+    -- After backticks, a backtick means inline code, not a fence (CommonMark,
+    -- and Pandoc): "- ```` ```rexx {source=f} ```` is ..." is a list item
+    -- with code in it, and was taken for an unclosed block (Rony, 20/10/2026)
+    If char == "`", attributes~pos("`") > 0 Then Iterate
 
     -- End marker
     marker = Copies(char, chars)
@@ -333,11 +435,29 @@ package~loadPackage(parentDir"/HLDrivers/HTML.Driver.cls")
       -- We should skip the whole code block, because it may contain
       -- rexx blocks inside (with less twiddles or backticks).
       Otherwise Do
+        -- The error names the line the block starts at, not the one past
+        -- the end of the file that the search reached (Rony, 20/10/2026:
+        -- "starting at line 206" in a file of 205 lines)
+        opening = lineNo
         Loop
           lineNo += 1
-          If lineNo > source~items Then Exit MissingEndMarker()
+          If lineNo > source~items Then Do
+            lineNo = opening
+            Exit MissingEndMarker()
+          End
           line = source[lineNo]
-          If Strip( Strip(line,"T"), "Leading" ) == marker Then Iterate Outer
+          If Strip( Strip(line,"T"), "Leading" ) == marker Then Do
+            -- source= on a block that is not Rexx (program output, say): its
+            -- file goes into the block here, so that every program that reads
+            -- the Markdown after us gets it (Rony, 25/10/2026: md2latex read
+            -- the file, the HTML showed the text of the fence)
+            delta = InlineSourceFile( filename, source, opening, lineNo, -
+              indent, char, chars, attributes )
+            lineNo += delta
+            accum  -= delta
+            Do k = opening To lineNo; verbatim~put(k); End
+            Iterate Outer
+          End
         End
       End
     End
@@ -350,7 +470,7 @@ package~loadPackage(parentDir"/HLDrivers/HTML.Driver.cls")
       Else
         attributes = prefix"{"defaultOptions.default rest
     End
-    options. = ParseOptions( filename, attributes, defaultStyle )
+    options. = FenceOptions( filename, attributes, defaultStyle, lineNo + accum, source[lineNo] )
     If executor Then Options.["EXECUTOR"] = 1
     If continue Then Options.["CONTINUE"] = 1
 
@@ -378,6 +498,8 @@ package~loadPackage(parentDir"/HLDrivers/HTML.Driver.cls")
 
     -- Get the highligthed version of our code block
     highlighted = ProcessACodeBlock( filename, source, start, end, accum, options. )
+    If staticSpots, options.["SPOT"] \== "" Then
+      highlighted = StaticSpots( highlighted, options.["SPOT"], pagePens )
 
     -- Re-indent the highlighted HTML by the same amount, so Pandoc still reads
     -- the block as content of the enclosing list item (an un-indented block
@@ -393,8 +515,9 @@ package~loadPackage(parentDir"/HLDrivers/HTML.Driver.cls")
 
     -- Up to line (start-1), lines are prose: scan them for `` `x`{.rexx ...} ``
     -- mentions (ScanProseMentions is a no-op on a line with none).
-    Do line Over source~section( 1, start - 1 )
-      processed~append( ScanProseMentions( line, proseHTMLClass, defaultStyle, proseOptions. ) )
+    Do i = 1 To start - 1
+      If verbatim~hasIndex(i) Then processed~append( source[i] )
+      Else processed~append( ScanProseMentions( source[i], proseHTMLClass, defaultStyle, proseOptions. ) )
     End
 
     -- We now copy the highlighted lines
@@ -403,6 +526,7 @@ package~loadPackage(parentDir"/HLDrivers/HTML.Driver.cls")
 
     -- Now update our source...
     source = source~section( end + 1 )
+    verbatim = .Set~new                   -- (those lines are behind us now)
     -- ... and the accumulated line count ...
     accum += end
     -- ... and update lineNo (remembering that LOOP will add 1 to it)
@@ -411,8 +535,9 @@ package~loadPackage(parentDir"/HLDrivers/HTML.Driver.cls")
   End
 
   -- Copy any remaining line in the source array -- also prose, also scanned
-  Do line Over source
-    processed~append( ScanProseMentions( line, proseHTMLClass, defaultStyle, proseOptions. ) )
+  Do i = 1 To source~items
+    If verbatim~hasIndex(i) Then processed~append( source[i] )
+    Else processed~append( ScanProseMentions( source[i], proseHTMLClass, defaultStyle, proseOptions. ) )
   End
 
   -- Final pass: swap each <!--rxprogram:KEY:k AS-IS--> placeholder for its
@@ -423,8 +548,46 @@ package~loadPackage(parentDir"/HLDrivers/HTML.Driver.cls")
   Return processed
 
 MissingEndMarker:
+  -- lineNo counts from the end of the last block: accum is what came before
   Raise Syntax 88.900 -
-    Additional("Missing end marker for code block starting at line "lineNo)
+    Additional("Missing end marker for code block starting at line "lineNo + accum)
+
+--------------------------------------------------------------------------------
+-- GridCells -- each cell of a grid table, a document of its own              --
+--------------------------------------------------------------------------------
+-- What a cell holds is read as Pandoc reads it: without the blanks all its   --
+-- lines start with (up to three; more would be an indented code block). A    --
+-- cell that may have something to do (a fence, a mention, a keyword) goes    --
+-- through FencedCode, which knows, from LINEBASE, the line of the document   --
+-- its first line is, for the errors. Its new lines are drawn after one       --
+-- blank (setBare).                                                           --
+-- Returns 1 if any cell changed.                                             --
+
+::Routine GridCells Private
+  Use Strict Arg filename, table, defaultStyle, defaultOptions., accum, pagePens
+
+  changed = 0
+  base    = defaultOptions.["LINEBASE"]
+  pens    = defaultOptions.["PAGEPENS"]
+  inCell  = defaultOptions.["INCELL"]
+  defaultOptions.["PAGEPENS"] = pagePens
+  defaultOptions.["INCELL"]   = 1
+  Do cell Over table~cells
+    lines = cell~lines
+    text  = lines~makeString("L", " ")
+    If text~pos("`") == 0, text~pos("~~~") == 0, text~pos(".kw") == 0 Then Iterate
+    bare  = cell~bare
+    defaultOptions.["LINEBASE"] = accum + table~first + cell~top - 1
+    -- (a copy: a block that is not Rexx gets its source= file in place)
+    new = FencedCode( filename, bare~copy, defaultStyle, defaultOptions. )
+    If new~makeString("L", "0a"x) == bare~makeString("L", "0a"x) Then Iterate
+    cell~setBare( new )
+    changed = 1
+  End
+  defaultOptions.["LINEBASE"] = base
+  defaultOptions.["PAGEPENS"] = pens
+  defaultOptions.["INCELL"]   = inCell
+  Return changed
 
 --------------------------------------------------------------------------------
 -- ScanProseMentions -- Highlight `x`{.rexx ...} mentions in a line of prose  --
@@ -465,6 +628,90 @@ MissingEndMarker:
 -- A line with no backtick is returned unchanged without further scanning.
 
 --------------------------------------------------------------------------------
+-- KeywordSpans -- [WORD]{.kw} is `WORD`{.rexx keyword}                       --
+--                                                                            --
+-- A book converted from a word processor marks its keywords as spans,        --
+-- [USE]{.kw} (Rony's, 25/10/2026: the ODT had them on a coloured ground).    --
+-- RexxPub takes the class to mean what it says: a Rexx keyword, highlighted  --
+-- as the style highlights keywords, as a mention of it would be. A footnote  --
+-- inside the span ([IF[^n9]]{.kw}) goes after the mention. A span that holds --
+-- anything else than words and notes (emphasis, code, a link) is left as it  --
+-- is, and so is anything inside a code span (`[USE]{.kw}`, written as an     --
+-- example of the markup).                                                    --
+--------------------------------------------------------------------------------
+
+::Routine KeywordSpans Private
+  Use Strict Arg line
+  out  = ""
+  rest = line
+  Loop While rest \== ""
+    tick = rest~pos("`")
+    If tick == 0 Then Do
+      out ||= KeywordSpansIn( rest )
+      Leave
+    End
+    out ||= KeywordSpansIn( Left(rest, tick - 1) )
+    rest = SubStr(rest, tick)
+    -- A code span: a run of backticks, up to the next run of the same length
+    open = Strip(rest, "L", "`")
+    n    = Length(rest) - Length(open)
+    run  = Copies("`", n)
+    p = 1
+    Loop
+      q = Pos(run, open, p)
+      If q == 0 Then Leave
+      If SubStr(open, q + n, 1) \== "`", (q == 1 | SubStr(open, q - 1, 1) \== "`") Then Leave
+      p = q + 1
+    End
+    If q == 0 Then Do                     -- no closing run: they are text
+      out ||= run
+      rest = open
+      Iterate
+    End
+    out ||= run || Left(open, q + n - 1)
+    rest = SubStr(open, q + n)
+  End
+  Return out
+
+::Routine KeywordSpansIn Private
+  Use Strict Arg text
+  out = ""
+  Loop
+    p = text~pos("]{.kw}")
+    If p == 0 Then Leave
+    -- The "[" that opens it: brackets pair up ([IF[^n9]])
+    depth = 1
+    Do s = p - 1 To 1 By -1
+      c = text[s]
+      If c == "]" Then depth += 1
+      Else If c == "[" Then depth -= 1
+      If depth == 0 Then Leave
+    End
+    whole = p + Length("]{.kw}")
+    If depth \== 0 | s < 1 Then Do
+      out ||= Left(text, whole - 1)
+      text = SubStr(text, whole)
+      Iterate
+    End
+    inside = SubStr(text, s + 1, p - s - 1)
+    -- The notes, out
+    notes = ""
+    Loop While inside~pos("[^") > 0
+      Parse Var inside before "[^" label "]" after
+      notes ||= "[^"label"]"
+      inside = before || after
+    End
+    If inside == "" | inside~verify("[]`*_\<>{}", "M") > 0 Then Do
+      out ||= Left(text, whole - 1)
+      text = SubStr(text, whole)
+      Iterate
+    End
+    out ||= Left(text, s - 1) || "`"inside"`{.rexx keyword}" || notes
+    text = SubStr(text, whole)
+  End
+  Return out || text
+
+--------------------------------------------------------------------------------
 -- RawInline -- hand a mention's HTML to Pandoc as a raw inline               --
 --                                                                            --
 -- A mention's HTML goes back into a line of MARKDOWN, and Pandoc reads the   --
@@ -500,6 +747,7 @@ MissingEndMarker:
 ::Routine ScanProseMentions Private
   Use Strict Arg line, HTMLClass, style, proseOptions.
 
+  If line~contains("]{.kw}") Then line = KeywordSpans( line )
   If \line~contains("`") Then Return line
 
   out  = ""
@@ -1653,6 +1901,7 @@ Syntax:
   Options.patch       = ""              -- No patch file by default
   Options.["CAPTION"] = ""              -- No caption by default
   Options.["SPOT"]    = ""              -- No spotlight beats by default
+  Options.["DRESS"]   = ""              -- No ground or frame of its own
   Options.html        = 1               -- This is HTML highlighting
   Options.startFrom   = 1               -- Start at line 1
 
@@ -1664,8 +1913,8 @@ Syntax:
   -- ("rexx {...}"), but the prose-mention facade passes the bare options
   -- ("{...}"). Detect and skip the language word only when it is actually
   -- there; otherwise the string already starts at the options.
-  If      options~startsWith("rexx")     Then options = Strip( SubStr(options,5) )
-  Else If options~startsWith("executor") Then options = Strip( SubStr(options,9) )
+  If      options~caselessStartsWith("rexx")     Then options = Strip( SubStr(options,5) )
+  Else If options~caselessStartsWith("executor") Then options = Strip( SubStr(options,9) )
   Else                                        options = Strip( options )
 
   -- No options? We are done
@@ -1686,7 +1935,10 @@ Syntax:
       If """'"~contains( c ) Then Do -- Values between quotes
         Parse Value value options With (c)value(c) options
       End
-      lOption = Lower( option )
+      -- A dash is as good as a capital: start-from= is startFrom=, as
+      -- .number-lines is .numberLines (Rony, 18/10/2026: start-from= stopped
+      -- md2pdf). Keep FenceKeyIsKnown, below, doing the same.
+      lOption = Lower( option )~changeStr("-", "")
       Select Case lOption
         When "extraletters" Then Options.extraletters = value
         When "classprefix"  Then Options.classprefix  = value
@@ -1710,6 +1962,18 @@ Syntax:
         -- text), which never pass through this routine, so ONE parser at the
         -- far end is the only way both kinds can behave alike.
         When "spot"         Then Options.["SPOT"]     = value
+        -- The ground and the frame of the block (Rony, 25/10/2026), as on any
+        -- other fence: not interpreted here either. They go to the HTML as
+        -- data-rx-NAME, where the pipelines read them with the YAML's
+        -- (rexxpub: blocks:), and a bad value is said there.
+        When "background", "border", "borderwidth", "bordercolor" Then Do
+          name = lOption
+          If name~startsWith("border"), name \== "border" Then
+            name = "border-"SubStr(name, 7)      -- border-width, border-color
+          value = value~changeStr("&", "&amp;")~changeStr('"', "&quot;") -
+            ~changeStr("<", "&lt;")
+          Options.["DRESS"] ||= " data-rx-"name'="'value'"'
+        End
         When "doccomments"  Then
           Select Case Lower(value)
             When "detailed", "block"       Then Options.doccomments   = Lower(value)
@@ -1755,7 +2019,10 @@ Syntax:
       End
     End
     Else Do -- Options does not contain "="
-      Select Case option
+      -- A word is caseless too, as in Rexx (Rony, 27/10/2026): .numberlines,
+      -- .NumberLines and .number-lines are .numberLines. Only inside a Rexx
+      -- fence: what Pandoc and CSS read keeps its case (see NearMisses.cls).
+      Select Case Lower( option )
         When "unicode", "tutor"              Then Options.unicode      = .True
         When "experimental"                  Then Options.experimental = .True
         When "executor"                      Then Options.executor     = .True
@@ -1763,7 +2030,7 @@ Syntax:
           Options.cms      = .True
           Options.cmslevel = 3
         End
-        When ".numberLines", ".number-lines" Then Options.numberLines  = .True
+        When ".numberlines", ".number-lines" Then Options.numberLines  = .True
         -- The bare form is the default granularity. It is spelled with a dot
         -- as well because the very same word has to work on a fence Pandoc
         -- handles (~~~output {.blanks}), where it arrives as a CSS class: the
@@ -1789,6 +2056,23 @@ BadOptions:
   Raise Syntax 88.900 Additional("Invalid options '"options"'")
 
 --------------------------------------------------------------------------------
+-- FenceOptions - ParseOptions for the fence at line `lineNo` of `filename`:  --
+-- an error in the options says where the fence is. "Invalid option          --
+-- 'start-from'" alone left the author to search the document for it.        --
+--------------------------------------------------------------------------------
+
+::Routine FenceOptions Private
+  Use Strict Arg filename, attributes, defaultStyle, lineNo, fence
+  Signal On Syntax
+  Return ParseOptions( filename, attributes, defaultStyle )
+Syntax:
+  co = Condition("O")
+  If co~code \== "88.900" Then Raise Propagate
+  what = co~additional~lastItem
+  Raise Syntax 88.900 Additional( what "in the code block at line" lineNo -
+    "of" filename": '"Strip(fence)"'" )
+
+--------------------------------------------------------------------------------
 -- FenceWordIsKnown - is `word`, a lone word (no "=") inside the braces of a  --
 -- ```rexx or ```executor fence, one that ParseOptions acts on?               --
 --                                                                            --
@@ -1796,15 +2080,65 @@ BadOptions:
 -- the highlighter, not by Pandoc, so a class such as `.fragment` never       --
 -- reaches the HTML. What such a word would have meant depends on the         --
 -- pipeline, and so does whether to tell the author: md2slides does           --
--- (WarnFenceWords), because its classes animate. Same strict comparison as   --
--- the Select in ParseOptions: `.NumberLines` is not `.numberLines`.          --
+-- (WarnFenceWords), because its classes animate. Caseless, as the Select in --
+-- ParseOptions: `.NumberLines` is `.numberLines` (Rony, 27/10/2026).         --
 --------------------------------------------------------------------------------
 
 ::Routine FenceWordIsKnown Public
   Use Strict Arg word
   known = "unicode tutor experimental executor cms rexxvm" -
-          ".numberLines .number-lines .blanks blanks"
-  Return WordPos(word, known) > 0
+          ".numberlines .number-lines .blanks blanks"
+  Return WordPos(Lower(word), known) > 0
+
+--------------------------------------------------------------------------------
+-- CanonicalRexxFences - the source with the language word of every Rexx      --
+-- fence in lower case: ```REXX and ~~~Executor {...} are ```rexx and         --
+-- ~~~executor {...}. A Rexx fence is caseless, as Rexx is (Rony, 27/10/2026), --
+-- and everything that reads the Markdown after this (here, md2slides, the    --
+-- filters) then knows one spelling. Lines inside other fences are code, and  --
+-- are left alone. Nothing moves; a source with nothing to change is the     --
+-- same array.                                                                --
+--------------------------------------------------------------------------------
+
+::Routine CanonicalRexxFences Public
+  Use Strict Arg source
+
+  tab    = "09"x
+  marker = ""                                 -- the fence we are in, if any
+  copied = .False
+  Do i = 1 To source~items
+    line = source[i]
+    If marker \== "" Then Do
+      If Strip( Strip(line, "T"), "Leading" ) == marker Then marker = ""
+      Iterate
+    End
+    at = Verify(line, " ")
+    If at == 0 Then Iterate
+    If SubStr(line, at, 3) \== "```", SubStr(line, at, 3) \== "~~~" Then Do
+      p = FenceMarkerPrefix( line )
+      If p == 0 Then Iterate
+      at = p + 1
+    End
+    char = SubStr(line, at, 1)
+    info = Strip( SubStr(line, at), "Leading", char )
+    run  = Length( SubStr(line, at) ) - Length(info)
+    If char == "`", info~pos("`") > 0 Then Iterate   -- inline code, not a fence
+    blanks = Length(info) - Length( Strip(info, "Leading") )
+    info   = Strip( info, "Leading" )
+    word   = info
+    e = Verify( word, " {"tab, "M" )
+    If e > 0 Then word = Left( word, e - 1 )
+    If WordPos( Lower(word), "rexx executor" ) > 0, word \== Lower(word) Then Do
+      If \copied Then Do
+        source = source~copy
+        copied = .True
+      End
+      w = at + run + blanks
+      source[i] = Left(line, w - 1) || Lower(word) || SubStr(line, w + Length(word))
+    End
+    marker = Copies(char, run)
+  End
+  Return source
 
 --------------------------------------------------------------------------------
 -- FenceKeyIsKnown - is `key`, the name of a key=value option on a ```rexx    --
@@ -1820,8 +2154,9 @@ BadOptions:
   Use Strict Arg key
   known = "extraletters classprefix startfrom source pad numberwidth" -
           "patchfile patch style size caption spot doccomments operator" -
-          "special constant assignment blanks program"
-  Return WordPos(Lower(key), known) > 0
+          "special constant assignment blanks program" -
+          "background border borderwidth bordercolor"
+  Return WordPos(Lower(key)~changeStr("-", ""), known) > 0
 
 --------------------------------------------------------------------------------
 -- ProcessACodeBlock                                                          --
@@ -1948,7 +2283,8 @@ Syntax:
 -- fence is returned unchanged, and nothing above ever runs.
 --------------------------------------------------------------------------------
 ::Routine ProcessPrograms Private
-  Use Strict Arg filename, source, defaultStyle, defaultOptions., continue, blocks.
+  Use Strict Arg filename, source, defaultStyle, defaultOptions., continue, blocks., -
+    pagePens = ""
 
   -- Locate every rexx/executor fence carrying program=, grouped by key in
   -- first-seen order.
@@ -2014,6 +2350,8 @@ Syntax:
 
   If order~items == 0 Then Return source    -- no programs: no-op
 
+  staticSpots = defaultOptions.["STATICSPOTS"] == 1
+
   -- One program at a time: build it, highlight it whole, cut it cold.
   Do key Over order
     frags = groups.key
@@ -2035,7 +2373,7 @@ Syntax:
       Else
         attributes = prefix"{"defaultOptions.default rest
     End
-    options. = ParseOptions( filename, attributes, defaultStyle )
+    options. = FenceOptions( filename, attributes, defaultStyle, mStart, source[mStart] )
     If executor Then Options.["EXECUTOR"] = 1
     If continue Then Options.["CONTINUE"] = 1
 
@@ -2051,6 +2389,24 @@ Syntax:
     End
 
     pieces = CutProgramBlocks( highlighted, seams, options. )
+
+    -- spot= on a program. The first fence's governs the whole program, its
+    -- lines numbered as the program's: every piece carries it, and shows the
+    -- marks that fall on its own lines. A later fence's spot= is added to it
+    -- for that piece only (same names, same beats). When the pipeline asks
+    -- (STATICSPOTS), the marks are drawn on each piece here, as StaticSpots
+    -- does for a lone fence; md2slides lights them from data-spot.
+    masterSpot = options.["SPOT"]
+    If masterSpot == 0 Then masterSpot = ""
+    Do k = 1 To pieces~items
+      spec = masterSpot
+      If k > 1, k <= frags~items Then
+        spec = Strip( spec SpotValue( FenceAttributes( source[ frags[k][1] ] ) ) )
+      If spec \== masterSpot Then pieces[k] = WithSpot( pieces[k], spec )
+      If staticSpots, spec \== "" Then
+        pieces[k] = StaticSpots( pieces[k], spec, pagePens )
+    End
+
     Do k = 1 To pieces~items
       blocks.[key":"k] = pieces[k]
       blocks.!count    = blocks.!count + 1
@@ -2181,6 +2537,97 @@ Syntax:
   Return val
 
 --------------------------------------------------------------------------------
+-- PageBeatPens - the pens of the beats of a page (Spots.cls, PagePens): the
+-- spot= of every fence that has one, Rexx or not (output, python...), in the
+-- order of the page. The CGI, md2html, md2pdf, md2epub and md2latex hand the
+-- same string to their Lua filters (REXXPUB_BEAT_PENS), which mark the blocks
+-- that are not Rexx, so that a beat has one colour on the whole page (v380).
+-- A fence inside a cell of a grid table is not seen: its beats, if new, take
+-- the pen of their place in their block, as before.
+--------------------------------------------------------------------------------
+::Routine PageBeatPens Public
+  Use Strict Arg source
+  specs = .Array~new
+  open  = ""
+  Do line Over source
+    pre = FenceMarkerPrefix( line )
+    If pre > 0 Then s = Strip( SubStr(line, pre + 1), "Leading" )
+    Else            s = Strip( line, "Leading" )
+    c = s[1]
+    If c \== "`", c \== "~" Then Iterate
+    run = Verify( s, c ) - 1
+    If run < 0 Then run = Length(s)
+    If run < 3 Then Iterate
+    If open \== "" Then Do
+      If c == open[1], run >= Length(open), Strip(s) == Copies(c, run) Then
+        open = ""
+      Iterate
+    End
+    open = Copies(c, run)
+    spec = SpotValue( FenceAttributes( s ) )
+    If spec \== "" Then specs~append( spec )
+  End
+  Return PagePens( specs )
+
+--------------------------------------------------------------------------------
+-- SpotValue - the value of spot= in a fence's attribute string, or "". Read
+-- as ProgramName reads program=: a quoted value to its matching quote (so
+-- spot='a:["x"]' keeps its double quotes), an unquoted one to the first
+-- blank, tab or "}". Only a spot= that starts an attribute: not data-spot=.
+--------------------------------------------------------------------------------
+::Routine SpotValue Private
+  Use Strict Arg attrs
+  p = 0
+  Loop
+    p = attrs~caselessPos("spot=", p + 1)
+    If p == 0 Then Return ""
+    If p == 1 Then Leave
+    If Pos( attrs[p - 1], " {"||"09"x ) > 0 Then Leave
+  End
+  rest = SubStr(attrs, p + 5)
+  If rest == "" Then Return ""
+  q = rest[1]
+  If q == '"' | q == "'" Then Do
+    body = SubStr(rest, 2)
+    e    = body~pos(q)
+    If e == 0 Then Return Strip(body)
+    Return SubStr(body, 1, e - 1)
+  End
+  val = ""
+  Do i = 1 To Length(rest)
+    c = rest[i]
+    If c == " " | c == "}" | c == "09"x Then Leave
+    val ||= c
+  End
+  Return val
+
+--------------------------------------------------------------------------------
+-- WithSpot - a piece of a program= listing with `spec` as its data-spot, in
+-- place of the first fence's (or added, if that one had none). The value is
+-- written as the driver writes it (see AttrText in HTML.Driver.cls).
+--------------------------------------------------------------------------------
+::Routine WithSpot Private
+  Use Strict Arg piece, spec
+  value = spec~changeStr("&", "&amp;")~changeStr('"', "&quot;") -
+              ~changeStr("<", "&lt;")~changeStr(">", "&gt;")
+  Do i = 1 To piece~items
+    line = piece[i]
+    w = line~pos(' rx-blockwrap"')
+    If w == 0 Then Iterate
+    e = line~pos(">", w)
+    If e == 0 Then Return piece
+    tag = Left(line, e - 1)
+    d = tag~pos(' data-spot="')
+    If d > 0 Then Do
+      c = tag~pos('"', d + 12)
+      tag = Left(tag, d - 1) || SubStr(tag, c + 1)
+    End
+    piece[i] = tag' data-spot="'value'"' || SubStr(line, e)
+    Return piece
+  End
+  Return piece
+
+--------------------------------------------------------------------------------
 -- ProgramKey - the grouping key derived from an as-is program= value.
 -- Fences whose as-is names normalise to the same key are ONE logical program.
 -- Rule (Rexx symbol semantics): any run of blanks and/or dashes collapses to
@@ -2254,7 +2701,8 @@ Syntax:
 --
 --   * THE LINE COUNTER. Continuous numbering across the seams used to be a
 --     side effect of reopening the block. Here each slice states its own
---     origin: "counter-reset: rx-line <first line number> - 1" on its <code>.
+--     origin: "--rx-start: <first line number> - 1" on its <code> (the
+--     stylesheet resets the counter to var(--rx-start, 0)).
 --     Slice 1 restates what the driver already emitted (the author's
 --     startFrom), so it comes out byte-identical.
 --   * THE BLOCK ID. One emitted block carries one id, and a document may not
@@ -2397,7 +2845,7 @@ Syntax:
   e = chrome~pos(">", c)
   If e == 0 Then Return chrome
   If Options.numberLines, firstNum \= 1 Then
-    codeTag = '<code style="counter-reset: rx-line 'firstNum - 1';">'
+    codeTag = '<code style="--rx-start: 'firstNum - 1';">'
   Else codeTag = '<code>'
   Return Left(chrome, c - 1) || codeTag || SubStr(chrome, e + 1)
 
@@ -2437,3 +2885,66 @@ Syntax:
     out~append( line )
   End
   Return out
+
+--------------------------------------------------------------------------------
+-- InlineSourceFile -- a block that is not Rexx, with source=FILE: the lines  --
+-- of FILE (relative to the Markdown file) take the place of the block's own, --
+-- and the fence is made longer if FILE has a run of its marker as long. In a --
+-- list item, the lines keep the item's indentation. The attribute stays (the --
+-- HTML shows it as data-source; md2latex reads the same file). Returns how   --
+-- many lines the source array has grown by (or shrunk, if negative). A file  --
+-- that is not there leaves the block as it was.                              --
+--------------------------------------------------------------------------------
+
+::Routine InlineSourceFile
+  Use Strict Arg filename, source, opening, closing, indent, char, chars, attributes
+
+  p = attributes~pos("source=")
+  If p == 0 Then Return 0
+  value = SubStr(attributes, p + Length("source="))
+  If value[1] == '"' | value[1] == "'" Then Parse Var value q +1 value (q) .
+  Else Do
+    e = Verify(value, " }", "M")
+    If e > 0 Then value = Left(value, e - 1)
+  End
+  If value == "" Then Return 0
+
+  If value[1] == "/" | value[1] == "\" | SubStr(value, 2, 1) == ":" Then file = value
+  Else file = .File~new( filename )~parent || .File~separator || value
+  If \SysFileExists( file ) Then Return 0
+
+  chars_ = CharIn( file, 1, Chars(file) )
+  Call Stream file, "C", "Close"
+  chars_ = chars_~changeStr("0d0a"x, "0a"x)
+  If chars_~endsWith("0a"x) Then chars_ = Left(chars_, Length(chars_) - 1)
+  If chars_ == "" Then lines = .Array~new
+  Else lines = chars_~makeArray("0a"x)
+
+  -- A run of the marker in the file as long as the fence would close it
+  longest = chars
+  Do l Over lines
+    t = Strip( Strip(l, "Leading"), "Leading", "09"x )
+    If t[1] == char Then Do
+      run = Verify(t, char) - 1
+      If run < 0 Then run = Length(t)
+      longest = Max(longest, run + 1)
+    End
+  End
+  If longest > chars Then Do
+    first = source[opening]
+    at = first~pos( Copies(char, chars) )
+    source[opening] = Left(first, at - 1) || Copies(char, longest) || SubStr(first, at + chars)
+    last = source[closing]
+    at = last~pos( Copies(char, chars) )
+    source[closing] = Left(last, at - 1) || Copies(char, longest) || SubStr(last, at + chars)
+  End
+
+  pad = Copies(" ", indent)
+  old = closing - opening - 1
+  Do old
+    source~delete( opening + 1 )
+  End
+  Do i = lines~items To 1 By -1
+    source~insert( pad || lines[i], opening )
+  End
+  Return lines~items - old

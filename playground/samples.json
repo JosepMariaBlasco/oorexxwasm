@@ -7,7 +7,7 @@
     "libs": "Extension classes & files",
     "jdor": "Drawing (JDOR)",
     "js": "JavaScript & the page",
-    "dom": "The page, the classic way (ADDRESS)",
+    "dom": "The page, the classic way (ADDRESS, example environments)",
     "bench": "Benchmark"
   },
   "samples": [

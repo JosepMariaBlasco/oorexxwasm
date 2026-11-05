@@ -23,6 +23,8 @@
 /* 20260923    0.7  STRIP: the ooRexx third argument is a character set (ANY) */
 /* 20260924         VAR: the argument is rANY, not rSYM (ooRexx returns 0     */
 /*                  for a non-symbol, it does not raise an error).            */
+/* 20261105         ooRexx r13363: BIF argument errors are now 40.x, not      */
+/*                  93.x (ooRexx bug 2136).                                   */
 /*                                                                            */
 /******************************************************************************/
 
@@ -167,7 +169,7 @@
   BIFARGS.ERRORTEXT    = "r0_99"
   BIFARGS.FILESPEC     = "rDELNP rANY"
   BIFARGS.GC           = "oF"
-  -- INSERT: ooRexx bug 2012 fixed in r13112. Arg(3) error is now 93.906.
+  -- INSERT: ooRexx bug 2012 fixed in r13112. Arg(3) error is now 40.013.
   BIFARGS.INSERT       = "rANY rANY oWHOLE>=0 oLENGTH oPAD"
   BIFARGS.LASTPOS      = "rANY rANY oPOS oLENGTH"
   BIFARGS.LEFT         = "rANY rLENGTH oPAD"
@@ -342,11 +344,8 @@ If .rxcheck.debug = 1 Then Trace ?a
   Do argN = 1 To checkUpTo
     missing = argN
     If arguments~arg(argN,"O") Then
-      If WordPos(BIFName,"MAX MIN") > 0 Then
-        If argN == 1      Then Signal 40.005
-        Else                   Signal 93.903
-      Else If \asExternal Then Signal 40.005
-      Else                     Signal 88.901
+      If \asExternal Then Signal 40.005
+      Else                Signal 88.901
   End
 
   -- Now check statically specified arguments against their declared types
@@ -418,7 +417,7 @@ If .rxcheck.debug = 1 Then Trace ?a
       End
       When "ABILMNOSUVWX9", "BLT", "MN" Then Do
         letter = Left(value, 1)
-        If Pos(Upper(letter), type) == 0 Then Signal 93.915
+        If Pos(Upper(letter), type) == 0 Then Signal 40.904
       End
       When "WHOLE", "D2WHOLE", "D2WHOLE>=0" Then Do
         If BIFName == "RANDOM" Then Do
@@ -439,8 +438,8 @@ If .rxcheck.debug = 1 Then Trace ?a
         Select Case Type
           When "LENGTH"   Then If value <  0 Then
             If WordPos(BIFName, "CHARIN") > 0 Then Nop -- See bug 2011
-            Else                                   Signal 93.923
-          When "POS"      Then If value <= 0 Then  Signal 93.924
+            Else                                   Signal 40.013
+          When "POS"      Then If value <= 0 Then  Signal 40.014
           When "WHOLE>0"  Then Do
             If BIFName == "BEEP" Then Do
               name = "frequency"
@@ -462,16 +461,14 @@ If .rxcheck.debug = 1 Then Trace ?a
             End
             Else If value <  0 Then Do
               If BIFName == "RANDOM"                                   Then Signal 40.013
-              If WordPos(BIFName, "CHANGESTR COPIES FORMAT INSERT TRUNC") > 0 Then Signal 93.906 -- See bugs 2010, 2012
+              If WordPos(BIFName, "CHANGESTR COPIES FORMAT INSERT TRUNC") > 0 Then Signal 40.013 -- See bugs 2010, 2012
             End
             Else If BIFName == "RANDOM", value > 999999999             Then Signal 40.013
           End
         End
       End
       When "NUM" Then Do
-        If \DataType(value,"Number")   Then
-          If argN > 1, WordPos(BIFName, "MAX MIN") > 0 Then Signal 93.904
-          Else                                              Signal 93.943
+        If \DataType(value,"Number")   Then Signal 40.011
       End
       When "XRANGE" Then Do
         If Length(value) > 1, -
@@ -543,6 +540,9 @@ Return
 -- Missing argument in invocation of &1; argument &2 is required.
 40.005: Syntax( 40.005, label, BIFName, argN )
 
+-- &1 argument &2 must be a number; found "&3".
+40.011: Syntax( 40.011, label, BIFName, argN, value )
+
 -- &1 argument &2 must be a whole number; found "&3".
 40.012: Syntax( 40.012, label, BIFName, argN, value )
 
@@ -576,26 +576,8 @@ Return
 -- Too many arguments in invocation; &1 expected.
 88.922: Syntax( 88.922, label, maxArgs )
 
--- Missing argument in method; argument &1 is required.
-93.903: Syntax( 93.903, label, argN-2 )
-
--- Method argument &1 must be a number; found "&2".
-93.904: Syntax( 93.904, label, argN-1, value )
-
--- Method argument &1 must be zero or a positive whole number; found "&2".
-93.906: Syntax( 93.906, label, argN-1, value )
-
 -- Method argument &1 must be a positive whole number; found "&2".
 93.907: Syntax( 93.907, label, argN-1, value )
-
--- Method option must be one of "&1"; found "&2".
-93.915: Syntax( 93.915, label, type, letter )
-
--- Invalid length argument specified; found "&1".
-93.923: Syntax( 93.923, label, value )
-
--- Invalid position argument specified; found "&1".
-93.924: Syntax( 93.924, label, value )
 
 -- Length must be specified to convert a negative value.
 93.927: Syntax( 93.927, label  )
@@ -617,9 +599,6 @@ Return
 
 -- Only 0, 1, and whitespace characters are valid in a binary string; character found "&1".
 93.934: Syntax( 93.934, label, char  )
-
--- &1 method target must be a number; found "&2".
-93.943: Syntax( 93.943, label, BIFName, value )
 
 -- Hexadecimal strings must be grouped in units that are multiples of two characters.
 93.976: Syntax( 93.976, label )

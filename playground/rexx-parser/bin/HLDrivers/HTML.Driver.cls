@@ -21,6 +21,10 @@
 /* 20260310    0.5  Implement captions                                        */
 /* 20260709    0.6  Mark explicit styles (for RexxHTTP)                       */
 /* 20260831         Add ProseMention -- the inline micro-container for        */
+/* 20261018         startFrom: "--rx-start: N" inline, not "counter-reset"    */
+/*                  (paged.js numbered startFrom=100 from 10)                 */
+/* 20261020         blanks=: one span per blank (borders print; gradients no) */
+/* 20261025         background=, border=...: data-rx-NAME on the wrapper      */
 /*                                                                            */
 /******************************************************************************/
 
@@ -67,6 +71,12 @@ If \.environment~hasIndex( HTML.Highlighter ) Then
     spotAttr = ' data-spot="'AttrText(Options.["SPOT"])'"'
   Else spotAttr = ""
 
+  /* The ground and the frame the author asked for (background=, border=,    */
+  /* border-width=, border-color=), as data-rx-NAME: the pipelines read them */
+  /* with the defaults of the YAML (rexxpub: blocks:).                       */
+  dressAttr = Options.["DRESS"]
+  If dressAttr == 0 Then dressAttr = ""
+
   /* Mark blocks whose style the author fixed via style=, so a downstream     */
   /* client-side style chooser can leave them alone (it only restyles         */
   /* blocks that did not declare a style).                                    */
@@ -89,7 +99,7 @@ If \.environment~hasIndex( HTML.Highlighter ) Then
   /* "blockwrap", not "block": "rx-block" is the taken-constant class of a    */
   /* block-instruction name (DO/LOOP/SELECT), a distinct, long-standing use.) */
   divTag = '<div class="highlight-rexx-'style' rx-blockwrap" id="'blockID'"' -
-           || captionAttr || lockAttr || spotAttr || '>'
+           || captionAttr || lockAttr || spotAttr || dressAttr || '>'
 
   -- No patch? A simple div will do.
   If patch == .Nil Then Do
@@ -159,10 +169,14 @@ If \.environment~hasIndex( HTML.Highlighter ) Then
   self~emit( '<pre'size||preClass'>' )
 
   /* One <code> for the whole block (not one per line). A block that does     */
-  /* not start at line 1 seeds the line counter here, inline: the stylesheet  */
-  /* resets the counter to zero and this overrides it for this block only.    */
+  /* not start at line 1 says where its counter starts, inline, in            */
+  /* --rx-start: the stylesheet resets the counter to var(--rx-start, 0).     */
+  /* Not "counter-reset" inline: paged.js (md2pdf) does not read inline       */
+  /* styles; it turns the stylesheet's reset into a negative increment, and   */
+  /* an inline reset was then counted twice (startFrom=100 numbered 10...).   */
+  /* paged.js does read a var() in a reset from the element's inline style.   */
   If Options.numberLines, Options.startFrom \= 1 Then
-    codeStyle = ' style="counter-reset: rx-line 'Options.startFrom - 1';"'
+    codeStyle = ' style="--rx-start: 'Options.startFrom - 1';"'
   Else codeStyle = ""
 
   self~emit( '<code'codeStyle'>' )
@@ -392,12 +406,13 @@ If \.environment~hasIndex( HTML.Highlighter ) Then
       rest = rest~substr(2)
       Iterate
     End
-    -- The whole run travels in ONE span: the stylesheet tiles the mark per
-    -- character cell, so a run of three blanks draws three boxes without
-    -- three spans to do it.
+    -- One span per blank: the stylesheet draws its box with borders, which
+    -- print as they show. It used to be one span per run, the mark tiled by
+    -- gradients, and Chromium and Firefox print those wrong: a tick or the
+    -- bar lost, or a block (Rony, 19/10/2026, a test on paper).
     n = Verify(rest, " ", "N")
     If n == 0 Then n = rest~length + 1
-    out  = out || open || Copies(" ", n - 1) || '</span>'
+    out  = out || Copies(open" </span>", n - 1)
     rest = rest~substr(n)
   End
 

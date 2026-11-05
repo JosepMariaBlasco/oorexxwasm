@@ -18,6 +18,7 @@
 /* 20250222    0.2  Add drive to path for requires                            */
 /* 20250328         Main dir is now rexx-parser instead of rexx[.]parser      */
 /* 20250622    0.2d Change fg/bg char separator to ":"                        */
+/* 20261031         tags2highlight: underline is 2 when dotted ("D")          */
 /*                                                                            */
 /******************************************************************************/
 
@@ -170,6 +171,7 @@ End
       When "I" Then italic    = .True
       When "i" Then italic    = .False
       When "U" Then underline = .True
+      When "D" Then underline = 2           -- dotted (an ANSI line is a line)
       When "u" Then underline = .False
       Otherwise Nop
     End

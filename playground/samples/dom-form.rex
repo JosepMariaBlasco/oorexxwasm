@@ -5,6 +5,13 @@
 /* need no quotes; quoted is what Rexx must not touch: values with blanks   */
 /* or lower case, the names of variables (after INTO and FROM), and words   */
 /* that are also variables (so no variable here is called text or value).   */
+/*                                                                          */
+/* ADDRESS DOM and ADDRESS FETCH are example command environments, not part */
+/* of ooRexx: a sketch of what the browser could offer to classic Rexx,     */
+/* with no documentation, as they are no more than proofs of concept.       */
+/* Both are written in Rexx itself, as subclasses of ooRexx's               */
+/* .CommandHandler (dom.cls, fetch.cls): a command environment can be a     */
+/* Rexx class.                                                              */
 address dom
 NEW '"Sign up"'
 CREATE '- h3 "Rexx Symposium, sign-up"'

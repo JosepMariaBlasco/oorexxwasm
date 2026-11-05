@@ -18,6 +18,7 @@
 /* 20250105    0.1f Support style patches                                     */
 /* 20250328    0.2  Main dir is now rexx-parser instead of rexx[.]parser      */
 /* 20250622    0.2d Change fg/bg char separator to ":"                        */
+/* 20261031         A dotted underline ("D") is underlined                    */
 /*                                                                            */
 /******************************************************************************/
 
@@ -87,7 +88,7 @@ End
   command = ""
   If bold              Then command ||= "1;"
   If italic            Then command ||= "3;"
-  If underline         Then command ||= "4;"
+  If underline \== 0   Then command ||= "4;"
   If color      \== "" Then command ||= "38;2;"color2SGR(color)
   If background \== "" Then command ||= "48;2;"color2SGR(background)
 

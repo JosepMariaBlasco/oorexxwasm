@@ -18,6 +18,8 @@
 /* 20251226          Send error messages to .error, not .output               */
 /* 20260313    0.5   Add ReportParseError for pipeline error handling         */
 /* 20260930          Show the clause in error, not the whole line (issue #8)  */
+/* 20261018          IsAParseError: a FencedCode 88.900 (bad option...) is    */
+/*                   said in one line, without a traceback                    */
 /*                   Show the hint, when the error has one (issue #39)        */
 /*                                                                            */
 /******************************************************************************/
@@ -86,7 +88,21 @@
   additional = co~additional
 
   extra = additional~lastitem
-  If \extra~hasMethod("position") Then Return 0
+  If \extra~hasMethod("position") Then Do
+    -- Not a parse error, but maybe a mistake in the document that FencedCode
+    -- found: a bad option, a block with no end. That is the author's, not a
+    -- bug, and deserves a message, not a traceback (Rony, 18/10/2026).
+    If co~code \== "88.900" Then Return 0
+    If \co~program~caselessEndsWith("FencedCode.cls") Then Return 0
+   .Error~Say( "Error:" extra )
+    If itrace Then Do
+     .Error~Say
+     .Error~Say( "Trace follows:"         )
+     .Error~Say( Copies("-",80)           )
+     .Error~Say( co~stackFrames~makeArray )
+    End
+    Return 1
+  End
 
   line  = extra~position
   Parse Value co~code With major"."minor

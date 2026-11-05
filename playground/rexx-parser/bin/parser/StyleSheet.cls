@@ -29,6 +29,7 @@
 /*                                                                            */
 /* Stylesheets reside in the /css directory. Given a style name <style>,      */
 /* the corresponding stylesheet file is "/css/rexx-<style>.css".              */
+/* A style of the author's own lives in a file of theirs: see LocalStyle.     */
 /*                                                                            */
 /* Format of a stylesheet file                                                */
 /* ---------------------------                                                */
@@ -103,7 +104,8 @@
 /* + We cannot process function line constructs that use commas.              */
 /* + For 'font-style', we only support 'italic' and 'normal'.                 */
 /* + For 'font-weight', we only support 'bold' and 'normal'.                  */
-/* + For 'text-decoration', we only support 'underline' and 'none'.           */
+/* + For 'text-decoration', we only support 'underline', 'none', and a dotted */
+/*   underline ('underline dotted', with or without a colour), which is "D". */
 /* + For 'color' and 'background-color', we only support #rgb, #rgba,         */
 /*   #rrggbb, #rrggbbaa, or a named color.                                    */
 /*                                                                            */
@@ -112,8 +114,14 @@
 /* Date     Version Details                                                   */
 /* -------- ------- --------------------------------------------------------- */
 /* 20250623    0.2d First version                                             */
+/* 20261022         LocalStyle: a style in a file of the author's own;        */
+/*                  FlattenedCSS, for md2pdf and md2epub (Rony, 21-Oct)       */
+/* 20261031         A dotted underline, "D" (the directives, Rony, 31-Oct)    */
 /*                                                                            */
 /******************************************************************************/
+
+-- The styles of the author's own that LocalStyle has seen
+.context~package~local["CSS.LOCAL.NAMES"] = .Set~new
 
 ::Requires "HTMLColors.cls"
 
@@ -149,9 +157,13 @@
     style = Reverse(elyts)
   End
   Else Do
-     parse source . . thisPgm
-     pgmDir = filespec(location,thisPgm)
-     file = pgmDir"../../css/rexx-"style".css"
+     -- A style of the author's own (LocalStyle) is found where it was said
+     file = .context~package~local["CSS.FILE."style]
+     If file == .Nil Then Do
+       parse source . . thisPgm
+       pgmDir = filespec(location,thisPgm)
+       file = pgmDir"../../css/rexx-"style".css"
+     End
   End
 
   exists = Stream( file, "C", "Q Exists")
@@ -361,9 +373,13 @@
       End
       When "text-decoration" Then Do
         property = "underline"
-        Select Case value
-          When "underline" Then value = "U"
-          When "none"      Then value = "u"
+        Select
+          -- 'underline dotted #RRGGBBAA': the blanks are gone, and its colour
+          -- is the token's, half drawn, wherever it is drawn
+          When value~startsWith("underline"), value~pos("dotted") > 0 Then
+            value = "D"
+          When value == "underline" Then value = "U"
+          When value == "none"      Then value = "u"
           Otherwise
             newList~remove(i)
             Iterate -- We don't support other variants
@@ -602,6 +618,295 @@ Declarations: Procedure
   declaration = list
   declarations~append( Strip(declaration) )
 Return declarations
+
+/******************************************************************************/
+/* LOCALSTYLE                                                                 */
+/******************************************************************************/
+
+--- A style of the author's own, in a file of theirs (Rony, 21-Oct-2026: a
+--- variant of vim-light-zellner next to his book.md). "style:" in the YAML
+--- (or --style) names a shipped style, "vim-light-zellner", or a file:
+--- anything with a "/" or a "\", or ending in ".css". A relative path is
+--- relative to baseDir (the directory of the .md, or the current one for
+--- --style). The style's name is the one its rules carry, the first
+--- ".highlight-rexx-NAME" in the file, so a copy of a shipped sheet can be
+--- edited and used as it is, without renaming anything. From then on NAME
+--- is found in that file (GetHighlight), also when a shipped style has the
+--- same name: the author's wins.
+---
+--- @param value    What "style:" says.
+--- @param baseDir  Where a relative path starts.
+--- @return         .Nil when value is a name; an Array (name, file) when
+---                 it is a file with a style; otherwise, a String that
+---                 says what is wrong.
+---
+
+::Routine LocalStyle Public
+
+  Use Strict Arg value, baseDir
+
+  value = Strip(value)
+  If Pos("/", value) + Pos("\", value) == 0,                                -
+    \value~caselessEndsWith(".css") Then Return .Nil
+
+  file = value
+  If file[1] \== "/", file[1] \== "\", SubStr(file, 2, 1) \== ":" Then
+    file = Strip(Strip(baseDir, "T", "/"), "T", "\")"/"file
+  fileObj = .File~new(file)
+  If \fileObj~isFile Then Return "there is no such file ("file")"
+  file = fileObj~absolutePath
+
+  css = CharIn(file, 1, Chars(file))
+  Call Stream file, "C", "Close"
+  css = StrippedCSSComments(css)
+
+  marker = ".highlight-rexx-"
+  p = Pos(marker, css)
+  If p == 0 Then Return "it has no rule for a '"marker"NAME' class"
+  allowed = XRange("ALNUM")"-_"
+  name = SubStr(css, p + Length(marker))
+  e = Verify(name, allowed)
+  If e > 0 Then name = Left(name, e - 1)
+  If name == "" Then Return "it has no rule for a '"marker"NAME' class"
+
+  -- What GetHighlight knew of a style with that name is no longer true
+  local = .context~package~local
+  Do key Over local~allIndexes
+    If key~startsWith("CSS.STYLESHEET."name".") Then local~remove(key)
+  End
+  local["CSS.FILE."name] = file
+  local["CSS.LOCAL.NAMES"]~put(name)
+  Return .Array~of(name, file)
+
+--- The file of a style of the author's own (LocalStyle), or .Nil.
+::Routine LocalStyleFile Public
+  Use Strict Arg name
+  Return .context~package~local["CSS.FILE."name]
+
+--- The names of the styles of the author's own (LocalStyle), as an Array.
+::Routine LocalStyleNames Public
+  Return .context~package~local["CSS.LOCAL.NAMES"]~allIndexes
+
+--- The styles of the author's own are forgotten (md2html, md2pdf and md2epub
+--- do one .md after another: a file's local style is not the next one's).
+::Routine ForgetLocalStyles Public
+  local = .context~package~local
+  Do name Over local["CSS.LOCAL.NAMES"]
+    file = local["CSS.FILE."name]
+    local~remove("CSS.FILE."name)
+    -- What GetHighlight learned from that file goes with it
+    Do key Over local~allIndexes
+      If key~startsWith("CSS.STYLESHEET."name".") Then local~remove(key)
+    End
+    If file \== .Nil Then local~remove("CSS.STYLESHEET."file)
+  End
+  local["CSS.LOCAL.NAMES"] = .Set~new
+  Return
+
+/******************************************************************************/
+/* FLATTENEDCSS                                                               */
+/******************************************************************************/
+
+--- A nested stylesheet, flattened. paged.js (md2pdf) and the EPUB readers
+--- (md2epub) do not understand CSS nesting, so they get the sheets in
+--- css/flattened/; a sheet of the author's own (LocalStyle) is flattened
+--- here, when it is used.
+---
+---   .a { color: red; .b, &.c { x: y } }
+---
+--- becomes ".a { color: red; }", ".a .b, .a.c { x: y; }". A selector list
+--- is expanded selector by selector; "&" is the outer selector, and a
+--- selector without "&" is a descendant of it. Declarations keep their
+--- order: those after a nested rule go in a rule of their own, after it.
+--- @media, @supports, @container and @layer keep their place and get
+--- their contents flattened; other at-rules (@font-face, @page,
+--- @keyframes...) are copied as they are. Comments are left out.
+---
+--- @param css  The text of the sheet.
+--- @return     The text of the flattened sheet.
+---
+
+::Routine FlattenedCSS Public
+
+  Use Strict Arg css
+
+  s = .Directory~new
+  s~text = StrippedCSSComments(css)
+  s~pos  = 1
+  items  = CSSBlock(s)
+
+  out = .MutableBuffer~new
+  Call CSSEmit items, .Array~new, out
+  Return out~string
+
+-- The text, without its comments (not inside strings)
+::Routine StrippedCSSComments Public
+  Use Strict Arg css
+  out = .MutableBuffer~new
+  i = 1; n = Length(css)
+  Do While i <= n
+    c = css[i]
+    If c == '"' | c == "'" Then Do
+      j = i + 1
+      Do While j <= n, css[j] \== c
+        If css[j] == "\" Then j = j + 1
+        j = j + 1
+      End
+      out~append(SubStr(css, i, j - i + 1))
+      i = j + 1
+      Iterate
+    End
+    If c == "/", SubStr(css, i + 1, 1) == "*" Then Do
+      j = Pos("*/", css, i + 2)
+      If j == 0 Then Leave
+      out~append(" ")
+      i = j + 2
+      Iterate
+    End
+    out~append(c)
+    i = i + 1
+  End
+  Return out~string
+
+-- The items of a block, up to its "}" (or the end): declarations (Strings)
+-- and rules (Arrays: the selector or at-rule's prelude, and its items).
+-- At-rules without a block (@import, @charset) are kept as declarations.
+::Routine CSSBlock
+  Use Strict Arg s
+  text = s~text; n = Length(text)
+  items = .Array~new
+  buf = .MutableBuffer~new
+  depth = 0                                   -- parentheses
+  i = s~pos
+  Do While i <= n
+    c = text[i]
+    Select
+      When c == '"' | c == "'" Then Do
+        j = i + 1
+        Do While j <= n, text[j] \== c
+          If text[j] == "\" Then j = j + 1
+          j = j + 1
+        End
+        buf~append(SubStr(text, i, j - i + 1))
+        i = j + 1
+        Iterate
+      End
+      When c == "(" Then depth = depth + 1
+      When c == ")" Then depth = Max(0, depth - 1)
+      When c == ";", depth == 0 Then Do
+        decl = Space(Translate(buf~string, "  ", "0a0d"x))
+        If decl \== "" Then items~append(decl)
+        buf = .MutableBuffer~new
+        i = i + 1
+        Iterate
+      End
+      When c == "{", depth == 0 Then Do
+        prelude = Space(Translate(buf~string, "   ", "0a0d09"x))
+        buf = .MutableBuffer~new
+        s~pos = i + 1
+        inner = CSSBlock(s)
+        items~append(.Array~of(prelude, inner))
+        i = s~pos
+        Iterate
+      End
+      When c == "}", depth == 0 Then Do
+        decl = Space(Translate(buf~string, "  ", "0a0d"x))
+        If decl \== "" Then items~append(decl)
+        s~pos = i + 1
+        Return items
+      End
+      Otherwise Nop
+    End
+    buf~append(c)
+    i = i + 1
+  End
+  decl = Space(Translate(buf~string, "  ", "0a0d"x))
+  If decl \== "" Then items~append(decl)
+  s~pos = n + 1
+  Return items
+
+-- The flat rules of a block's items, inside the given selectors
+::Routine CSSEmit
+  Use Strict Arg items, parents, out
+  run = .Array~new
+  Do item Over items
+    If item~isA(.String) Then Do
+      run~append(item)
+      Iterate
+    End
+    Call CSSDeclarations run, parents, out
+    run = .Array~new
+    prelude = item[1]
+    If prelude[1] == "@" Then Do
+      Select Case Lower(Word(prelude, 1))
+        When "@media", "@supports", "@container", "@layer" Then Do
+          out~append(prelude" {"||"0a"x)
+          Call CSSEmit item[2], parents, out
+          out~append("}"||"0a"x)
+        End
+        Otherwise
+          out~append(prelude" {"||"0a"x, CSSVerbatim(item[2], "  "), "}"||"0a"x)
+      End
+      Iterate
+    End
+    Call CSSEmit item[2], CSSSelectors(parents, prelude), out
+  End
+  Call CSSDeclarations run, parents, out
+  Return
+
+-- A rule for a run of declarations
+::Routine CSSDeclarations
+  Use Strict Arg run, parents, out
+  If run~isEmpty Then Return
+  If parents~isEmpty Then Do                  -- outside any rule: as is
+    Do decl Over run
+      out~append(decl";"||"0a"x)
+    End
+    Return
+  End
+  out~append(parents~makeString("L", ", ")" {"||"0a"x)
+  Do decl Over run
+    out~append("  "decl";"||"0a"x)
+  End
+  out~append("}"||"0a"x)
+  Return
+
+-- The selectors of a nested rule: each of its own, inside each outer one
+::Routine CSSSelectors
+  Use Strict Arg parents, prelude
+  own = .Array~new
+  buf = ""; depth = 0
+  Do i = 1 To Length(prelude)
+    c = prelude[i]
+    If c == "(" Then depth = depth + 1
+    If c == ")" Then depth = depth - 1
+    If c == ",", depth == 0 Then Do
+      own~append(Strip(buf)); buf = ""
+      Iterate
+    End
+    buf = buf || c
+  End
+  own~append(Strip(buf))
+  If parents~isEmpty Then Return own
+  all = .Array~new
+  Do p Over parents
+    Do sel Over own
+      If Pos("&", sel) > 0 Then all~append(ChangeStr("&", sel, p))
+      Else                      all~append(p sel)
+    End
+  End
+  Return all
+
+-- An at-rule's block, as it was
+::Routine CSSVerbatim
+  Use Strict Arg items, indent
+  out = .MutableBuffer~new
+  Do item Over items
+    If item~isA(.String) Then out~append(indent || item";"||"0a"x)
+    Else out~append(indent || item[1]" {"||"0a"x,                           -
+      CSSVerbatim(item[2], indent"  "), indent"}"||"0a"x)
+  End
+  Return out~string
 
 /******************************************************************************/
 /* Utility routines                                                           */

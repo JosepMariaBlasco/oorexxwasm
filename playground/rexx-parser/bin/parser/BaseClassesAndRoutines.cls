@@ -46,6 +46,8 @@
 /* 20260930         Syntax: a clause that begins with an error of the scanner */
 /*                  ('"01 "x' as the first thing in the source) raised the    */
 /*                  error again and again (11.1)                              */
+/* 20261025         A continuation made the blank operator keeps              */
+/*                  ~continuation (Rony, 25-Oct)                              */
 /*                                                                            */
 /******************************************************************************/
 
@@ -786,6 +788,9 @@ Error:
         -- operator, and the rest stays whitespace (ignorable).
         If element < .EL.WHITESPACE, element~isA( .WhiteSpace.Element ) Then
           discard = element~splitAfterFirst
+        -- A continuation that is the blank operator too: it is still shown
+        -- as the continuation it is in the source (Element~continuation)
+        If element < .EL.CONTINUATION Then element~continuation = 1
         Call SetCategory element, .EL.OP.BLANK
         element~value = " "
       End

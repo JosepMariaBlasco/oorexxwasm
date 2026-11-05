@@ -2,6 +2,13 @@
 /* ADDRESS FETCH asks Open-Meteo.  Classic Rexx commands only: no objects,  */
 /* no JavaScript.  Type a city and press Enter (or the button); the cross   */
 /* in the title bar ends the program.                                       */
+/*                                                                          */
+/* ADDRESS DOM and ADDRESS FETCH are example command environments, not part */
+/* of ooRexx: a sketch of what the browser could offer to classic Rexx,     */
+/* with no documentation, as they are no more than proofs of concept.       */
+/* Both are written in Rexx itself, as subclasses of ooRexx's               */
+/* .CommandHandler (dom.cls, fetch.cls): a command environment can be a     */
+/* Rexx class.                                                              */
 address dom
 NEW '"Weather"' AS win
 CREATE '- h3 "Weather in any city"'

@@ -15,6 +15,12 @@
 /* Date     Version Details                                                   */
 /* -------- ------- --------------------------------------------------------- */
 /* 20260313    0.5   Created: refactor common code from CGI, md2pdf, md2html  */
+/* 20261018          css: (a sheet, several, or a YAML list) and margin:      */
+/*                   (Rony: a document's own sheet and margins, for md2pdf)   */
+/* 20261027          A value that should be one, and is a list or a block     */
+/*                   (style: {...}), is said and left out: md2slides died on  */
+/*                   it, and md2html called it 'a StringTable'                */
+/* 20261102          cover: and chapter-level: (md2epub's) are read           */
 /*                                                                            */
 /******************************************************************************/
 
@@ -76,6 +82,8 @@
   opts["language"]        = .Nil
   opts["outline"]         = .Nil
   opts["chapter"]         = .Nil
+  opts["css"]             = .Nil        -- .Nil, or an Array of names
+  opts["margin"]          = .Nil
 
   -- Language-dialect defaults (.Nil = "not set by YAML"). These are
   -- additive/monotonic: a dialect is enabled for a block if it is set
@@ -127,6 +135,16 @@ ConditionalCopyFrom: Procedure Expose opts prefix
   Use Arg table, key, lowerCase = 0, list = ""
   newValue = table[key]
   If newValue == .Nil Then Return
+  -- One value, not a list or a block: 'style: {.x}' is a block, and was
+  -- taken for a style called 'a StringTable' (md2slides died on it)
+  If \newValue~isA(.String) Then Do
+    name = key
+    If prefix \== "" Then name = prefix"s:" key
+    If newValue~isA(.Array) Then what = "a list"
+    Else                         what = "a block"
+   .Error~Say( "Warning: YAML 'rexxpub:" name":' is" what", not a value; ignored." )
+    Return
+  End
   If lowerCase Then newValue = Lower(newValue)
   If list \== "", WordPos(newValue, list) == 0 Then Return
   newKey = key
@@ -152,6 +170,32 @@ ReadRexxPubBlock: -- Read rexxpub: block
   Call ConditionalCopyFrom rp, "docclass"       , lowerCase
   Call ConditionalCopyFrom rp, "outline"
   Call ConditionalCopyFrom rp, "chapter"
+  Call ConditionalCopyFrom rp, "margin"
+  -- (20261102) md2epub's: they were documented, and md2epub looked for them,
+  -- but they were never copied here
+  Call ConditionalCopyFrom rp, "cover"
+  Call ConditionalCopyFrom rp, "chapter-level"
+
+  -- css: one sheet, several (blanks or commas), or a YAML list. The names
+  -- are the document's to resolve (relative to it): here they are only
+  -- gathered. A name with blanks in it is given as a YAML list.
+  If rp~hasIndex("css") Then Do
+    value = rp["css"]
+    names = .Array~new
+    If value~isA(.Array) Then Do
+      Do item Over value
+        If item~isA(.String), Strip(item) \== "" Then names~append(Strip(item))
+      End
+    End
+    Else If value~isA(.String) Then Do
+      rest = value~changeStr(",", " ")
+      Do While rest \== ""
+        Parse Var rest name rest
+        names~append(name)
+      End
+    End
+    If names~items > 0 Then opts["css"] = names
+  End
 
   -- Language dialects (additive; only "true" has an effect)
   Call ConditionalCopyFrom rp, "executor"    , lowerCase
@@ -174,6 +218,12 @@ ReadRexxPubBlock: -- Read rexxpub: block
   outline = opts["outline"]
   If DataType(outline,"W"), outline >= 0, outline <= 6 Then Nop
   Else opts~remove("outline")
+
+  level = opts["chapter-level"]
+  If level \== .Nil Then Do
+    If DataType(level,"W"), level >= 1, level <= 6 Then Nop
+    Else opts~remove("chapter-level")
+  End
 
   -- Dialects: keep only "true", drop anything else. "tutor" is an
   -- alias of "unicode" (as with the --tutor/--unicode CLI flags), so

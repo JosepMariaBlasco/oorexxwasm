@@ -42,6 +42,7 @@
 /*                  listing cold, after emission, so no marker is needed.     */
 /* 20260930         An error's sourceline is the clause in error, as ooRexx   */
 /*                  shows it (issue #8), not the whole line                   */
+/* 20261025         Such a continuation is shown as a continuation            */
 /*                                                                            */
 /******************************************************************************/
 
@@ -300,6 +301,14 @@ Syntax:
 
   -- Process ::Resources (probably multi-line)
   If element < .EL.RESOURCE_DATA          Then Signal ResourceData
+
+  -- A continuation character that is the blank operator too ("say 1 -",
+  -- then "2"): shown as the continuation it is in the source
+  If element < .EL.OP.BLANK, element~continuation == 1 Then Do
+    tag = HTMLClass[ .EL.CONTINUATION ]
+    Call Highlight .EL.CONTINUATION, "", "", tag, element~source
+    Exit
+  End
 
   -- Standard case
   tag = HTMLClass[ element~category ]

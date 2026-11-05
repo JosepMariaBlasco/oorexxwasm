@@ -2,6 +2,13 @@
 /* look at what it was, act; as XEDIT's READ or ISPF's DISPLAY, no          */
 /* callbacks.  Type an item and press Enter; click an item to cross it out  */
 /* (again: back); "Clear done" removes the crossed-out ones.                */
+/*                                                                          */
+/* ADDRESS DOM and ADDRESS FETCH are example command environments, not part */
+/* of ooRexx: a sketch of what the browser could offer to classic Rexx,     */
+/* with no documentation, as they are no more than proofs of concept.       */
+/* Both are written in Rexx itself, as subclasses of ooRexx's               */
+/* .CommandHandler (dom.cls, fetch.cls): a command environment can be a     */
+/* Rexx class.                                                              */
 address dom
 NEW '"To do"' AS todo
 CSS '".done { text-decoration: line-through; opacity: .55; } li { cursor: pointer; }"'

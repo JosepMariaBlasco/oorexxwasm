@@ -102,7 +102,7 @@
     border-left: 1px solid var(--rx-gutter-bar, #b0b0a8);   /* the vertical bar */
     padding-left: 4px;
 
-    code { counter-reset: rx-line 0; }
+    code { counter-reset: rx-line var(--rx-start, 0); }
 
     code > span {
       position: relative;
@@ -472,35 +472,46 @@
 /* One open box per blank, DRAWN rather than typed: U+2423 is not in every    */
 /* typeface -- IBM Plex has no glyph for it at any subset -- and a missing    */
 /* glyph in a monospaced listing does not merely look wrong, it shifts the    */
-/* column and makes the reader count something that is not there. Three       */
-/* gradients tile at one character cell, so a run of three blanks draws three */
-/* boxes from a single span, and the real blanks stay in the text: the        */
-/* listing can still be copied out of the page and run.                       */
+/* column and makes the reader count something that is not there. Each        */
+/* blank has a span of its own, and its box is drawn as inset SHADOWS on an   */
+/* ::after: Chromium and Firefox print thin gradients wrong (a tick or the    */
+/* bar lost, or a block), and draw no border thinner than 1px. The real       */
+/* blanks stay in the text: the listing can still be copied and run.          */
 /*                                                                            */
 /* The ink follows the element the blank belongs to (a blank inside a string  */
 /* is the string's colour); a theme that wants its own sets --rx-blank-ink.   */
 /* The proportions come from the real glyph: ink across 12%..87% of the cell, */
-/* a bar .07em thick and ticks .3em tall, all sitting low, below the baseline */
+/* strokes .045em thick (U+2423 has .07em, which prints as heavy as the       */
+/* letters) and ticks .3em tall, all sitting low, below the baseline          */
 /* as U+2423 does.                                                            */
 /******************************************************************************/
 
 .highlight-rexx-vim-dark-ron .rx-blank-mark {
-  background-image:
-    linear-gradient(to right, transparent 12%, var(--rx-blank-ink, currentColor) 12%,
-                    var(--rx-blank-ink, currentColor) 87%, transparent 87%),
-    linear-gradient(to right, transparent 12%, var(--rx-blank-ink, currentColor) 12%,
-                    var(--rx-blank-ink, currentColor) 23%, transparent 23%),
-    linear-gradient(to right, transparent 76%, var(--rx-blank-ink, currentColor) 76%,
-                    var(--rx-blank-ink, currentColor) 87%, transparent 87%);
-  /* All three layers hang from the BOTTOM of the inline box -- the descent
-     line -- and never from a measured baseline: how tall that box is depends
-     on the font in use (1.31em in one, 1.18em in another), and an em-based
-     offset that fits one font puts the bar outside the box in the next, where
-     the browser clips it away without a word. Anchored at 100% the mark sits
-     right, whatever the listing is set in. */
-  background-size: 1ch .07em, 1ch .3em, 1ch .3em;
-  background-position: 0 100%, 0 100%, 0 100%;
-  background-repeat: repeat-x;
+  position: relative;
+}
+.highlight-rexx-vim-dark-ron .rx-blank-mark::after {
+  /* The box hangs from the BOTTOM of the inline box -- the descent line --
+     and never from a measured baseline: how tall that box is depends on the
+     font in use (1.31em in one, 1.18em in another), and an em-based offset
+     that fits one font puts the mark outside the box in the next. Anchored
+     at bottom: 0, it sits right whatever the listing is set in. */
+  content: "";
+  position: absolute;
+  left: 12%;
+  right: 13%;
+  bottom: 0;
+  height: .3em;
+  /* Shadows, not borders: Chromium draws a border of less than 1px as 1px,
+     as thick as the letters (Rony, 20/10). .045em is half a stem. The
+     ticks' shadows go up as well as sideways: with no rise, the top of
+     each shadow's hole ran along the top of the box, and the PDF drew
+     that seam as a hairline that closed the box (Rony, 20/10). */
+  box-shadow: inset 0 -.045em 0 var(--rx-blank-ink, currentColor),
+              inset .045em -.045em 0 var(--rx-blank-ink, currentColor),
+              inset -.045em -.045em 0 var(--rx-blank-ink, currentColor);
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+  pointer-events: none;
 }
 .highlight-rexx-vim-dark-ron .rx-tab-mark {
   /* A tab, drawn as editors draw it: an arrow running into a wall, --->|, the

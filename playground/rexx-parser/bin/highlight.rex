@@ -37,6 +37,7 @@
 /* 20251230         Add support for --continue                                */
 /* 20260102         Standardize help options to -h and --help                 */
 /* 20260314    0.5  Use InitCLI() from CLISupport.cls                         */
+/* 20261011         Help: an option takes its value as the next argument      */
 /*                                                                            */
 /******************************************************************************/
 
@@ -286,8 +287,8 @@ Options:
        --continue           Continue when a fenced code block is in error
        --css                Include links to css files (HTML only)
   -d,  --docbook            Select DocBook mode
-       --default=attributes Select default attributes for code blocks
-       --doccomments=detailed|block Select highlighting level for doc-comments
+       --default attributes Select default attributes for code blocks
+       --doccomments detailed|block Select highlighting level for doc-comments
   -xtr,--executor           Enable support for Executor
   -cms,--cms                Enable support for CMS (Classic Rexx) syntax (also -rexxvm, --rexxvm)
   -e, -exp, --experimental  Enable Experimental features
@@ -296,15 +297,15 @@ Options:
   -l,  --latex              Select LaTeX mode
        --noprolog           Do not print a prolog (LaTeX only)
   -n,  --numberlines        Print line numbers
-       --patch="PATCHES"    Apply semicolon-separated PATCHES
-       --patchfile=FILE     Load patches from FILE
-       --pad=N              Pad doc-comments and ::resources to N characters
+       --patch "PATCHES"    Apply semicolon-separated PATCHES
+       --patchfile FILE     Load patches from FILE
+       --pad N              Pad doc-comments and ::resources to N characters
        --prolog             Print a prolog (LaTeX only)
-       --startFrom=N        Start line numbers at N
-  -s,  --style=STYLE        Use "rexx-STYLE.css" (default is "dark")
+       --startFrom N        Start line numbers at N
+  -s,  --style STYLE        Use "rexx-STYLE.css" (default is "dark")
        --tutor              Enable TUTOR-flavored Unicode
   -u,  --unicode            Enable TUTOR-flavored Unicode
-  -w,  --width=N            Ensure that all lines have width >= N (ANSI only)
+  -w,  --width N            Ensure that all lines have width >= N (ANSI only)
 
 The 'myname' program is part of the Rexx Parser package,
 see https://rexx.epbcn.com/rexx-parser/. It is distributed under

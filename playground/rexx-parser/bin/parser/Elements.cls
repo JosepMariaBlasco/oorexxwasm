@@ -17,6 +17,8 @@
 /* 20251206    0.3a Split Scanner.cls in two, move all classes here           */
 /* 20260620    0.6  CMS: Implement multi-line strings                         */
 /* 20260930         Error.Element: the package, and atTheClause (issue #8)    */
+/* 20261025         Element~continuation: a continuation that is also the     */
+/*                  blank operator (Rony, 25-Oct)                             */
 /*                                                                            */
 /******************************************************************************/
 
@@ -98,11 +100,18 @@
 
 ::Attribute clauseNumber
 
+-- A continuation character ("-" or ",") at the end of a line can also be the
+-- blank concatenation operator ("say 1 -" / "2" is "say 1 2"): the parser
+-- makes it an EL.OP.BLANK, and this says that, in the source, it is the
+-- continuation (Rony, 25-Oct-2026: the highlighter showed it as an operator)
+
+::Attribute continuation
+
 --
 
 ::Method init
   Expose next prev from to category subcategory source value -
-    ignorable assigned assignment closing
+    ignorable assigned assignment closing continuation
 
   self~init:super
   next        = .Nil
@@ -116,6 +125,7 @@
   assigned    = 0
   ignorable   = 0
   closing     = .Nil
+  continuation = 0
 
 ::Method isAssigned
   Expose assigned
@@ -500,4 +510,4 @@
 ::Constant value ""
 ::Method init
   Use Strict Arg line, col
-  self~init:super(.EL.IMPLICIT_EXIT, line, col)
+  self~init:super(.EL.IMPLICIT_EXIT, line, col)

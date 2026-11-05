@@ -42,6 +42,9 @@
 /*                  (issue #39).                                              */
 /* 20261001         Code.Body~exposedSymbols: the symbols of the EXPOSE list  */
 /*                  (not "(x)"), what the GUARD check (99.913) looks at.      */
+/* 20261020         A CR at the end of a source line is ignored, as in ooRexx */
+/*                  (a file whose last line ends in a lone CR failed with     */
+/*                  13.1).                                                    */
 /*                                                                            */
 /******************************************************************************/
 
@@ -131,6 +134,23 @@
     source = LoadProgramSource(name)
   End
   Else If source~isA( .String ) Then source = Array( source )
+
+  -- ooRexx ignores a carriage return at the end of a line. makeArray and
+  -- LINEIN already drop the CR of a CR LF pair, but a file whose last line
+  -- ends in a lone CR (no final LF) keeps it, and so may an array built
+  -- by other means. Drop it here too, working on a copy so that the
+  -- caller's array is left untouched.
+  copied = 0
+  Do i = 1 To source~size
+    line = source[i]
+    If \line~isA(.String) Then Iterate
+    If line~right(1) \== "0D"X Then Iterate
+    If \copied Then Do
+      source = source~copy
+      copied = 1
+    End
+    source[i] = line~left( line~length - 1 )
+  End
 
   -- Features
 
