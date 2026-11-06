@@ -978,7 +978,7 @@ index 255cc9e..c11629d 100644
      validateFileSpec();
      // process the SysFileTreeOptions
 diff --git a/rexxapi/common/platform/unix/SysNodeConnection.cpp b/rexxapi/common/platform/unix/SysNodeConnection.cpp
-index 9b120d4..35bcd93 100644
+index 08ad6c6..d4b1997 100644
 --- a/rexxapi/common/platform/unix/SysNodeConnection.cpp
 +++ b/rexxapi/common/platform/unix/SysNodeConnection.cpp
 @@ -271,6 +271,10 @@ EM_JS(void, orxNetStart, (em_proxying_ctx *ctx, void *op), {
@@ -1027,7 +1027,7 @@ index 9b120d4..35bcd93 100644
                  if (typeof err === 'number') fs.closeSync(err);
                  child.on('error', function() {});
                  child.unref();
-@@ -561,6 +566,13 @@ EM_JS(int, orxNetServiceName, (char *buf, int size, int ver, int rel, int mod),
+@@ -571,6 +576,13 @@ EM_JS(int, orxNetServiceName, (char *buf, int size, int ver, int rel, int mod),
      var user;
      try { user = os.userInfo().username; } catch (e) { user = String(process.getuid ? process.getuid() : 0); }
      var name = dir + '/.ooRexx-' + ver + '.' + rel + '.' + mod + '-wasm-' + user + '.service';

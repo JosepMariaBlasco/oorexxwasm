@@ -21,13 +21,13 @@ sessions by pid).  qualify-node-cli.sh checks queues across processes.
  rexxapi/client/LocalAPIManager.cpp            |  14 +
  .../platform/unix/SysLocalAPIManager.cpp      |  49 +-
  .../platform/unix/SysLocalAPIManager.hpp      |   4 +
- .../platform/unix/SysNodeConnection.cpp       | 850 ++++++++++++++++++
+ .../platform/unix/SysNodeConnection.cpp       | 860 ++++++++++++++++++
  .../platform/unix/SysNodeConnection.hpp       |  89 ++
  utilities/rexx/platform/unix/rexx.cpp         |  10 +
  wasm/README.md                                |  19 +-
  wasm/build-node.sh                            |   7 +-
  wasm/tests/qualify-node-cli.sh                |  13 +
- 11 files changed, 1082 insertions(+), 11 deletions(-)
+ 11 files changed, 1092 insertions(+), 11 deletions(-)
  create mode 100644 rexxapi/common/platform/unix/SysNodeConnection.cpp
  create mode 100644 rexxapi/common/platform/unix/SysNodeConnection.hpp
 
@@ -219,10 +219,10 @@ index 339f053..87ca6c7 100644
  #endif
 diff --git a/rexxapi/common/platform/unix/SysNodeConnection.cpp b/rexxapi/common/platform/unix/SysNodeConnection.cpp
 new file mode 100644
-index 0000000..9b120d4
+index 0000000..08ad6c6
 --- /dev/null
 +++ b/rexxapi/common/platform/unix/SysNodeConnection.cpp
-@@ -0,0 +1,850 @@
+@@ -0,0 +1,860 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -771,7 +771,9 @@ index 0000000..9b120d4
 +
 +
 +// the service path, computed from the host environment (the MEMFS build does
-+// not see it): XDG_RUNTIME_DIR, else TMPDIR, else /tmp, as native rxapi does
++// not see it): XDG_RUNTIME_DIR, else TMPDIR, else /tmp, as native rxapi does,
++// and like it only a directory where we can create files (bug #2135: an
++// XDG_RUNTIME_DIR inherited from another user must be skipped)
 +EM_JS(int, orxNetServiceName, (char *buf, int size, int ver, int rel, int mod), {
 +    var fs = require('fs');
 +    var os = require('os');
@@ -780,7 +782,15 @@ index 0000000..9b120d4
 +    for (var i = 0; i < list.length; i++)
 +    {
 +        var d = list[i];
-+        try { if (d && d.length < 80 && fs.statSync(d).isDirectory()) { dir = d; break; } }
++        try
++        {
++            if (d && d.length < 80 && fs.statSync(d).isDirectory())
++            {
++                fs.accessSync(d, fs.constants.W_OK | fs.constants.X_OK);
++                dir = d;
++                break;
++            }
++        }
 +        catch (e) {}
 +    }
 +    var user;
