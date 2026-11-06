@@ -1376,10 +1376,10 @@ index 41d4af7..255cc9e 100644
  
  
 diff --git a/interpreter/streamLibrary/StreamNative.cpp b/interpreter/streamLibrary/StreamNative.cpp
-index c12de90..c19918e 100644
+index af042b4..f1abad4 100644
 --- a/interpreter/streamLibrary/StreamNative.cpp
 +++ b/interpreter/streamLibrary/StreamNative.cpp
-@@ -493,7 +493,7 @@ void StreamInfo::close()
+@@ -503,7 +503,7 @@ void StreamInfo::close()
      // and raise a NOTREADY condition if anything went amiss
      if (!closed)
      {
@@ -1388,7 +1388,7 @@ index c12de90..c19918e 100644
          notreadyError();
      }
      // no longer open for business
-@@ -832,7 +832,7 @@ void StreamInfo::implicitOpen(int type)
+@@ -842,7 +842,7 @@ void StreamInfo::implicitOpen(int type)
              if (defaultResult == NULLOBJECT)
              {
                  char work[30];
@@ -1397,7 +1397,7 @@ index c12de90..c19918e 100644
                  defaultResult = context->NewStringFromAsciiz(work);
              }
              notreadyError();
-@@ -2222,7 +2222,7 @@ const char *StreamInfo::streamFlush()
+@@ -2232,7 +2232,7 @@ const char *StreamInfo::streamFlush()
      if (!fileInfo.flush())
      {
          char         work[30];              /* error information buffer          */
@@ -1406,7 +1406,7 @@ index c12de90..c19918e 100644
                                          /* go raise a notready condition     */
          notreadyError(fileInfo.errorInfo(), context->NewStringFromAsciiz(work));
      }
-@@ -2433,7 +2433,7 @@ const char *StreamInfo::streamOpen(const char *options)
+@@ -2443,7 +2443,7 @@ const char *StreamInfo::streamOpen(const char *options)
          if (!SysFileSystem::fileExists(qualified_name))
          {
              char work[32];
@@ -1415,7 +1415,7 @@ index c12de90..c19918e 100644
              // raise a notready condition
              notreadyError(ENOENT, context->NewStringFromAsciiz(work));
          }
-@@ -2467,7 +2467,7 @@ const char *StreamInfo::streamOpen(const char *options)
+@@ -2480,7 +2480,7 @@ const char *StreamInfo::streamOpen(const char *options)
              {
                  char work[32];
  
@@ -1424,7 +1424,7 @@ index c12de90..c19918e 100644
                  /* go raise a notready condition     */
                  notreadyError(fileInfo.errorInfo(), context->NewStringFromAsciiz(work));
              }
-@@ -2477,7 +2477,7 @@ const char *StreamInfo::streamOpen(const char *options)
+@@ -2490,7 +2490,7 @@ const char *StreamInfo::streamOpen(const char *options)
          else
          {
              char work[32];
@@ -1433,7 +1433,7 @@ index c12de90..c19918e 100644
              /* go raise a notready condition     */
              notreadyError(fileInfo.errorInfo(), context->NewStringFromAsciiz(work));
          }
-@@ -3644,12 +3644,12 @@ RexxStringObject StreamInfo::getDescription()
+@@ -3657,12 +3657,12 @@ RexxStringObject StreamInfo::getDescription()
              if (errorString != NULL)
              {
                                                   /* format the result string          */
@@ -1448,7 +1448,7 @@ index c12de90..c19918e 100644
  
              }
              return context->NewStringFromAsciiz(work);
-@@ -3666,12 +3666,12 @@ RexxStringObject StreamInfo::getDescription()
+@@ -3679,12 +3679,12 @@ RexxStringObject StreamInfo::getDescription()
              if (errorString != NULL)
              {
                                                   /* format the result string          */

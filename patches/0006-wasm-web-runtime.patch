@@ -87,7 +87,7 @@ index ca6a0f2..e62b362 100644
  #endif
  
 diff --git a/interpreter/concurrency/Activity.cpp b/interpreter/concurrency/Activity.cpp
-index 7e2bba3..8af9418 100644
+index 279c46b..d0f82ab 100644
 --- a/interpreter/concurrency/Activity.cpp
 +++ b/interpreter/concurrency/Activity.cpp
 @@ -85,6 +85,52 @@
@@ -171,7 +171,7 @@ index 7e2bba3..8af9418 100644
      if (callTraceExit(activation, line))
      {
          // if in profiling mode we only let collect the traceObjects,
-@@ -3498,6 +3551,7 @@ void Activity::sayOutput(RexxActivation *activation, RexxString *line)
+@@ -3513,6 +3566,7 @@ void Activity::sayOutput(RexxActivation *activation, RexxString *line)
  RexxString* Activity::traceInput(RexxActivation *activation)
  {
      RexxString *value;

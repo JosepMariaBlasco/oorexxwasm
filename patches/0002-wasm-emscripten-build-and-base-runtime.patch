@@ -460,7 +460,7 @@ index f2539df..fd47f6b 100644
      // set the errno information
      setErrno(context, rc >= 0);
 diff --git a/interpreter/concurrency/Activity.cpp b/interpreter/concurrency/Activity.cpp
-index 091edb0..7e2bba3 100644
+index 2e9d714..279c46b 100644
 --- a/interpreter/concurrency/Activity.cpp
 +++ b/interpreter/concurrency/Activity.cpp
 @@ -192,6 +192,9 @@ void Activity::runThread()
@@ -583,7 +583,7 @@ index 091edb0..7e2bba3 100644
  
  
  /**
-@@ -3569,6 +3659,9 @@ void Activity::run(ActivityDispatcher &target)
+@@ -3584,6 +3674,9 @@ void Activity::run(ActivityDispatcher &target)
  
      // update the stack base
      stackLimit = currentThread.getStackBase() + errorRecoveryStack;
@@ -594,7 +594,7 @@ index 091edb0..7e2bba3 100644
      // get a new random seed
      generateRandomNumberSeed();
 diff --git a/interpreter/concurrency/Activity.hpp b/interpreter/concurrency/Activity.hpp
-index b75a6b5..f4dd9cb 100644
+index 45883f4..41a5841 100644
 --- a/interpreter/concurrency/Activity.hpp
 +++ b/interpreter/concurrency/Activity.hpp
 @@ -215,6 +215,9 @@ class Activity : public RexxInternalObject
@@ -607,7 +607,7 @@ index b75a6b5..f4dd9cb 100644
      void        cleanupActivityResources();
      void        terminatePoolActivity();
      thread_id_t threadIdMethod();
-@@ -462,6 +465,9 @@ class Activity : public RexxInternalObject
+@@ -463,6 +466,9 @@ class Activity : public RexxInternalObject
      size_t   attachCount;               // extent of nested attaches
      bool     newThreadAttached;         // Indicates this thread was a "side door" attach.
      char    *stackLimit;                // pointer to base to the C stack location that will trigger a control stack error
