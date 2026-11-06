@@ -39,10 +39,10 @@ command-line ooRexx that sees the host file system and environment
  create mode 100755 wasm/tests/qualify-node-cli.sh
 
 diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
-index ab57a5b..c9773d8 100644
+index de6abad..709a51e 100644
 --- a/common/platform/unix/SysProcess.cpp
 +++ b/common/platform/unix/SysProcess.cpp
-@@ -254,6 +254,47 @@ int SysProcess::localErrno(int e)
+@@ -319,6 +319,47 @@ int SysProcess::localErrno(int e)
      return e;
  }
  
@@ -91,7 +91,7 @@ index ab57a5b..c9773d8 100644
  #ifdef HAVE_KERN_PROC_ARGV
  /**
 diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform/unix/SystemCommands.cpp
-index 39b3a54..dbf06ea 100644
+index f2d69b8..638c838 100644
 --- a/interpreter/platform/unix/SystemCommands.cpp
 +++ b/interpreter/platform/unix/SystemCommands.cpp
 @@ -921,6 +921,149 @@ static RexxObjectPtr wasmCommandHandler(RexxExitContext *context, CSTRING comman

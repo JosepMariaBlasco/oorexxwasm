@@ -32,7 +32,7 @@ sessions by pid).  qualify-node-cli.sh checks queues across processes.
  create mode 100644 rexxapi/common/platform/unix/SysNodeConnection.hpp
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 4090f73..522e71c 100644
+index 25d3d18..d359f34 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -694,12 +694,15 @@ else ()
@@ -54,10 +54,10 @@ index 4090f73..522e71c 100644
                ${build_rexxapi_server_dir}/APIServerInstance.cpp
                ${build_rexxapi_server_dir}/APIServerThread.cpp
 diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
-index c9773d8..ca6a0f2 100644
+index 709a51e..9875e7c 100644
 --- a/common/platform/unix/SysProcess.cpp
 +++ b/common/platform/unix/SysProcess.cpp
-@@ -295,6 +295,37 @@ extern "C" int orxWasmLibraryDirectory(char *buf, int size)
+@@ -360,6 +360,37 @@ extern "C" int orxWasmLibraryDirectory(char *buf, int size)
  }
  #endif
  

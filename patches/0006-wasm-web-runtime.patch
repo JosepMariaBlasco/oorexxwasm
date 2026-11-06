@@ -59,10 +59,10 @@ onInput}) -> {write, close, stop, done}.
  create mode 100644 wasm/web/ooRexx.js
 
 diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
-index ca6a0f2..e62b362 100644
+index 9875e7c..31d36cb 100644
 --- a/common/platform/unix/SysProcess.cpp
 +++ b/common/platform/unix/SysProcess.cpp
-@@ -291,7 +291,22 @@ extern "C" int orxWasmExecutablePath(char *buf, int size)
+@@ -356,7 +356,22 @@ extern "C" int orxWasmExecutablePath(char *buf, int size)
  
  extern "C" int orxWasmLibraryDirectory(char *buf, int size)
  {

@@ -99,7 +99,7 @@ and Chromium. Call benchmark unchanged (200k calls ≈ 0.11 s).
 
 `PackageManager::embeddedPackages[]` (WASM only) replaces the single
 `rxsockPackage`: rxsock, rxregexp, rxmath are compiled into librexx with
-`ORX_EMBEDDED_PACKAGE`, which turns `OOREXX_GET_PACKAGE()` into nothing (each
+`OOREXX_EMBEDDED_PACKAGE`, which turns `OOREXX_GET_PACKAGE()` into nothing (each
 package would otherwise define its own `RexxGetPackage`). rxregexp is required
 by the test framework. `rxregexp.cls` is preloaded in the browser build.
 

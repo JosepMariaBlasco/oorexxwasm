@@ -25,7 +25,7 @@ name resolution.
  create mode 100644 wasm/node-sockets-pre.js
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 522e71c..4fb8d8e 100644
+index d359f34..d8c15f4 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -1179,6 +1179,8 @@ if (EMSCRIPTEN)

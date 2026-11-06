@@ -50,10 +50,10 @@ through REXX_PATH: cmd.exe would take rexx.js in PATH for "rexx").
  15 files changed, 576 insertions(+), 37 deletions(-)
 
 diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
-index e62b362..a1b8523 100644
+index 31d36cb..0cab080 100644
 --- a/common/platform/unix/SysProcess.cpp
 +++ b/common/platform/unix/SysProcess.cpp
-@@ -264,13 +264,21 @@ int SysProcess::localErrno(int e)
+@@ -329,13 +329,21 @@ int SysProcess::localErrno(int e)
   */
  EM_JS(int, wasmScriptDirectory, (char *buf, int size), {
      if (typeof process !== 'object' || !process.versions || !process.versions.node ||
@@ -79,7 +79,7 @@ index e62b362..a1b8523 100644
      return 1;
  });
  
-@@ -281,11 +289,12 @@ EM_JS(int, wasmScriptDirectory, (char *buf, int size), {
+@@ -346,11 +354,12 @@ EM_JS(int, wasmScriptDirectory, (char *buf, int size), {
   */
  extern "C" int orxWasmExecutablePath(char *buf, int size)
  {
@@ -94,7 +94,7 @@ index e62b362..a1b8523 100644
      return 1;
  }
  
-@@ -308,6 +317,60 @@ extern "C" int orxWasmLibraryDirectory(char *buf, int size)
+@@ -373,6 +382,60 @@ extern "C" int orxWasmLibraryDirectory(char *buf, int size)
      }
      return 0;
  }
@@ -155,7 +155,7 @@ index e62b362..a1b8523 100644
  #endif
  
  #if defined(__EMSCRIPTEN__)
-@@ -646,7 +709,7 @@ const char* SysProcess::getExecutableFullPath()
+@@ -711,7 +774,7 @@ const char* SysProcess::getExecutableFullPath()
  #endif // ORX_WASM
  
      // this is the file location with any symbolic links resolved.
@@ -164,7 +164,7 @@ index e62b362..a1b8523 100644
      if (modulePath == NULL)
      {
          return NULL;
-@@ -677,7 +740,7 @@ const char* SysProcess::getLibraryLocation()
+@@ -742,7 +805,7 @@ const char* SysProcess::getLibraryLocation()
      char dir[PATH_MAX];
      if (orxWasmLibraryDirectory != NULL && orxWasmLibraryDirectory(dir, sizeof(dir)) && access(dir, F_OK) == 0)
      {
@@ -657,7 +657,7 @@ index d4c7091..e002660 100644
       static RexxString* extractDirectory(RexxString *file);
       static RexxString* extractExtension(RexxString *file);
 diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform/unix/SystemCommands.cpp
-index dbf06ea..c87e0b1 100644
+index 638c838..01433ca 100644
 --- a/interpreter/platform/unix/SystemCommands.cpp
 +++ b/interpreter/platform/unix/SystemCommands.cpp
 @@ -59,6 +59,7 @@

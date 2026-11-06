@@ -54,7 +54,7 @@ Common Public License 1.0.
  create mode 100755 wasm/tests/ws_echo.py
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index ec18ec3..4090f73 100644
+index 4ce9e16..25d3d18 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -1054,6 +1054,20 @@ if (CMAKE_INTERPROCEDURAL_OPTIMIZATION)
@@ -223,7 +223,7 @@ index 0000000..4c24522
 +set(HAVE_STAT_ST_MTIMESPEC 0 CACHE INTERNAL "")
 +set(HAVE_PRAGMA_GCC_STRINGOPOVERFLOW 0 CACHE INTERNAL "")
 diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
-index 7d0b2fd..ab57a5b 100644
+index 453f514..de6abad 100644
 --- a/common/platform/unix/SysProcess.cpp
 +++ b/common/platform/unix/SysProcess.cpp
 @@ -75,6 +75,9 @@ const char *SysProcess::executableFullPath = NULL;
@@ -236,7 +236,7 @@ index 7d0b2fd..ab57a5b 100644
  #include "SysWasmHost.hpp"
  
  #if defined(ORX_WASM)
-@@ -355,6 +358,81 @@ void SysProcess::getUserID(char *buffer)
+@@ -420,6 +423,81 @@ void SysProcess::getUserID(char *buffer)
      buffer[MAX_USERID_LENGTH-1] = '\0';
  }
  
