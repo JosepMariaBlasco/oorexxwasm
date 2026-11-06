@@ -1,0 +1,58 @@
+# The official test suite on six platforms (test/trunk r13388, the series on trunk r13389)
+
+GitHub Actions run 42205374633 (`.github/workflows/suite.yml`, test/trunk r13388), 6 November 2026, commit 908aecd (base r13389: RFE #879 in trunk, r13387 and r13389, the access mode of a stream compared as a value; #1871, r13384; test/trunk r13382, `EMSCRIPTEN` and `WASI` known to `ooTest.frm`; r13386, the UNIX groups skip by name on those platforms what WebAssembly does not have; r13383 and r13388, #2139 and #2141, `assertSyntaxError` only translates). Node from run 42208568522 (commit f8562a1, the 0004 fix below). Compared with r13379 / test/trunk r13380: no regressions of the port.
+
+What changed: `base/rexxutil/platform/unix/SysGetMessage` (11 tests), `extensions/platform/unix/rxunixsys/SysUnix` (30) and `utilities/rxapi` (3) used to run no test at all under WebAssembly; they run now, with the tests r13386 skips by name. They pass under Node and in the three browsers. `rxapi`'s TEST_UNWRITABLE_RUNTIME_DIR (bug #2135) found that the Node RexxAPI daemon took an unwritable `XDG_RUNTIME_DIR` (fixed in 0004, f8562a1; first run: 5.6 s instead of 0.2 s). `extensions/platform/unix/ncurses/ncurses` still runs none (no ncurses library). `base/keyword/TRACE` has r13385's test of #1871, which runs `rexx` as a command: it cannot pass in the browsers (no processes). `base/keyword/ADDRESS`'s TEST_COMMAND_CD (`cd ~`) passes now in the browsers (the browser runtime creates `HOME`, patch 0006, a2dd8e3). WebKit's `base/keyword/CALL` (category `stack`) passed this time.
+
+| platform | groups | ok | fail | crash | timeout | tests ran | assertions | failures | errors |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| native | 406 | 404 | 2 | 0 | 0 | 24524 | 358594 | 2 | 0 |
+| node | 406 | 403 | 3 | 0 | 0 | 24515 | 345003 | 5 | 0 |
+| chromium | 406 | 372 | 34 | 0 | 0 | 24507 | 343572 | 170 | 76 |
+| firefox | 406 | 372 | 34 | 0 | 0 | 24507 | 343573 | 169 | 76 |
+| webkit | 406 | 373 | 33 | 0 | 0 | 24507 | 343574 | 168 | 76 |
+| windows | 406 | 391 | 15 | 0 | 0 | 24515 | 344775 | 43 | 1 |
+
+| group | native | node | chromium | firefox | webkit | windows | category | why |
+|---|---|---|---|---|---|---|---|---|
+| API/oo/METHOD | ok | ok | fail 1/0 | fail 1/0 | fail 1/0 | ok | processes | TEST_REXXC_WITH_NEWROUTINE_LOADPACKAGEFROMDATA: rexxc RC 127 (the API groups need wasm/build-test.sh's bin-web-test) |
+| API/oo/ProcessInvocation | ok | ok | fail 60/0 | fail 60/0 | fail 60/0 | ok | processes | runs testbinaries' rexxinstance and detach_root_terminate as commands |
+| API/oo/ProcessRexxStart | ok | ok | fail 20/0 | fail 20/0 | fail 20/0 | ok | processes | runs testbinaries' rexxinstance as a command |
+| base/bif/ADDRESS | ok | ok | ok | ok | ok | fail 1/0 |  |  |
+| base/bif/ARG | ok | ok | fail 1/0 | fail 1/0 | fail 1/0 | ok | processes | TEST_EXTERNAL_CALLS: RC 127 for an external command |
+| base/bif/CHAROUT | fail 1/0 | fail 1/0 | fail 0/1 | fail 0/1 | fail 0/1 | fail 1/0 | processes | 'rexx delMe...rex' failed with RC 127 |
+| base/bif/CONDITION | ok | ok | fail 2/1 | fail 2/1 | fail 2/1 | ok | processes | external command raises FAILURE (RC 127), test expects ERROR |
+| base/bif/LINEIN | ok | ok | fail 1/0 | fail 1/0 | fail 1/0 | ok | processes | 'echo hello hello>' file: no command |
+| base/bif/LINEOUT | fail 1/0 | fail 1/0 | ok | ok | ok | fail 1/0 |  |  |
+| base/bif/QUALIFY | ok | ok | ok | ok | ok | fail 1/0 |  |  |
+| base/bif/STREAM | ok | ok | fail 0/4 | fail 0/4 | fail 0/4 | fail 4/0 | processes | 'id -u' failed with RC 127 |
+| base/class/CommandHandler | ok | ok | fail 1/0 | fail 1/0 | fail 1/0 | ok | processes | TEST_FORWARD_TO_NATIVE: "exit 3" in the default environment, RC 127 (no processes) |
+| base/class/File | ok | fail 3/0 | fail 4/0 | fail 3/0 | fail 3/0 | fail 11/0 | processes, memfs, flaky | searchPath('sh'): no shell on PATH; *_FRACTIONS: MEMFS file times read back in whole ms (one of them passes by chance now and then: 3 or 4 failures) |
+| base/class/Method | ok | ok | fail 0/2 | fail 0/2 | fail 0/2 | ok | processes | rexxc: RC 127 |
+| base/class/RexxInfo | ok | ok | fail 1/0 | fail 1/0 | fail 1/0 | fail 1/0 | install | TEST_REXXINFO_EXECUTABLE: executable expected to be a File (it is .nil) |
+| base/class/RexxQueue | ok | ok | fail 0/1 | fail 0/1 | fail 0/1 | ok | processes | 'rexx -e ...' RC 127 |
+| base/class/Routine | ok | ok | fail 0/2 | fail 0/2 | fail 0/2 | ok | processes | rexxc: RC 127 |
+| base/class/Stream | ok | ok | fail 0/8 | fail 0/8 | fail 0/8 | fail 7/0 | processes | 'id -u' / 'rexx ...' RC 127 |
+| base/directives/OPTIONS | ok | ok | fail 2/6 | fail 2/6 | fail 2/6 | fail 0/1 | processes | command results RC 127 |
+| base/keyword/ADDRESS | ok | ok | fail 26/0 | fail 26/0 | fail 26/0 | fail 5/0 | processes | shell commands (cd, exit, cat, sort...) RC 127 |
+| base/keyword/CALL | ok | ok | fail 1/0 | fail 1/0 | ok | ok | stack | TEST_STACKSIZE: Error 11 at ~900 (Chromium), ~1300 (Firefox) levels; WebKit passes (~5000) or not (3614 with the WebKit of the GitHub runners): it depends on the engine build |
+| base/keyword/PARSE | ok | ok | fail 1/0 | fail 1/0 | fail 1/0 | ok | processes | external command RC 127 |
+| base/keyword/SIGNAL | ok | ok | fail 0/1 | fail 0/1 | fail 0/1 | ok | processes | command FAILURE |
+| base/keyword/TRACE | ok | ok | fail 0/1 | fail 0/1 | fail 0/1 | ok | processes, flaky | TEST_TRACED_TRACEOUTPUT_DESTINATION (test/trunk r13385, bug #1871): runs rexx as a command, RC 127 in the browsers; TEST_TRACE_LABEL_WITH_FORWARD: trace line count depends on thread timing (also seen under Node) |
+| base/rexxutil/Macrospace | ok | ok | fail 0/1 | fail 0/1 | fail 0/1 | ok | processes | 'rexx -e ...' RC 127 |
+| base/rexxutil/SysSearchPath | ok | ok | fail 1/0 | fail 1/0 | fail 1/0 | fail 1/0 | processes | SysSearchPath('PATH', 'sh'): no shell |
+| base/rexxutil/SysStemSort | ok | ok | fail 1/0 | fail 1/0 | fail 1/0 | ok | processes | TEST_UNTRAPPED_ERRORS (test/trunk r13285, bug #2120): runs a second rexx, RC 127 |
+| base/runtime.objects/environmentEntries | ok | ok | fail 1/0 | fail 1/0 | fail 1/0 | ok | processes | address '' 'exit': .rs -1 |
+| base/source.file/incorrectCharacters | ok | ok | fail 0/1 | fail 0/1 | fail 0/1 | ok | processes | 'rexx ...' RC 127 |
+| base/special.variables/RESULT_RC_SIGL | ok | ok | fail 1/0 | fail 1/0 | fail 1/0 | ok | processes | external rexx RC 127 |
+| extensions/platform/unix/rxunixsys/SysUnix | ok | ok | ok | ok | ok | fail 6/0 |  |  |
+| extensions/rxsock/socketClass | ok | ok | fail 9/0 | fail 9/0 | fail 9/0 | ok | sockets | server/client tests (no listen) and socket options (.nil) |
+| regressions/bug2003_guard_when | ok | ok | fail 0/1 | fail 0/1 | fail 0/1 | ok | processes | 'rexx guard_when.rex' RC 127 |
+| samples/samples | ok | ok | fail 29/0 | fail 29/0 | fail 29/0 | ok | processes | the samples are run as a rexx process (and are not in the browser's file system) |
+| utilities/rexx/rexx_command | ok | ok | fail 0/30 | fail 0/30 | fail 0/30 | fail 2/0 | processes | runs rexx as a command |
+| utilities/rexxc/rexxc | ok | ok | fail 0/8 | fail 0/8 | fail 0/8 | ok | processes | runs rexxc as a command |
+| utilities/rxapi | ok | ok | ok | ok | ok | fail 1/0 |  |  |
+| utilities/rxqueue/rxQueue | ok | ok | fail 0/8 | fail 0/8 | fail 0/8 | fail 1/0 | processes | runs rxqueue as a command |
+| utilities/rxsubcom/rxsubcom | ok | ok | fail 7/0 | fail 7/0 | fail 7/0 | ok | processes | runs rxsubcom as a command |
+
+Browser groups not passing, by category: processes 29, processes, memfs, flaky 1, install 1, stack 1, processes, flaky 1, sockets 1
