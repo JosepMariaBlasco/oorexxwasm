@@ -30,7 +30,7 @@ processes	API/oo/ProcessRexxStart	runs testbinaries' rexxinstance as a command
 sockets	extensions/rxsock/socketClass	server/client tests (no listen) and socket options (.nil)
 stack	base/keyword/CALL	TEST_STACKSIZE: Error 11 at ~900 (Chromium), ~1300 (Firefox) levels; WebKit passes (~5000) or not (3614 with the WebKit of the GitHub runners): it depends on the engine build
 upstream, flaky	base/class/MutexSemaphore	hangs at interpreter termination under load, as natively (todo 10)
-flaky	base/keyword/TRACE	TEST_TRACE_LABEL_WITH_FORWARD: trace line count depends on thread timing (also seen under Node)
+processes, flaky	base/keyword/TRACE	TEST_TRACED_TRACEOUTPUT_DESTINATION (test/trunk r13385, bug #1871): runs rexx as a command, RC 127 in the browsers; TEST_TRACE_LABEL_WITH_FORWARD: trace line count depends on thread timing (also seen under Node)
 test-bug	base/class/DateTime	TEST_FROMCIVILTIME uses '0:00am', which TIME()/DateTime reject since trunk r13250 (as TIME.testGroup itself expects: 40.19 for '00:00am'): 1 error on every platform, native too. Also, WebKit only: occasionally no output after 'Executing automated test suite'; passes when retried
 install	base/class/RexxInfo	TEST_REXXINFO_EXECUTABLE: executable expected to be a File (it is .nil)
 processes	samples/samples	the samples are run as a rexx process (and are not in the browser's file system)
