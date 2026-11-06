@@ -32,12 +32,12 @@ call show "Barcelona"
 
 do forever
   WAIT INTO 'ev'
-  select
-    when ev~name = "SHOW" then do
+  select case ev~name
+    when "SHOW" then do
       city VALUE INTO 'name'
       if name~strip \== "" then call show name~strip
     end
-    when ev~name = "CLOSE" then leave
+    when "CLOSE" then leave
     otherwise nop
   end
 end

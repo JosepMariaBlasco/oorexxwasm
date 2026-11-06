@@ -25,12 +25,12 @@ qualify-node-cli.sh and web-api.py.  Not part of the posted RFE.
  wasm/build-node.sh             |   2 +-
  wasm/build-web.sh              |   2 +
  wasm/tests/fetch-server.py     |  36 ++++
- wasm/tests/fetch.rex           | 138 +++++++++++++
+ wasm/tests/fetch.rex           | 140 +++++++++++++
  wasm/tests/qualify-node-cli.sh |   7 +
  wasm/tests/web-api.py          |   6 +
  wasm/web/commandwords.cls      | 172 ++++++++++++++++
  wasm/web/fetch.cls             | 352 +++++++++++++++++++++++++++++++++
- 8 files changed, 714 insertions(+), 1 deletion(-)
+ 8 files changed, 716 insertions(+), 1 deletion(-)
  create mode 100644 wasm/tests/fetch-server.py
  create mode 100644 wasm/tests/fetch.rex
  create mode 100644 wasm/web/commandwords.cls
@@ -106,10 +106,10 @@ index 0000000..1d84ec7
 +ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 diff --git a/wasm/tests/fetch.rex b/wasm/tests/fetch.rex
 new file mode 100644
-index 0000000..01451f3
+index 0000000..a8642bc
 --- /dev/null
 +++ b/wasm/tests/fetch.rex
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,140 @@
 +/* fetch.rex: tests of ADDRESS FETCH (wasm/web/fetch.cls), Node and browser.  */
 +/* Needs the server wasm/tests/fetch-server.py:                              */
 +/*   python3 fetch-server.py 8123 &  rexx fetch.rex http://127.0.0.1:8123     */
@@ -215,6 +215,8 @@ index 0000000..01451f3
 +"TIMEOUT 0"
 +address fetch "FROB x" with error stem err.
 +call check "unknown command: RC -3, FAILURE", rc == -3 & err.1~pos("FROB") > 0
++address fetch '"GET HEAD" x' with error stem err.
++call check "a quoted verb with blanks is one word: unknown", rc == -3 & err.1~pos("GET HEAD") > 0
 +address fetch "GET" base"/x extra" with error stem err.
 +call check "extra words: RC -3", rc == -3 & err.1~pos("extra") > 0
 +address fetch 'GET "unclosed' with error stem err.
@@ -249,7 +251,7 @@ index 0000000..01451f3
 +
 +::requires "fetch.cls"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index a51c34e..e6e6dd0 100755
+index a51c34e..0281c8b 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -505,6 +505,13 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
@@ -259,7 +261,7 @@ index a51c34e..e6e6dd0 100755
 +# --- ADDRESS FETCH (wasm/web/fetch.cls over .CommandHandler and js.cls), portable test
 +"$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
 +FETCH_SRV=$!; sleep 0.5
-+check "ADDRESS FETCH: requests, JSON, headers, errors, SAVE" '^44 passed, 0 failed$' '!^FAIL ' -- \
++check "ADDRESS FETCH: requests, JSON, headers, errors, SAVE" '^45 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/fetch.rex' http://127.0.0.1:50125"
 +kill $FETCH_SRV 2>/dev/null
 +
@@ -267,7 +269,7 @@ index a51c34e..e6e6dd0 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 5be30ce..32d669e 100755
+index 5be30ce..d997ea7 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -67,6 +67,9 @@ class H(SimpleHTTPRequestHandler):
@@ -286,7 +288,7 @@ index 5be30ce..32d669e 100755
       lambda r: r["out"] == "30 40 3\n100 100\nmine\n100 100\nmine\nFAILURE 30\n"),
 +  # ADDRESS FETCH (wasm/web/fetch.cls over .CommandHandler and js.cls): the portable test
 +  ("fetch", open(f"{SRC}/wasm/tests/fetch.rex").read(), {"js": {"worker": True}, "args": ["http://127.0.0.1:8124"]},
-+     lambda r: "44 passed, 0 failed" in r["out"] and r["rc"] == 0),
++     lambda r: "45 passed, 0 failed" in r["out"] and r["rc"] == 0),
    # .JSObject: JavaScript objects as Rexx objects (wasm/web-js.cpp, wasm/js-bridge.js, wasm/web/js.cls)
    ("js not granted", 'say .js~Math~max(1, 2)\n::requires "js.cls"', {},
       lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
@@ -470,7 +472,7 @@ index 0000000..84327b4
 +  return lines
 diff --git a/wasm/web/fetch.cls b/wasm/web/fetch.cls
 new file mode 100644
-index 0000000..081c634
+index 0000000..2b79bbd
 --- /dev/null
 +++ b/wasm/web/fetch.cls
 @@ -0,0 +1,352 @@
@@ -581,15 +583,15 @@ index 0000000..081c634
 +  if verb == .nil then return self~bad(context, "a command is needed")
 +  verb = verb~upper
 +  into = words~takeInto
-+  select
-+    when wordPos(verb, "GET HEAD DELETE POST PUT PATCH") > 0 then
++  select case verb
++    when "GET", "HEAD", "DELETE", "POST", "PUT", "PATCH" then
 +      return self~request(verb, words, into, context)
-+    when verb == "SAVE"    then return self~save(words, into, context)
-+    when verb == "HEADER"  then return self~header(words, into, context)
-+    when verb == "TIMEOUT" then return self~setTimeout(words, into, context)
-+    when verb == "STATUS"  then return self~status(words, into, context)
-+    when verb == "HEADERS" then return self~responseHeaders(words, into, context)
-+    when verb == "JSON"    then return self~jsonValue(words, into, context)
++    when "SAVE"    then return self~save(words, into, context)
++    when "HEADER"  then return self~header(words, into, context)
++    when "TIMEOUT" then return self~setTimeout(words, into, context)
++    when "STATUS"  then return self~status(words, into, context)
++    when "HEADERS" then return self~responseHeaders(words, into, context)
++    when "JSON"    then return self~jsonValue(words, into, context)
 +    otherwise return self~bad(context, "unknown command" verb)
 +  end
 +

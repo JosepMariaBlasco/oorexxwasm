@@ -329,13 +329,13 @@ index cb5c6fa..f56ea5d 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); }, onJdor,
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 32d669e..0d650fc 100755
+index d997ea7..e1e49c8 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -262,6 +262,17 @@ CASES = [
    # ADDRESS FETCH (wasm/web/fetch.cls over .CommandHandler and js.cls): the portable test
    ("fetch", open(f"{SRC}/wasm/tests/fetch.rex").read(), {"js": {"worker": True}, "args": ["http://127.0.0.1:8124"]},
-      lambda r: "44 passed, 0 failed" in r["out"] and r["rc"] == 0),
+      lambda r: "45 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # ADDRESS DOM (wasm/web/dom.cls over .CommandHandler and js.cls): the portable test
 +  ("dom", open(f"{SRC}/wasm/tests/dom.rex").read(), {"js": {"page": True}, "dom": {"root": None}},
 +     lambda r: "76 passed, 0 failed" in r["out"] and r["rc"] == 0),
@@ -352,7 +352,7 @@ index 32d669e..0d650fc 100755
       lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
 diff --git a/wasm/web/dom.cls b/wasm/web/dom.cls
 new file mode 100644
-index 0000000..466bc9c
+index 0000000..e318063
 --- /dev/null
 +++ b/wasm/web/dom.cls
 @@ -0,0 +1,1046 @@
@@ -574,39 +574,39 @@ index 0000000..466bc9c
 +  if target \== .nil, "NEW ROOT LOCATE UP TOP WAIT CSS"~caselessWordPos(verb) > 0 then
 +    return self~bad(context, verb "takes no target")
 +  signal on syntax name jsError
-+  select
-+    when verb == "NEW"    then return self~new(words, into, context)
-+    when verb == "ROOT"   then return self~setRoot(words, into, context)
-+    when verb == "LOCATE" then return self~locate(words, into, context)
-+    when verb == "TOP"    then return self~top(words, into, context)
-+    when verb == "WAIT"   then return self~wait(words, into, context)
-+    when verb == "CSS"    then return self~css(words, into, context)
++  select case verb
++    when "NEW"    then return self~new(words, into, context)
++    when "ROOT"   then return self~setRoot(words, into, context)
++    when "LOCATE" then return self~locate(words, into, context)
++    when "TOP"    then return self~top(words, into, context)
++    when "WAIT"   then return self~wait(words, into, context)
++    when "CSS"    then return self~css(words, into, context)
 +    otherwise nop
 +  end
 +  if target == .nil then target = current
 +  if target == .nil then return self~noRoot(context)
-+  select
-+    when verb == "UP"      then return self~up(words, into, context)
-+    when verb == "CLOSE"   then return self~close(target, words, into, context)
-+    when verb == "CREATE"  then return self~create(target, words, into, context)
-+    when verb == "REMOVE"  then return self~remove(target, words, into, context)
-+    when verb == "CLEAR"   then return self~clear(target, words, into, context)
-+    when verb == "TEXT"    then return self~property(target, "textContent", words, into, context)
-+    when verb == "VALUE"   then return self~value(target, words, into, context)
-+    when verb == "ATTR"    then return self~attr(target, words, into, context)
-+    when verb == "STYLE"   then return self~style(target, words, into, context)
-+    when verb == "CLASS"   then return self~classes(target, words, into, context)
-+    when verb == "SHOW"    then return self~flag(target, "hidden", .false, words, into, context)
-+    when verb == "HIDE"    then return self~flag(target, "hidden", .true, words, into, context)
-+    when verb == "ENABLE"  then return self~flag(target, "disabled", .false, words, into, context)
-+    when verb == "DISABLE" then return self~flag(target, "disabled", .true, words, into, context)
-+    when verb == "FOCUS"   then return self~focus(target, words, into, context)
-+    when verb == "FIELD"   then return self~field(target, words, into, context)
-+    when verb == "BUTTON"  then return self~button(target, words, into, context)
-+    when verb == "TABLE"   then return self~table(target, words, into, context)
-+    when verb == "LIST"    then return self~list(target, words, into, context)
-+    when verb == "ON"      then return self~on(target, words, into, context)
-+    when verb == "OFF"     then return self~off(target, words, into, context)
++  select case verb
++    when "UP"      then return self~up(words, into, context)
++    when "CLOSE"   then return self~close(target, words, into, context)
++    when "CREATE"  then return self~create(target, words, into, context)
++    when "REMOVE"  then return self~remove(target, words, into, context)
++    when "CLEAR"   then return self~clear(target, words, into, context)
++    when "TEXT"    then return self~property(target, "textContent", words, into, context)
++    when "VALUE"   then return self~value(target, words, into, context)
++    when "ATTR"    then return self~attr(target, words, into, context)
++    when "STYLE"   then return self~style(target, words, into, context)
++    when "CLASS"   then return self~classes(target, words, into, context)
++    when "SHOW"    then return self~flag(target, "hidden", .false, words, into, context)
++    when "HIDE"    then return self~flag(target, "hidden", .true, words, into, context)
++    when "ENABLE"  then return self~flag(target, "disabled", .false, words, into, context)
++    when "DISABLE" then return self~flag(target, "disabled", .true, words, into, context)
++    when "FOCUS"   then return self~focus(target, words, into, context)
++    when "FIELD"   then return self~field(target, words, into, context)
++    when "BUTTON"  then return self~button(target, words, into, context)
++    when "TABLE"   then return self~table(target, words, into, context)
++    when "LIST"    then return self~list(target, words, into, context)
++    when "ON"      then return self~on(target, words, into, context)
++    when "OFF"     then return self~off(target, words, into, context)
 +    otherwise return self~bad(context, "unknown command" verb)
 +  end
 +jsError:
@@ -922,9 +922,9 @@ index 0000000..466bc9c
 +  if into \== .nil then return self~bad(context, "CLASS changes, or INTO, not both")
 +  list = target~classList
 +  do word over words~rest
-+    select
-+      when word~left(1) == "-" then list~remove(word~substr(2))
-+      when word~left(1) == "+" then list~add(word~substr(2))
++    select case word~left(1)
++      when "-" then list~remove(word~substr(2))
++      when "+" then list~add(word~substr(2))
 +      otherwise list~add(word)
 +    end
 +  end

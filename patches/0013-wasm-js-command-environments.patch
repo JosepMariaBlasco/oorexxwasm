@@ -426,7 +426,7 @@ index 0000000..162cd01
 +::routine haltsHere
 +  raise halt
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index e6e6dd0..5d815a5 100755
+index 0281c8b..4c86a54 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -505,6 +505,11 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
@@ -442,7 +442,7 @@ index e6e6dd0..5d815a5 100755
  "$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
  FETCH_SRV=$!; sleep 0.5
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 0d650fc..c414d5c 100755
+index e1e49c8..ba84912 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -99,6 +99,28 @@ CASES = [

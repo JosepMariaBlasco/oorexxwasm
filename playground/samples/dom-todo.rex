@@ -30,8 +30,8 @@ call count
 
 do forever
   WAIT INTO 'ev'
-  select
-    when ev~name = "ADD" then do
+  select case ev~name
+    when "ADD" then do
       item VALUE INTO 'text'
       if text~strip == "" then iterate
       n += 1
@@ -39,19 +39,19 @@ do forever
       'item'n ON click TOGGLE
       item VALUE '""'
     end
-    when ev~name = "TOGGLE" then do      -- ev~target: the item's nickname
+    when "TOGGLE" then do      -- ev~target: the item's nickname
       k = ev~target~substr(5)
       done.k = \done.k
       if done.k then ev~target CLASS '+done'
       else ev~target CLASS '-done'
     end
-    when ev~name = "CLEAR" then do k = 1 to n
+    when "CLEAR" then do k = 1 to n
       if done.k then do
         'item'k REMOVE
         done.k = 0; gone.k = 1
       end
     end
-    when ev~name = "CLOSE" then leave
+    when "CLOSE" then leave
   end
   call count
 end
