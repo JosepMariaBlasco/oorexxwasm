@@ -39,17 +39,17 @@ onInput}) -> {write, close, stop, done}.
 - test page wasm/tests/web-api.html, and wasm/tests/web-api.py: assertions
   over the API in headless Chromium.
 ---
- common/platform/unix/SysProcess.cpp  |  17 ++-
- interpreter/concurrency/Activity.cpp |  54 +++++++
- wasm/README.md                       |  76 ++++++++++
- wasm/build-web.sh                    |  97 ++++++++++++
- wasm/tests/web-api.html              |  76 ++++++++++
- wasm/tests/web-api.py                | 163 ++++++++++++++++++++
- wasm/web-pre.js                      | 219 +++++++++++++++++++++++++++
- wasm/web-stdin.cpp                   | 157 +++++++++++++++++++
- wasm/web/ooRexx-worker.js            | 127 ++++++++++++++++
- wasm/web/ooRexx.js                   | 212 ++++++++++++++++++++++++++
- 10 files changed, 1197 insertions(+), 1 deletion(-)
+ common/platform/unix/SysProcess.cpp  |  17 +-
+ interpreter/concurrency/Activity.cpp |  54 ++++++
+ wasm/README.md                       |  76 +++++++++
+ wasm/build-web.sh                    |  97 +++++++++++
+ wasm/tests/web-api.html              |  76 +++++++++
+ wasm/tests/web-api.py                | 163 ++++++++++++++++++
+ wasm/web-pre.js                      | 237 +++++++++++++++++++++++++++
+ wasm/web-stdin.cpp                   | 157 ++++++++++++++++++
+ wasm/web/ooRexx-worker.js            | 127 ++++++++++++++
+ wasm/web/ooRexx.js                   | 212 ++++++++++++++++++++++++
+ 10 files changed, 1215 insertions(+), 1 deletion(-)
  create mode 100755 wasm/build-web.sh
  create mode 100644 wasm/tests/web-api.html
  create mode 100755 wasm/tests/web-api.py
@@ -87,10 +87,10 @@ index 9875e7c..31d36cb 100644
  #endif
  
 diff --git a/interpreter/concurrency/Activity.cpp b/interpreter/concurrency/Activity.cpp
-index 279c46b..d0f82ab 100644
+index 5048817..e0a3044 100644
 --- a/interpreter/concurrency/Activity.cpp
 +++ b/interpreter/concurrency/Activity.cpp
-@@ -85,6 +85,52 @@
+@@ -86,6 +86,52 @@
  #include <atomic>
  #include <unordered_map>
  
@@ -143,7 +143,7 @@ index 279c46b..d0f82ab 100644
  
  const size_t ACT_STACK_SIZE = 20;
  
-@@ -1592,6 +1638,9 @@ void Activity::display(DirectoryClass *exobj)
+@@ -1625,6 +1671,9 @@ void Activity::display(DirectoryClass *exobj)
          }
      }
  
@@ -153,16 +153,16 @@ index 279c46b..d0f82ab 100644
      // get the error code, and format a message header
      RexxString *rc = (RexxString *)exobj->get(GlobalNames::RC);
      wholenumber_t errorCode = Interpreter::messageNumber(rc);
-@@ -1649,6 +1698,8 @@ void Activity::display(DirectoryClass *exobj)
+@@ -1682,6 +1731,8 @@ void Activity::display(DirectoryClass *exobj)
   */
  void Activity::displayDebug(DirectoryClass *exobj)
  {
 +    WasmMark errorMark(0, 2);
 +
-     // get the leading part to indicate this is a debug error, then compose the full
-     // message
-     RexxString *text = Interpreter::getMessageText(Message_Translations_debug_error);
-@@ -3428,6 +3479,8 @@ SecurityManager* Activity::getInstanceSecurityManager()
+     // see display()
+     FlagSetter displaying(displayingCondition);
+     FlagSetter failed(traceTargetFailed, false);
+@@ -3498,6 +3549,8 @@ class TraceOutputDispatcher : public ConditionTrappingDispatcher
   */
  void Activity::traceOutput(RexxActivation *activation, RexxString *line, StringTable *traceObject)
  {
@@ -171,7 +171,7 @@ index 279c46b..d0f82ab 100644
      if (callTraceExit(activation, line))
      {
          // if in profiling mode we only let collect the traceObjects,
-@@ -3513,6 +3566,7 @@ void Activity::sayOutput(RexxActivation *activation, RexxString *line)
+@@ -3590,6 +3643,7 @@ void Activity::sayOutput(RexxActivation *activation, RexxString *line)
  RexxString* Activity::traceInput(RexxActivation *activation)
  {
      RexxString *value;
@@ -622,10 +622,10 @@ index 0000000..3940711
 +sys.exit(1 if fails else 0)
 diff --git a/wasm/web-pre.js b/wasm/web-pre.js
 new file mode 100644
-index 0000000..f5620b4
+index 0000000..86b4e52
 --- /dev/null
 +++ b/wasm/web-pre.js
-@@ -0,0 +1,219 @@
+@@ -0,0 +1,237 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -802,6 +802,24 @@ index 0000000..f5620b4
 +      return 0;
 +    }
 +    return origIoctl(stream, cmd, arg);
++  };
++
++  // "file/" names a directory (ooRexx #1940 keeps the slash): as on Unix, a
++  // name ending in "/" that is not a directory is ENOTDIR, and creating
++  // anything but a directory under such a name is EISDIR.  MEMFS ignores the
++  // slash, and would find or create "file".
++  var ENOTDIR = 54, EISDIR = 31;
++  var trailing = function(path) { return typeof path === 'string' && path.length > 1 && path.charAt(path.length - 1) === '/'; };
++  var origLookupPath = FS.lookupPath;
++  FS.lookupPath = function(path, opts) {
++    var r = origLookupPath(path, opts);
++    if (trailing(path) && !(opts && opts.parent) && r.node && !FS.isDir(r.node.mode)) throw new FS.ErrnoError(ENOTDIR);
++    return r;
++  };
++  var origMknod = FS.mknod;
++  FS.mknod = function(path, mode, dev) {
++    if (trailing(path) && !FS.isDir(mode)) throw new FS.ErrnoError(EISDIR);
++    return origMknod(path, mode, dev);
 +  };
 +
 +  ENV['REXX_PATH'] = '/usr/lib/ooRexx';     // the preloaded extension classes

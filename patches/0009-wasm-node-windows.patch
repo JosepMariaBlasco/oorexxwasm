@@ -37,7 +37,7 @@ through REXX_PATH: cmd.exe would take rexx.js in PATH for "rexx").
  common/platform/unix/SysWasmHost.hpp          |   1 +
  interpreter/RexxClasses/StreamClasses.orx     |  10 +-
  interpreter/classes/RexxInfoClass.cpp         |   7 +
- interpreter/platform/unix/SysFileSystem.cpp   | 234 +++++++++++++++++-
+ interpreter/platform/unix/SysFileSystem.cpp   | 232 +++++++++++++++++-
  interpreter/platform/unix/SysFileSystem.hpp   |   1 +
  interpreter/platform/unix/SystemCommands.cpp  | 141 ++++++++++-
  .../platform/unix/SystemInterpreter.cpp       |  31 ++-
@@ -47,7 +47,7 @@ through REXX_PATH: cmd.exe would take rexx.js in PATH for "rexx").
  wasm/build-node.sh                            |   8 +-
  wasm/build-test.sh                            |   6 +
  wasm/node-pre.js                              |  36 ++-
- 15 files changed, 576 insertions(+), 37 deletions(-)
+ 15 files changed, 574 insertions(+), 37 deletions(-)
 
 diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
 index 31d36cb..0cab080 100644
@@ -215,10 +215,10 @@ index 263c08f..92b62b3 100644
  // orxWasmCommandRun(): the host has no processes
  #define WASM_CMD_NO_PROCESSES  (-100000)
 diff --git a/interpreter/RexxClasses/StreamClasses.orx b/interpreter/RexxClasses/StreamClasses.orx
-index 0f64943..9e6db86 100644
+index 9d38cfe..723c561 100644
 --- a/interpreter/RexxClasses/StreamClasses.orx
 +++ b/interpreter/RexxClasses/StreamClasses.orx
-@@ -546,7 +546,10 @@ return position
+@@ -551,7 +551,10 @@ return position
  ::method getSeparator private class external "LIBRARY REXX file_separator"
  ::method getPathSeparator private class external "LIBRARY REXX file_path_separator"
  ::constant separator (.File~getSeparator)
@@ -230,7 +230,7 @@ index 0f64943..9e6db86 100644
  
  ::METHOD isCaseSensitive CLASS EXTERNAL 'LIBRARY REXX file_case_sensitive'
  ::METHOD listRoots CLASS EXTERNAL 'LIBRARY REXX file_list_roots'
-@@ -774,8 +777,9 @@ return position
+@@ -779,8 +782,9 @@ return position
    end
    else do
      -- this is the standard Unix /dir/file or Windows NT namespace d:\dir form
@@ -261,7 +261,7 @@ index 321271a..61f3d96 100644
  }
  
 diff --git a/interpreter/platform/unix/SysFileSystem.cpp b/interpreter/platform/unix/SysFileSystem.cpp
-index f4750e7..a3ed712 100644
+index 44994f3..9dfe890 100644
 --- a/interpreter/platform/unix/SysFileSystem.cpp
 +++ b/interpreter/platform/unix/SysFileSystem.cpp
 @@ -68,6 +68,18 @@
@@ -319,23 +319,21 @@ index f4750e7..a3ed712 100644
          {
              return false;        // found a directory portion before an extension...we're extensionless
          }
-@@ -273,6 +285,15 @@ bool SysFileSystem::hasDirectory(const char *name)
- {
-     // hasDirectory() means we have enough absolute directory
-     // information at the beginning to bypass performing path searches.
+@@ -276,6 +288,13 @@ bool SysFileSystem::hasDirectory(const char *name)
+     // Names starting with "./" or "../" are relative: like any other relative
+     // name, they are searched for in every directory of the search order, so
+     // that "../name" is looked for in the parent of each of them.
 +    if (SysProcess::isWindowsHost())
 +    {
-+        // also C:..., \\..., .\\ and ..\\ (a drive letter is enough: C:file
-+        // is relative to that drive's directory, not to be searched for)
++        // also C:... and \\... (a drive letter is enough: C:file is relative
++        // to that drive's directory, not to be searched for)
 +        return name[0] == '~' || isPathDelimiter(name[0]) ||
-+              (isalpha((unsigned char)name[0]) && name[1] == ':') ||
-+              (name[0] == '.' && isPathDelimiter(name[1])) ||
-+              (name[0] == '.' && name[1] == '.' && isPathDelimiter(name[2]));
++              (isalpha((unsigned char)name[0]) && name[1] == ':');
 +    }
-     return name[0] == '~' || name[0] == '/' ||
-           (name[0] == '.' && name[1] == '/') ||
-           (name[0] == '.' && name[1] == '.' && name[2] == '/');
-@@ -417,9 +438,11 @@ bool SysFileSystem::searchPath(const char *name, const char *path, FileNameBuffe
+     return name[0] == '~' || name[0] == '/';
+ }
+ 
+@@ -418,9 +437,11 @@ bool SysFileSystem::searchPath(const char *name, const char *path, FileNameBuffe
      //
      // Most allocators let that pass unnoticed. OpenBSD's does not, and the test
      // suite died there with a SIGSEGV inside strchr called from this function.
@@ -348,7 +346,7 @@ index f4750e7..a3ed712 100644
          size_t subLength = (q == NULL) ? strlen(p) : (size_t)(q - p);
  
          // skip empty entries, the "::" in a path case
-@@ -478,12 +501,22 @@ bool SysFileSystem::resolveTilde(FileNameBuffer &name)
+@@ -479,12 +500,22 @@ bool SysFileSystem::resolveTilde(FileNameBuffer &name)
      // does it start with the user home marker?
      // this is the typical case.  This is a directory based off of
      // the current users home directory.
@@ -373,7 +371,7 @@ index f4750e7..a3ed712 100644
          // We don't need to add a slash : If we have "~" alone, then no final slash expected (same as for "~user"). If "~/..." then we have the slash already
          name += (const char *)tempName;
      }
-@@ -550,6 +583,11 @@ bool SysFileSystem::canonicalizeName(FileNameBuffer &name)
+@@ -551,6 +582,11 @@ bool SysFileSystem::canonicalizeName(FileNameBuffer &name)
          return false;
      }
  
@@ -385,7 +383,7 @@ index f4750e7..a3ed712 100644
      // does it start with the user home marker?
      if (name.startsWith('~'))
      {
-@@ -589,6 +627,117 @@ bool SysFileSystem::canonicalizeName(FileNameBuffer &name)
+@@ -590,6 +626,117 @@ bool SysFileSystem::canonicalizeName(FileNameBuffer &name)
  }
  
  
@@ -501,9 +499,9 @@ index f4750e7..a3ed712 100644
 +
 +
  /**
-  * Normalize an absolute Unix path name.  Removes duplicate and trailing
-  * slashes, resolves and removes ./ or ../  This works for any path name,
-@@ -719,6 +868,12 @@ int SysFileSystem::deleteFile(const char *name)
+  * Normalize an absolute Unix path name.  Removes duplicate slashes, resolves
+  * and removes ./ or ../  A trailing slash is kept only if the name ended with
+@@ -729,6 +876,12 @@ int SysFileSystem::deleteFile(const char *name)
   */
  int SysFileSystem::deleteDirectory(const char *name)
  {
@@ -516,7 +514,7 @@ index f4750e7..a3ed712 100644
      return remove(name) == 0 ? 0 : errno;
  }
  
-@@ -1198,6 +1353,11 @@ bool SysFileSystem::isCaseSensitive()
+@@ -1208,6 +1361,11 @@ bool SysFileSystem::isCaseSensitive()
   */
  bool SysFileSystem::isCaseSensitive(const char *name)
  {
@@ -528,7 +526,7 @@ index f4750e7..a3ed712 100644
  #if defined HAVE_PC_CASE_SENSITIVE || defined HAVE_FS_CASEFOLD_FL
      AutoFree tmp = strdup(name);
  
-@@ -1261,6 +1421,25 @@ bool SysFileSystem::isCaseSensitive(const char *name)
+@@ -1271,6 +1429,25 @@ bool SysFileSystem::isCaseSensitive(const char *name)
   */
  int SysFileSystem::getRoots(FileNameBuffer &roots)
  {
@@ -554,7 +552,7 @@ index f4750e7..a3ed712 100644
      // just one root to return
      roots = "/";
      return 1;
-@@ -1285,7 +1464,8 @@ const char* SysFileSystem::getSeparator()
+@@ -1295,7 +1472,8 @@ const char* SysFileSystem::getSeparator()
   */
  const char* SysFileSystem::getPathSeparator()
  {
@@ -564,7 +562,7 @@ index f4750e7..a3ed712 100644
  }
  
  
-@@ -1313,6 +1493,17 @@ bool SysFileSystem::getCurrentDirectory(FileNameBuffer &directory)
+@@ -1323,6 +1501,17 @@ bool SysFileSystem::getCurrentDirectory(FileNameBuffer &directory)
      {
          if (getcwd(directory, directory.capacity()) != NULL)
          {
@@ -582,7 +580,7 @@ index f4750e7..a3ed712 100644
              return true;
          }
          // erange indicates the buffer was too small. Anything else is a
-@@ -1352,7 +1543,7 @@ bool SysFileSystem::setCurrentDirectory(const char *directory)
+@@ -1362,7 +1551,7 @@ bool SysFileSystem::setCurrentDirectory(const char *directory)
   */
  bool samePaths(const char *path1, const char *path2)
  {
@@ -591,7 +589,7 @@ index f4750e7..a3ed712 100644
  
      // realpath() gives a NULL return if the file does not exist. For this operation
      // at least one of the file must exist. If either does not exist, they cannot be bad.
-@@ -1361,7 +1552,7 @@ bool samePaths(const char *path1, const char *path2)
+@@ -1371,7 +1560,7 @@ bool samePaths(const char *path1, const char *path2)
          return false;
      }
  
@@ -600,7 +598,7 @@ index f4750e7..a3ed712 100644
  
      if (actualPath2 == NULL)
      {
-@@ -1746,6 +1937,13 @@ int SysFileSystem::moveFile(const char *fromFile, const char *toFile)
+@@ -1756,6 +1945,13 @@ int SysFileSystem::moveFile(const char *fromFile, const char *toFile)
   */
  const char* SysFileSystem::getPathEnd(const char *name)
  {
@@ -614,7 +612,7 @@ index f4750e7..a3ed712 100644
      return strrchr(name, PathDelimiter);             // find the last backslash in name
  }
  
-@@ -1760,6 +1958,11 @@ const char* SysFileSystem::getPathEnd(const char *name)
+@@ -1770,6 +1966,11 @@ const char* SysFileSystem::getPathEnd(const char *name)
   */
  const char* SysFileSystem::getPathStart(const char *name)
  {
@@ -626,7 +624,7 @@ index f4750e7..a3ed712 100644
      // this always starts with the name
      return name;
  }
-@@ -1772,6 +1975,17 @@ const char* SysFileSystem::getPathStart(const char *name)
+@@ -1782,6 +1983,17 @@ const char* SysFileSystem::getPathStart(const char *name)
   */
  bool SysFileSystem::getTemporaryPath(FileNameBuffer &temporary)
  {
@@ -657,10 +655,10 @@ index d4c7091..e002660 100644
       static RexxString* extractDirectory(RexxString *file);
       static RexxString* extractExtension(RexxString *file);
 diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform/unix/SystemCommands.cpp
-index 638c838..01433ca 100644
+index 607691e..910e150 100644
 --- a/interpreter/platform/unix/SystemCommands.cpp
 +++ b/interpreter/platform/unix/SystemCommands.cpp
-@@ -59,6 +59,7 @@
+@@ -60,6 +60,7 @@
  #include "SysThread.hpp"
  #include "SysFile.hpp"                // HOST_ERRNO
  #include "SysWasmHost.hpp"
@@ -668,7 +666,7 @@ index 638c838..01433ca 100644
  
  #include "RexxInternalApis.h"
  #include <sys/types.h>
-@@ -196,6 +197,14 @@ public:
+@@ -197,6 +198,14 @@ public:
   */
  RexxString *SystemInterpreter::getDefaultAddressName()
  {
@@ -683,7 +681,7 @@ index 638c838..01433ca 100644
      return GlobalNames::INITIALADDRESS;
  }
  
-@@ -477,7 +486,8 @@ char *unquote(const char *s)
+@@ -481,7 +490,8 @@ char *unquote(const char *s)
              *u++ = *s;
              escape = false;
          }
@@ -693,7 +691,7 @@ index 638c838..01433ca 100644
          {
              escape = true;
          }
-@@ -509,6 +519,12 @@ bool sys_process_cd(RexxExitContext *context, const char * cmd, RexxObjectPtr rc
+@@ -513,6 +523,12 @@ bool sys_process_cd(RexxExitContext *context, const char * cmd, RexxObjectPtr rc
      }
      if ((!*st) || (strlen(cmd) == 2))
      {
@@ -706,7 +704,7 @@ index 638c838..01433ca 100644
          home_dir = getenv("HOME");
          if (!home_dir)
          {
-@@ -846,9 +862,10 @@ static void wasmCommandDeliver(RexxIORedirectorContext *ioContext, int which)
+@@ -863,9 +879,10 @@ static void wasmCommandDeliver(RexxIORedirectorContext *ioContext, int which)
   * command runs as a process of the host (SysWasmHost.hpp), if it has any.
   */
  static RexxObjectPtr wasmCommandHandler(RexxExitContext *context, CSTRING commandString,
@@ -719,7 +717,7 @@ index 638c838..01433ca 100644
      CSTRING inputBuffer = NULL;
      size_t inputLength = 0;
  
-@@ -988,17 +1005,73 @@ EM_JS(int, wasmNodeCommandRun, (char **argv, char **envp, const char *cwd,
+@@ -1005,17 +1022,73 @@ EM_JS(int, wasmNodeCommandRun, (char **argv, char **envp, const char *cwd,
  
      var file = args[0];
      var rest = args.slice(1);
@@ -796,7 +794,7 @@ index 638c838..01433ca 100644
      };
      if (flags & 1)
      {
-@@ -1016,8 +1089,17 @@ EM_JS(int, wasmNodeCommandRun, (char **argv, char **envp, const char *cwd,
+@@ -1033,8 +1106,17 @@ EM_JS(int, wasmNodeCommandRun, (char **argv, char **envp, const char *cwd,
      }
      catch (e)
      {
@@ -814,7 +812,7 @@ index 638c838..01433ca 100644
      globalThis.__orxCmd = [r.stdout || null, r.stderr || null];
      if (r.error)
      {
-@@ -1099,6 +1181,44 @@ RexxObjectPtr RexxEntry ioCommandHandler(RexxExitContext *context, RexxStringObj
+@@ -1116,6 +1198,44 @@ RexxObjectPtr RexxEntry ioCommandHandler(RexxExitContext *context, RexxStringObj
              argv[1] = NULL;
          }
      }
@@ -859,7 +857,7 @@ index 638c838..01433ca 100644
      else
      {   // Set up the full path to the requested shell.
          strcpy(shell, SYSSHELLPATH);
-@@ -1125,7 +1245,7 @@ RexxObjectPtr RexxEntry ioCommandHandler(RexxExitContext *context, RexxStringObj
+@@ -1142,7 +1262,7 @@ RexxObjectPtr RexxEntry ioCommandHandler(RexxExitContext *context, RexxStringObj
      }
  
  #if defined(ORX_WASM)
@@ -868,7 +866,7 @@ index 638c838..01433ca 100644
  #else
      if (ioContext->IsRedirectionRequested())
      {
-@@ -1340,6 +1460,13 @@ void SysInterpreterInstance::registerCommandHandlers(InterpreterInstance *_insta
+@@ -1357,6 +1477,13 @@ void SysInterpreterInstance::registerCommandHandlers(InterpreterInstance *_insta
      _instance->addCommandHandler("",        (REXXPFN)ioCommandHandler, HandlerType::REDIRECTING);
      _instance->addCommandHandler("COMMAND", (REXXPFN)ioCommandHandler, HandlerType::REDIRECTING);
      _instance->addCommandHandler("SYSTEM",  (REXXPFN)ioCommandHandler, HandlerType::REDIRECTING);
@@ -946,7 +944,7 @@ index 0531c9d..b238e71 100644
      if (value == NULL)
      {
 diff --git a/interpreter/runtime/RexxUtilCommon.cpp b/interpreter/runtime/RexxUtilCommon.cpp
-index 255cc9e..c11629d 100644
+index 53dc808..84ea516 100644
 --- a/interpreter/runtime/RexxUtilCommon.cpp
 +++ b/interpreter/runtime/RexxUtilCommon.cpp
 @@ -54,6 +54,7 @@

@@ -8,7 +8,7 @@ processes, memfs, flaky	base/class/File	searchPath('sh'): no shell on PATH; *_FR
 processes	base/class/Method	rexxc: RC 127
 processes	base/class/RexxQueue	'rexx -e ...' RC 127
 processes	base/class/Routine	rexxc: RC 127
-processes	base/class/Stream	'id -u' / 'rexx ...' RC 127
+processes	base/class/Stream	'id -u' / 'rexx ...' RC 127; TEST_STREAM_SUPPLIER_TRANSIENT_UNOPENED (test/trunk r13515, bug #2169), Node: the child gets its input from a socket (libuv), which ooRexx takes for a persistent stream (natively too, with a socket)
 processes	base/directives/OPTIONS	command results RC 127
 processes	base/keyword/ADDRESS	shell commands (cd, exit, cat, sort...) RC 127
 processes	base/keyword/PARSE	external command RC 127
@@ -40,3 +40,19 @@ flaky	base/bif/BEEP	TEST_BEEP_DURATION: a 10 ms BEEP measured 3 ms once under No
 processes	base/class/CommandHandler	TEST_FORWARD_TO_NATIVE: "exit 3" in the default environment, RC 127 (no processes)
 flaky	base/rexxutil/SysSleep	TEST_SLEEP_DURATION: SysSleep(0.00000001) measured 0 s once in Firefox in CI (the browser's clock resolution; it passed when run again); TEST_SLEEP_CONCURRENT: SysSleep(2.4) took 2.450 s once on Windows in CI (the margin is 26 ms; a loaded runner)
 flaky	base/class/Ticker	TEST_TICKER_THREE_ARGS_TIMESPAN_TRIGGER: a 0.5 s Ticker fired 5 times in a SysSleep of 0.75 s under Node in CI (timing; 10 of 10 pass in a session)
+processes	base/class/Class	test/trunk r13515: TEST_METHODS_SUPPLIER_NOT_A_SUPPLIER, TEST_METACLASS_NEW_NOT_A_CLASS run a rexx child process, RC 127
+processes	base/class/Message	test/trunk r13515: TEST_RESULT_CHANGED_CONDITION runs a rexx child process, RC 127
+processes	base/class/Object	test/trunk r13515: TEST_REQUEST_ARRAY_NOT_AN_ARRAY, TEST_COPY_IMAGE_OBJECT_VARIABLES run a rexx child process, RC 127
+processes	base/class/Package	test/trunk r13515: TEST_NEW_CONTEXT_NATIVEMETHOD runs a rexx child process, RC 127
+processes	base/class/String/comparisonOperators	test/trunk r13515: TEST_COMPARE_NO_ARGUMENT runs a rexx child process, RC 127
+processes	base/expressions/SPECIAL	test/trunk r13515 (bug #1247): TEST_1247_* run a rexx child process, RC 127 in the browsers (under Node they pass: Error 11.1)
+processes	base/keyword/FORWARD	test/trunk r13515: TEST_FORWARD_SELF_RECURSION runs a rexx child process, RC 127
+processes	base/keyword/RAISE	test/trunk r13515: TEST_PROPAGATE_TRACEBACK_NOT_STRING runs a rexx child process, RC 127
+processes	base/keyword/CATCH	test/trunk r13515: 15 errors and 3 failures, all from tests that run rexx or rexxc as a child process (RC 127) in the browsers; under Node 144/144
+processes	base/bif/SETLOCAL	test/trunk r13515: runs a rexx child process, RC 127
+processes	base/rexxutil/SysDumpVariables	test/trunk r13515: TEST_STRING_RAISES runs a rexx child process, RC 127
+processes	base/rexxutil/SysFormatMessage	test/trunk r13515: TEST_STRING_RAISES runs a rexx child process, RC 127
+processes	base/rexxutil/SysMutexSem	test/trunk r13515: TEST_CREATE_NO_NAME runs a rexx child process, RC 127
+processes	base/rexxutil/SysStemCopy	test/trunk r13515: TEST_STEM_NAME_DROPPED_BY_ARGUMENT runs a rexx child process, RC 127
+processes	base/security.manager/SecurityManager	test/trunk r13515: the REQUIRES and stream-replacement tests run a rexx child process, RC 127
+test-bug	base/rexxutil/platform/unix/SysGetMessage	test/trunk r13515, Node: the damaged-catalog tests detect glibc with the host's "getconf GNU_LIBC_VERSION", but rexx.wasm uses Emscripten's musl, and ooRexx checks catalogs only when built with __GLIBC__: 7 failures ("Message catalog not found")

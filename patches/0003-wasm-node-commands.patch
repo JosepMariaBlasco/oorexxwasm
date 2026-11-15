@@ -91,10 +91,10 @@ index de6abad..709a51e 100644
  #ifdef HAVE_KERN_PROC_ARGV
  /**
 diff --git a/interpreter/platform/unix/SystemCommands.cpp b/interpreter/platform/unix/SystemCommands.cpp
-index f2d69b8..638c838 100644
+index 18378e9..607691e 100644
 --- a/interpreter/platform/unix/SystemCommands.cpp
 +++ b/interpreter/platform/unix/SystemCommands.cpp
-@@ -921,6 +921,149 @@ static RexxObjectPtr wasmCommandHandler(RexxExitContext *context, CSTRING comman
+@@ -938,6 +938,149 @@ static RexxObjectPtr wasmCommandHandler(RexxExitContext *context, CSTRING comman
  #endif
  
  

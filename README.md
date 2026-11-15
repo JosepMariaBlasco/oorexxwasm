@@ -31,7 +31,7 @@ the series is cut as the work needs.
 
 ## The patch series
 
-Applied in order on top of ooRexx SVN trunk **r13398** (the minimum)
+Applied in order on top of ooRexx SVN trunk **r13514** (the minimum)
 (`https://svn.code.sf.net/p/oorexx/code-0/main/trunk`):
 
 | Patch | What it adds |
@@ -81,7 +81,7 @@ and installs a build. Everything goes into the directory that contains your
 clone (`$ORX_WASM_WORK`, overridable), next to it:
 
 ```
-oorexx/        ooRexx trunk r13398 + patches
+oorexx/        ooRexx trunk r13514 + patches
 build-wasm/    bin/ (Node and browser, MEMFS), bin-node/ (Node CLI), bin-web/ (pages)
 saved-build/   the prebuilt binaries it downloaded
 emsdk/         Emscripten, only when compiling
@@ -125,22 +125,20 @@ interpreter) runs with `tests/run-suite.sh` under Node and with
 with the test suite's native libraries (`build-wasm/bin-node-test`,
 `bin-web-test`, from `wasm/build-test.sh`: the API test groups need them).
 Results on
-r13389 (test/trunk r13388),
-406 test groups (GitHub Actions runners,
-Ubuntu 24.04):
+r13514 (test/trunk r13515),
+409 test groups (run locally, Ubuntu 24.04; Firefox, WebKit and Windows in
+GitHub Actions on demand):
 
 | | groups passing |
 |---|---:|
-| native (same series) | 404 |
+| native (same series) | 406 |
 | Node | 403 |
-| Chromium | 372 |
-| Firefox | 372 |
-| WebKit | 373 |
+| Chromium | 360 |
 
 Every difference with native has a known cause (mostly: no processes in the
-browser):
-[`results/suite-platforms-r13388-series.md`](results/suite-platforms-r13388-series.md).
-The results on r13379, r13358, r13346, r13344, r13331, r13325, r13299, r13291, r13286, r13284, r13282, r13278, r13275, r13268 and r13263, the previous bases, are kept next to them.
+browser, and test/trunk r13515 runs many new tests as child processes):
+[`results/suite-platforms-r13515-series.md`](results/suite-platforms-r13515-series.md).
+The results on r13389 (six platforms, test/trunk r13388), r13379, r13358, r13346, r13344, r13331, r13325, r13299, r13291, r13286, r13284, r13282, r13278, r13275, r13268 and r13263, the previous bases, are kept next to them.
 
 The suite also runs in GitHub Actions on demand
 ([`.github/workflows/suite.yml`](.github/workflows/suite.yml): Actions >
