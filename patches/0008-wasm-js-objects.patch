@@ -157,13 +157,13 @@ Rexx has read it, even if JavaScript collects the proxy meanwhile.
  wasm/extra-packages.cpp                |   66 +
  wasm/js-bridge.js                      |  241 +++
  wasm/js-realm.js                       | 1004 ++++++++++++
- wasm/tests/js-arrays.rex               |  169 ++
- wasm/tests/js-booleans.rex             |   78 +
- wasm/tests/js-errors.rex               |  428 +++++
+ wasm/tests/js-arrays.rex               |  171 ++
+ wasm/tests/js-booleans.rex             |   79 +
+ wasm/tests/js-errors.rex               |  473 ++++++
  wasm/tests/js-extend-gc.rex            |  111 ++
- wasm/tests/js-extend.rex               |  157 ++
- wasm/tests/js-floats.rex               |  112 ++
- wasm/tests/js-proxy.rex                |  136 ++
+ wasm/tests/js-extend.rex               |  164 ++
+ wasm/tests/js-floats.rex               |  114 ++
+ wasm/tests/js-proxy.rex                |  138 ++
  wasm/tests/qualify-node-cli.sh         |  277 ++++
  wasm/tests/web-api.html                |    4 +-
  wasm/tests/web-api.py                  |  236 ++-
@@ -171,10 +171,10 @@ Rexx has read it, even if JavaScript collects the proxy meanwhile.
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
  wasm/web-js.cpp                        | 2050 ++++++++++++++++++++++++
- wasm/web/js.cls                        |  750 +++++++++
+ wasm/web/js.cls                        |  794 +++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 +++
- 24 files changed, 6438 insertions(+), 12 deletions(-)
+ 24 files changed, 6541 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -1897,10 +1897,10 @@ index 0000000..9aca10d
 +})();
 diff --git a/wasm/tests/js-arrays.rex b/wasm/tests/js-arrays.rex
 new file mode 100644
-index 0000000..9ca4446
+index 0000000..75f2212
 --- /dev/null
 +++ b/wasm/tests/js-arrays.rex
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,171 @@
 +/* js-arrays.rex: the shape of a Rexx Array in JavaScript, in the realm     */
 +/* where Rexx runs: the worker's in the browser, Node's under Node.  An     */
 +/* Array goes as an array (a copy) and keeps its size, an empty slot being  */
@@ -1963,9 +1963,10 @@ index 0000000..9ca4446
 +deep = .array~new; cur = deep; do 999; n = .array~new; cur~append(n); cur = n; end
 +call check "1000 levels deep: copied", F("v", "let k = 1; while (v.length) { v = v[0]; k++; } return k")~call(.nil, deep) == 1000
 +cur~append(.array~new)
-+signal on syntax name s1
-+y = F("v", "return 1")~call(.nil, deep)
-+s1:
++do
++  y = F("v", "return 1")~call(.nil, deep)
++catch syntax
++end
 +call check "1001 levels deep: SYNTAX 98.900, a RangeError", condition("O")~code == "98.900" & -
 +  pos("RangeError: Arrays, Directories or StringTables nested more than 1000 deep", condition("O")~additional[1]) > 0
 +
@@ -2029,17 +2030,18 @@ index 0000000..9ca4446
 +
 +past: procedure                     -- t[4] (r), t[4] = 1 (w), t~put(1, 4) (p): the RangeError's message
 +  use arg t, how
-+  signal on syntax name pastbad
-+  select
-+    when how == "r" then x = t[4]
-+    when how == "w" then t[4] = 1
-+    otherwise t~put(1, 4)
++  do
++    select
++      when how == "r" then x = t[4]
++      when how == "w" then t[4] = 1
++      otherwise t~put(1, 4)
++    end
++    return "no error"
++  catch syntax
++    m = condition("O")~additional[1]
++    parse var m "RangeError: " msg
++    return msg
 +  end
-+  return "no error"
-+pastbad:
-+  m = condition("O")~additional[1]
-+  parse var m "RangeError: " msg
-+  return msg
 +
 +F: procedure                        -- F(params, body): a JavaScript function
 +  return .fn~call(.nil, arg(1), arg(2))
@@ -2072,10 +2074,10 @@ index 0000000..9ca4446
 +::requires "js.cls"
 diff --git a/wasm/tests/js-booleans.rex b/wasm/tests/js-booleans.rex
 new file mode 100644
-index 0000000..00d441e
+index 0000000..7d308f3
 --- /dev/null
 +++ b/wasm/tests/js-booleans.rex
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,79 @@
 +/* js-booleans.rex: booleans across the JavaScript bridge (.LogicalWrapper, */
 +/* logicalwrapper.cls), in the realm where Rexx runs: the worker's in the   */
 +/* browser, Node's under Node.  A .LogicalWrapper goes to JavaScript as a   */
@@ -2094,9 +2096,10 @@ index 0000000..00d441e
 +  .js~false~isA(.LogicalWrapper) & .js~false~value == 0
 +call check ".js~bool(a > b) is .LogicalWrapper~of", .js~bool(3 > 2) == .LogicalWrapper~true & show~call(.nil, .js~bool(2 > 3)) == "boolean false"
 +call check ".js~box('BOolean', x) too", .js~box("bo", 1)~isA(.LogicalWrapper) & show~call(.nil, .js~box("Boolean", 0)) == "boolean false"
-+signal on syntax name s1
-+x = .js~bool("true")
-+s1:
++do
++  x = .js~bool("true")
++catch syntax
++end
 +call check ".js~bool takes a Rexx logical value only (34.900)", condition("O")~code == "34.900"
 +call check ".true is still the string 1", show~call(.nil, .true) == "string 1"
 +call check "a subclass of .LogicalWrapper is a boolean too", show~call(.nil, .MyBool~false) == "boolean false"
@@ -2156,10 +2159,10 @@ index 0000000..00d441e
 +::requires "json.cls"
 diff --git a/wasm/tests/js-errors.rex b/wasm/tests/js-errors.rex
 new file mode 100644
-index 0000000..91048e1
+index 0000000..e45eddc
 --- /dev/null
 +++ b/wasm/tests/js-errors.rex
-@@ -0,0 +1,428 @@
+@@ -0,0 +1,473 @@
 +/* js-errors.rex: tests of errors and text across the JavaScript bridge      */
 +/* (wasm/js-realm.js, wasm/web-js.cpp), in the realm where Rexx runs: the    */
 +/* worker's in the browser, Node's under Node.  A Rexx condition in          */
@@ -2208,9 +2211,10 @@ index 0000000..91048e1
 +
 +-- Through JavaScript and back: a Rexx condition that JavaScript lets through
 +-- is raised again as itself, not as a JavaScript error
-+signal on syntax name rt0
-+o~add("lots")
-+rt0:
++do
++  o~add("lots")
++catch syntax
++end
 +direct = condition("O")~code condition("O")~additional[1]
 +r = errorOf(F("o", "o.add('lots')"), .array~of(.nil, o))
 +call check "back to Rexx: the condition itself (41.1, the same message)", r == direct & r~word(1) == "41.1"
@@ -2218,14 +2222,15 @@ index 0000000..91048e1
 +call check "back to Rexx: a 98.900 of Rexx's own, as it was", r == "98.900 a Rexx error of its own"
 +r = errorOf(F("o", "try { o.add('lots') } catch (e) { throw e }"), .array~of(.nil, o))
 +call check "back to Rexx: caught and thrown again, still itself", r == direct
-+signal on syntax name rt2
-+o~descr
-+rt2:
++do
++  o~descr
++catch syntax
++end
 +c = condition("O"); direct = c~code "|" c~description "|" c~additional[1] "|" c~result
-+signal on syntax name rt3
-+F("o", "o.descr()")~call(.nil, o)
-+rt3:
-+c = condition("O")
++do
++  F("o", "o.descr()")~call(.nil, o)
++catch c = syntax
++end
 +call check "back to Rexx: its description and result too", -
 +  c~code "|" c~description "|" c~additional[1] "|" c~result == direct & direct == "98.900 | my description | given | 5"
 +-- any other condition reaches the caller's trap as without JavaScript in between
@@ -2266,9 +2271,17 @@ index 0000000..91048e1
 +call check "... CALL ON HALT has run when the clause of the call ends", -
 +  haltCallOnAtCall(halts, o) == "HALT The NIL object"
 +call check "... untrapped: SYNTAX 4.1", haltUntrapped(halts, o) == "4.1"
-+signal on syntax name rt1
-+F("o", "o.callBack(() => { throw new TypeError('inner') })")~call(.nil, o)
-+rt1:
++-- a CATCH clause of a block in the caller, as its SIGNAL ON: USER, NOTREADY,
++-- ERROR, FAILURE (with RC) and HALT, the call of JavaScript abandoned
++do k over .array~of("USER MINE | the description | The NIL object", "NOTREADY | the description | The NIL object", -
++                    "ERROR | the description | 5", "FAILURE | the description | 6")
++  call check k~word(1) "through JavaScript: the caller's CATCH, as itself (RC too)", condCatch(o, k~word(1)) == k
++end
++call check "a HALT through JavaScript: the caller's CATCH HALT", haltCatch(halts, o) == "HALT"
++do
++  F("o", "o.callBack(() => { throw new TypeError('inner') })")~call(.nil, o)
++catch syntax
++end
 +a = condition("O")~additional
 +call check "back to Rexx twice: the JavaScript exception, [2] the TypeError", -
 +  a[1] == "JavaScript error: TypeError: inner" & a[2]~isA(.JSObject) & a[2]~message == "inner"
@@ -2276,23 +2289,25 @@ index 0000000..91048e1
 +call check "a RexxError JavaScript made itself: a JavaScript error", r == "98.900 JavaScript error: RexxError: made in JavaScript"
 +
 +-- A JavaScript exception in Rexx: additional [1] message, [2] what was thrown, [3] its stack
-+signal on syntax name s1
-+F("", "throw new TypeError('boom')")~call(.nil)
-+s1:
-+c = condition("O")
++do
++  F("", "throw new TypeError('boom')")~call(.nil)
++catch c = syntax
++end
 +call check "a JavaScript exception: SYNTAX 98.900", c~code == "98.900"
 +a = c~additional
 +call check "additional[1]: the message", a[1] == "JavaScript error: TypeError: boom"
 +call check "additional[2]: the thrown object", a[2]~isA(.JSObject) & a[2]~message == "boom"
 +call check "additional[3]: its stack, as text", a~items == 3 & a[3]~isA(.String) & a[3]~length > 0
-+signal on syntax name s2
-+F("", "throw 42")~call(.nil)
-+s2:
++do
++  F("", "throw 42")~call(.nil)
++catch syntax
++end
 +a = condition("O")~additional
 +call check "a thrown primitive: no stack, two items", a~items == 2 & a[2] == 42
-+signal on syntax name s3
-+.js~Promise~reject(.js~Error~new("rejected"))~await
-+s3:
++do
++  .js~Promise~reject(.js~Error~new("rejected"))~await
++catch syntax
++end
 +a = condition("O")~additional
 +call check "a rejected Promise: the stack too", a~items == 3 & a[2]~message == "rejected"
 +
@@ -2316,10 +2331,10 @@ index 0000000..91048e1
 +call check "an argument whose conversion raises: the caller gets the condition", r == "93.900 from supplier"
 +call check "... and JavaScript was not called", F("", "return globalThis.argRan")~call(.nil) == "no"
 +call check "... and the thread goes on", .js~Promise~resolve(5)~await == 5
-+signal on syntax name argDescr
-+F("x", "return 1")~call(.nil, o~badValue("supplierdescr"))
-+argDescr:
-+c = condition("O")
++do
++  F("x", "return 1")~call(.nil, o~badValue("supplierdescr"))
++catch c = syntax
++end
 +call check "... with its description and result", -
 +  c~code "|" c~description "|" c~additional[1] "|" c~result == "93.900 | supplier's description | from supplier | 6"
 +
@@ -2342,10 +2357,10 @@ index 0000000..91048e1
 +r = errorOf(F("s", "return s"), .array~of(.nil, "ff"x))
 +call check "not UTF-8: SYNTAX 23.900, not U+FFFD", r~left(6) == "23.900" & -
 +  r~pos("argument 2 is not valid UTF-8 (byte 1 is 'FF'x)") > 0 & r~pos(".js~bytes") > 0
-+signal on syntax name s6
-+x = F("s", "return s")~call(.nil, "ff"x)
-+s6:
-+c = condition("O")
++do
++  x = F("s", "return s")~call(.nil, "ff"x)
++catch c = syntax
++end
 +call check "an invalid data string, not a JavaScript error: only the message", -
 +  c~errortext == "Invalid data string." & c~additional~items == 1 & c~additional[1]~left(8) == "argument"
 +r = errorOf(F("s", "return s"), .array~of(.nil, "abc" || "c3"x))
@@ -2357,9 +2372,10 @@ index 0000000..91048e1
 +call check "inside a Directory: the item named", r~pos('the item at "k" of argument 2 is not valid UTF-8') > 0
 +r = errorOf(F("a", "return a"), .array~of(.nil, .array~of("ok", "fe"x)))
 +call check "inside an Array: the item named", r~pos("item 2 of argument 2 is not valid UTF-8") > 0
-+signal on syntax name s4
-+x = .js~Object~new; x["p" || "ff"x] = 1
-+s4:
++do
++  x = .js~Object~new; x["p" || "ff"x] = 1
++catch syntax
++end
 +call check "a property name", condition("O")~additional[1]~pos("the name is not valid UTF-8") > 0
 +call check ".js~bytes passes the bytes", F("b", "return b.constructor.name + ' ' + b[0]")~call(.nil, .js~bytes("ff"x)) == "Uint8Array 255"
 +call check "a Rexx object's string may be any bytes (RexxProxy)", F("o", "return typeof o")~call(.nil, .Bytes~new) == "object"
@@ -2368,9 +2384,10 @@ index 0000000..91048e1
 +call check "a surrogate pair comes as UTF-8", F("", "return '😀'")~call(.nil) == "f09f9880"x
 +r = errorOf(F("", "return 'ab\uD800'"), .array~of(.nil))
 +call check "a lone surrogate: SYNTAX 23.900", r~left(6) == "23.900" & r~pos("code unit 3 is a lone surrogate, U+D800") > 0
-+signal on syntax name s5
-+x = F("", "return ['ok', '\uDC00']")~call(.nil)~makeArray
-+s5:
++do
++  x = F("", "return ['ok', '\uDC00']")~call(.nil)~makeArray
++catch syntax
++end
 +call check "a lone low surrogate in an array made a Rexx Array", -
 +  condition("O")~additional[1]~pos("code unit 1 is a lone surrogate, U+DC00") > 0
 +r = F("o", "try { o.add('\uD800'); return 'no error' } catch (e) { return e.name + ' ' + (e instanceof RexxError) }")~call(.nil, o)
@@ -2401,6 +2418,27 @@ index 0000000..91048e1
 +callOnUser:
 +  .local~userTrapped = "CALL ON" condition("D")
 +  return
++
++condCatch: procedure                -- a CATCH clause for c around a call of JavaScript whose Rexx code raises c
++  use arg o, c
++  do
++    if c == "USER" then r = F("o", "return o.user()")~call(.nil, o)
++    else r = F("o,c", "return o.raises(c)")~call(.nil, o, c)
++    return "not caught:" r
++  catch k = user mine, notready, error, failure
++    return k~condition "|" k~description "|" k~rc
++  end
++
++haltCatch: procedure                -- a CATCH clause for HALT around f~call(.nil, o)
++  use arg f, o
++  do
++    r = f~call(.nil, o)
++    return "not caught:" r
++  catch halt
++    return condition("C")
++  catch c = syntax
++    return "SYNTAX" c~code
++  end
 +
 +condSignalOn: procedure             -- SIGNAL ON c around a call of JavaScript whose Rexx code raises c
 +  use arg o, c                      -- (no INTERPRET "SIGNAL ON": it can set the trap in the caller)
@@ -2433,60 +2471,68 @@ index 0000000..91048e1
 +haltSignalOn: procedure            -- SIGNAL ON HALT around f~call(.nil, o)
 +  use arg f, o
 +  signal on halt name hs
-+  signal on syntax name hx
-+  r = f~call(.nil, o)
-+  return "no condition:" r
++  do
++    r = f~call(.nil, o)
++    return "no condition:" r
++  catch syntax
++    return "SYNTAX" condition("O")~code
++  end
 +hs: return condition("C")
-+hx: return "SYNTAX" condition("O")~code
 +
 +haltCallOn: procedure              -- CALL ON HALT around f~call(.nil, o), then a clause
 +  use arg f, o
 +  .local~halted = ""
 +  call on halt name hc
-+  signal on syntax name hy
-+  r = f~call(.nil, o)
-+  nop
-+  return .local~halted r
++  do
++    r = f~call(.nil, o)
++    nop
++    return .local~halted r
++  catch syntax
++    return "SYNTAX" condition("O")~code
++  end
 +hc: .local~halted = condition("C"); return
-+hy: return "SYNTAX" condition("O")~code
 +
 +haltCallOnAtCall: procedure        -- CALL ON HALT: what the handler set, read in the next clause
 +  use arg f, o
 +  .local~halted = ""
 +  call on halt name hd
-+  signal on syntax name hw
-+  r = f~call(.nil, o)
-+  h = .local~halted
-+  return h r
++  do
++    r = f~call(.nil, o)
++    h = .local~halted
++    return h r
++  catch syntax
++    return "SYNTAX" condition("O")~code
++  end
 +hd: .local~halted = condition("C"); return
-+hw: return "SYNTAX" condition("O")~code
 +
 +haltUntrapped: procedure           -- only SYNTAX trapped
 +  use arg f, o
-+  signal on syntax name hz
-+  r = f~call(.nil, o)
-+  return "no condition:" r
-+hz: return condition("O")~code
++  do
++    r = f~call(.nil, o)
++    return "no condition:" r
++  catch syntax
++    return condition("O")~code
++  end
 +
 +nameError: procedure                -- x[name] and x[name] = 1, name's MAKESTRING raising
 +  use arg op
-+  signal on syntax name nameErr
-+  x = .js~Object~new
-+  if op == "get" then y = x[.BadName~new]
-+  else x[.BadName~new] = 1
-+  return "no error"
-+nameErr:
-+  c = condition("O")
-+  return c~code c~additional[1]
++  do
++    x = .js~Object~new
++    if op == "get" then y = x[.BadName~new]
++    else x[.BadName~new] = 1
++    return "no error"
++  catch c = syntax
++    return c~code c~additional[1]
++  end
 +
 +errorOf: procedure                  -- f~call(args...): "code message" of its condition
 +  use arg f, args
-+  signal on syntax
-+  f~sendWith("CALL", args)
-+  return "no error"
-+syntax:
-+  c = condition("O")
-+  return c~code c~additional[1]
++  do
++    f~sendWith("CALL", args)
++    return "no error"
++  catch c = syntax
++    return c~code c~additional[1]
++  end
 +
 +check: procedure
 +  parse arg what, ok
@@ -2509,9 +2555,11 @@ index 0000000..91048e1
 +  return f~call(.nil)
 +::method propagate
 +  use arg f
-+  signal on syntax
-+  return f~call(.nil)
-+syntax: raise propagate
++  do
++    return f~call(.nil)
++  catch syntax
++    raise propagate
++  end
 +::method descr
 +  raise syntax 98.900 additional ("given") description "my description" return 5
 +::method user
@@ -2707,10 +2755,10 @@ index 0000000..d84307a
 +  .local~ranRun += 1
 diff --git a/wasm/tests/js-extend.rex b/wasm/tests/js-extend.rex
 new file mode 100644
-index 0000000..f3cfe7a
+index 0000000..7f8feba
 --- /dev/null
 +++ b/wasm/tests/js-extend.rex
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,164 @@
 +/* js-extend.rex: tests of Rexx classes extending JavaScript classes          */
 +/* (.js~extend, wasm/web/js.cls), in the realm where Rexx runs: the worker's   */
 +/* in the browser, Node's under Node.  Prints one line per check; exits 1 if  */
@@ -2796,23 +2844,30 @@ index 0000000..f3cfe7a
 +call check "JavaScript calls them too", mk~call(.nil, "return () => keptCar.describe()")~call(.nil) == "Kept is 11"
 +
 +-- errors
-+signal on syntax name e1
-+.js~extend(.MyCar, "Car")
-+call check "extending twice is an error", .false
-+e1: call check "extending twice is an error", condition("O")~code == 98.900
-+signal on syntax name e2
-+.js~extend(.NotJs, "Car")
-+call check "a class that is not a JSObject is refused", .false
-+e2: call check "a class that is not a JSObject is refused", condition("O")~message~pos("JSObject") > 0
-+signal on syntax name e3
-+.js~extend(.Lone, "NoSuchClassAnywhere")
-+call check "an unknown base is an error", .false
-+e3: call check "an unknown base is an error", condition("O")~code == 98.900
-+signal on syntax name e4
-+.js~extend(.Lone, js~Math)
-+call check "a base that is not a class is an error", .false
-+e4: call check "a base that is not a class is an error", condition("O")~message~pos("not a class") > 0
-+signal off syntax
++do
++  .js~extend(.MyCar, "Car")
++  call check "extending twice is an error", .false
++catch c = syntax
++  call check "extending twice is an error", c~code == 98.900
++end
++do
++  .js~extend(.NotJs, "Car")
++  call check "a class that is not a JSObject is refused", .false
++catch c = syntax
++  call check "a class that is not a JSObject is refused", c~message~pos("JSObject") > 0
++end
++do
++  .js~extend(.Lone, "NoSuchClassAnywhere")
++  call check "an unknown base is an error", .false
++catch c = syntax
++  call check "an unknown base is an error", c~code == 98.900
++end
++do
++  .js~extend(.Lone, js~Math)
++  call check "a base that is not a class is an error", .false
++catch c = syntax
++  call check "a base that is not a class is an error", c~message~pos("not a class") > 0
++end
 +
 +say
 +say .ok "passed," .bad "failed"
@@ -2870,10 +2925,10 @@ index 0000000..f3cfe7a
 +::class Lone subclass JSObject
 diff --git a/wasm/tests/js-floats.rex b/wasm/tests/js-floats.rex
 new file mode 100644
-index 0000000..05a3474
+index 0000000..5c39d4d
 --- /dev/null
 +++ b/wasm/tests/js-floats.rex
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,114 @@
 +/* js-floats.rex: the text of a JavaScript number in Rexx, in the realm     */
 +/* where Rexx runs: the worker's in the browser, Node's under Node.  A      */
 +/* number arrives with the shortest digits that read back as the same       */
@@ -2954,27 +3009,29 @@ index 0000000..05a3474
 +exit .bad > 0
 +
 +tonum: procedure                    -- .js~num(x) sent to JavaScript, or its condition
-+  signal on syntax name bad
-+  x = .fn~call(.nil, "x", "return typeof x")~call(.nil, .js~num(arg(1)))
-+  return x
-+bad: return "SYNTAX" condition("O")~code
++  do
++    x = .fn~call(.nil, "x", "return typeof x")~call(.nil, .js~num(arg(1)))
++    return x
++  catch syntax
++    return "SYNTAX" condition("O")~code
++  end
 +
 +range: procedure                    -- .js~num(x): "too large", "too small", or what else happened
 +  return boxed("", arg(1))
 +
 +boxed: procedure                    -- .js~box(type, x), or .js~num(x) if type is ""
 +  use arg type, x
-+  signal on syntax name boxbad
-+  if type == "" then v = .js~num(x); else v = .js~box(type, x)
-+  y = .fn~call(.nil, "x", "return typeof x")~call(.nil, v)
-+  return "no error"
-+boxbad:
-+  c = condition("O")
-+  if c~code \== "98.900" then return "SYNTAX" c~code
-+  m = c~additional[1]
-+  if pos("RangeError:", m) > 0 & pos("(too large)", m) > 0 then return "too large"
-+  if pos("RangeError:", m) > 0 & pos("(too small:", m) > 0 then return "too small"
-+  return m
++  do
++    if type == "" then v = .js~num(x); else v = .js~box(type, x)
++    y = .fn~call(.nil, "x", "return typeof x")~call(.nil, v)
++    return "no error"
++  catch c = syntax
++    if c~code \== "98.900" then return "SYNTAX" c~code
++    m = c~additional[1]
++    if pos("RangeError:", m) > 0 & pos("(too large)", m) > 0 then return "too large"
++    if pos("RangeError:", m) > 0 & pos("(too small:", m) > 0 then return "too small"
++    return m
++  end
 +
 +F: procedure                        -- F(params, body): a JavaScript function
 +  return .fn~call(.nil, arg(1), arg(2))
@@ -2988,10 +3045,10 @@ index 0000000..05a3474
 +::requires "js.cls"
 diff --git a/wasm/tests/js-proxy.rex b/wasm/tests/js-proxy.rex
 new file mode 100644
-index 0000000..1f62423
+index 0000000..941f565
 --- /dev/null
 +++ b/wasm/tests/js-proxy.rex
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,138 @@
 +/* js-proxy.rex: tests of Rexx objects in JavaScript (RexxProxy,           */
 +/* wasm/js-realm.js), in the realm where Rexx runs: the worker's in the     */
 +/* browser, Node's under Node.  Prints one line per check; exits 1 if any   */
@@ -3075,9 +3132,11 @@ index 0000000..1f62423
 +exit .bad > 0
 +
 +noString: procedure
-+  signal on nostring name nsTrap
-+  return F("x", "return typeof x")~call(.nil, .object~new)
-+nsTrap: return "NOSTRING"
++  do
++    return F("x", "return typeof x")~call(.nil, .object~new)
++  catch nostring
++    return "NOSTRING"
++  end
 +
 +F: procedure                        -- F(params, body): a JavaScript function
 +  return .fn~call(.nil, arg(1), arg(2))
@@ -3129,7 +3188,7 @@ index 0000000..1f62423
 +  expose balance
 +  return "savings" self~balance
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index b44ba2b..a51c34e 100755
+index b44ba2b..f953412 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -228,6 +228,283 @@ check "sockets: UDP between processes" '^reply=HELLO UDP$' -- \
@@ -3245,7 +3304,7 @@ index b44ba2b..a51c34e 100755
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-proxy.rex'"
 +# --- errors both ways (RexxError's fields and cause, additional[3]) and text
 +# (no U+FFFD: a string that is not UTF-8, or not well-formed, is an error)
-+check "JavaScript objects: errors both ways, and text" '^76 passed, 0 failed$' '!^FAIL ' -- \
++check "JavaScript objects: errors both ways, and text" '^81 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-errors.rex'"
 +# --- booleans: .LogicalWrapper (logicalwrapper.cls) both ways across the bridge
 +check "JavaScript objects: booleans both ways (.LogicalWrapper)" '^25 passed, 0 failed$' '!^FAIL ' -- \
@@ -3439,7 +3498,7 @@ index d544388..b13d517 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); },
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 3940711..c0eddc7 100755
+index 3940711..09f958c 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -49,7 +49,10 @@ if len(sys.argv) != 2:
@@ -3471,13 +3530,13 @@ index 3940711..c0eddc7 100755
 +                           "1 0 1 0.30000000000000004 1\n0 1 1 0 undefined 1\n" and r["rc"] == 0),
 +  ("js await", 'say .js~fetch("web-api.html")~await~text~await~pos("rexxRun") > 0\n'
 +               'say .js~eval("new Promise(r => setTimeout(() => r(42), 50))")~await\n'
-+               'signal on syntax; .js~Promise~reject(.js~Error~new("boom"))~await\n'
-+               'syntax: say condition("O")~message; say condition("O")~additional[2]~message\n'
++               'do; .js~Promise~reject(.js~Error~new("boom"))~await\n'
++               'catch c = syntax; say c~message; say c~additional[2]~message; end\n'
 +               '::requires "js.cls"', {"js": {"worker": True}},
 +     lambda r: r["out"] == "1\n42\nJavaScript error: Error: boom.\nboom\n"),
-+  ("js errors", 'signal on syntax name s1; .js~JSON~parse("{"); s1: say condition("O")~code\n'
-+                'signal on syntax name s2; .js~Math~nothing(1); s2: say condition("O")~message\n'
-+                'signal on syntax name s3; say .js~page; s3: say condition("O")~message\n'
++  ("js errors", 'do; .js~JSON~parse("{"); catch c = syntax; say c~code; end\n'
++                'do; .js~Math~nothing(1); catch c = syntax; say c~message; end\n'
++                'do; say .js~page; catch c = syntax; say c~message; end\n'
 +                'say .js~require("x")\n::requires "js.cls"', {"js": {"worker": True}},
 +     lambda r: r["out"].startswith("98.900\nJavaScript error: TypeError: a Math has no method NOTHING.\n"
 +                                   "JavaScript error: Error: JavaScript is not available: the page running ooRexx did not grant the page realm (ooRexx run option js: {page: true}).\n")
@@ -3498,9 +3557,9 @@ index 3940711..c0eddc7 100755
 +     lambda r: r["out"] == "a JSObject (Window #0, page)\nHTMLParagraphElement 1 Hola desde Rexx P\n15\n1\n1\n" and r["rc"] == 0),
 +  ("js page not granted", 'say .js~page\n::requires "js.cls"', {"js": {"worker": True}},
 +     lambda r: "did not grant the page realm" in r["errmsg"] and r["rc"] != 0),
-+  ("js realms apart", 'doc = .js~page~document; signal on syntax\n'
++  ("js realms apart", 'doc = .js~page~document; do\n'
 +                      'doc~body~appendChild(.js~newObject)\n'
-+                      'syntax: say condition("O")~message\n::requires "js.cls"', {"js": {"worker": True, "page": True}},
++                      'catch c = syntax; say c~message; end\n::requires "js.cls"', {"js": {"worker": True, "page": True}},
 +     lambda r: 'cannot be used in realm "page"' in r["out"]),
 +  # events: .js~handler, .js~nextEvent, .js~runEventLoop
 +  ("js events worker", 'c = .counter~new; h = .js~handler(c, "tick", "preventDefault queued")\n'
@@ -3515,10 +3574,10 @@ index 3940711..c0eddc7 100755
 +  # call run on its own thread (which may wait); the page: always queued
 +  ("js handlers sync", 'a = .js~newArray(.js~num(3), .js~num(1), .js~num(2)); a~sort(.js~handler(.o~new, "cmp"))\n'
 +                       'say a~join(",") .js~newArray(.js~num(1), .js~num(2))~map(.js~handler(.o~new, "twice"))~join(",")\n'
-+                       'signal on syntax name s1; .js~newArray(1)~forEach(.js~handler(.o~new, "bad"))\n'
-+                       's1: say (condition("O")~code == "41.1")\n'
-+                       'signal on syntax name s2; .js~newArray(1)~forEach(.js~handler(.o~new, "waits"))\n'
-+                       's2: say (condition("O")~message~pos("cannot wait for a Promise") > 0)\n'
++                       'do; .js~newArray(1)~forEach(.js~handler(.o~new, "bad"))\n'
++                       'catch c = syntax; say (c~code == "41.1"); end\n'
++                       'do; .js~newArray(1)~forEach(.js~handler(.o~new, "waits"))\n'
++                       'catch c = syntax; say (c~message~pos("cannot wait for a Promise") > 0); end\n'
 +                       'o = .o~new; .js~setTimeout(.js~handler(o, "later"), 1); do 50 while o~got == ""; call SysSleep 0.02; end; say o~got\n'
 +                       'b = .js~page~Array~of(.js~num(3), .js~num(1)); b~sort(.js~handler(.o~new, "cmp")); say b~join(",") (.js~nextEvent(1) \\== .nil)\n'
 +                       '::class o; ::attribute got; ::method init; expose got; got = ""\n'
@@ -3545,7 +3604,7 @@ index 3940711..c0eddc7 100755
 +     lambda r: r["out"] == "trapped the description\n2\n" and r["rc"] == 0),
 +  # errors both ways and text, in the worker's realm: the portable test
 +  ("js errors", open(f"{SRC}/wasm/tests/js-errors.rex").read(), {"js": {"worker": True}},
-+     lambda r: "76 passed, 0 failed" in r["out"] and r["rc"] == 0),
++     lambda r: "81 passed, 0 failed" in r["out"] and r["rc"] == 0),
 +  # booleans both ways (.LogicalWrapper), in the worker's realm: the portable test
 +  ("js booleans", open(f"{SRC}/wasm/tests/js-booleans.rex").read(), {"js": {"worker": True}},
 +     lambda r: "25 passed, 0 failed" in r["out"] and r["rc"] == 0),
@@ -3575,8 +3634,8 @@ index 3940711..c0eddc7 100755
 +                           '::method done; expose got; use arg got; say "done" got; .js~stopEventLoop',
 +     {"js": {"page": True}},
 +     lambda r: r["out"] == "hit 5\ndone 10\nafter 10\n" and r["rc"] == 0),
-+  ("js extend page", 'signal on syntax; .js~extend(.el, .js~page~HTMLElement)\n'
-+                     'syntax: say (condition("O")~message~pos("where JavaScript can wait for Rexx") > 0)\n'
++  ("js extend page", 'do; .js~extend(.el, .js~page~HTMLElement)\n'
++                     'catch c = syntax; say (c~message~pos("where JavaScript can wait for Rexx") > 0); end\n'
 +                     '::requires "js.cls"\n::class el subclass JSObject', {"js": {"worker": True, "page": True}},
 +     lambda r: r["out"] == "1\n"),
 +  ("js page events", 'doc = .js~page~document; box = doc~createElement("input"); box~type = "checkbox"; doc~body~appendChild(box)\n'
@@ -3584,8 +3643,8 @@ index 3940711..c0eddc7 100755
 +                     'box~click; ev = .js~nextEvent(5); e = ev~arguments[1]\n'
 +                     'say ev~arguments~items e~type e~defaultPrevented box~checked (e~target == box) (e~currentTarget == .nil)\n'
 +                     'box~removeEventListener("click", h); box~click; say .js~nextEvent(0.3) box~checked\n'
-+                     'signal on syntax; x = .js~handler(.nil, "x", "noSuchOption")\n'
-+                     'syntax: say condition("O")~message; box~remove\n'
++                     'do; x = .js~handler(.nil, "x", "noSuchOption")\n'
++                     'catch c = syntax; say c~message; end; box~remove\n'
 +                     '::requires "js.cls"', {"js": {"page": True}},
 +     lambda r: r["out"].startswith("1 click 1 0 1 1\nThe NIL object 1\n.js~handler: unknown option noSuchOption")),
 +  ("js page latest", 'b = .js~page~document~body; h = .js~handler(.nil, "string", "latest"); b~addEventListener("x", h)\n'
@@ -5895,10 +5954,10 @@ index 0000000..1ba7d9f
 +}
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
 new file mode 100644
-index 0000000..9e602ed
+index 0000000..2f92244
 --- /dev/null
 +++ b/wasm/web/js.cls
-@@ -0,0 +1,750 @@
+@@ -0,0 +1,794 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -6165,16 +6224,18 @@ index 0000000..9e602ed
 +      jsuninit = self~instanceMethod("UNINIT")
 +      if jsuninit == .JSObject~method("UNINIT") then jsuninit = .nil
 +      self~setMethod("UNINIT", "nop")         -- (an object's own UNINIT cannot be removed)
-+      signal on syntax
-+      self~jsBind(JsConstruct(self, ext, arg(1, "A")))
-+      self~jsArm
++      do
++        self~jsBind(JsConstruct(self, ext, arg(1, "A")))
++        self~jsArm
++      catch syntax
++        raise propagate
++      end
 +      return
 +    end
 +  end
 +  use strict arg jsrealm, id, jsdisplay
 +  jsref = jsrealm || "09"x || id
 +  return
-+syntax: raise propagate
 +::method jsBind unguarded           -- for the bridge: the JavaScript object of an extending class's instance
 +  expose jsref jsrealm jsdisplay
 +  use strict arg ref
@@ -6193,15 +6254,15 @@ index 0000000..9e602ed
 +  if var("JSUNINIT") then if jsuninit \== .nil then do
 +    u = jsuninit
 +    drop jsuninit
-+    signal on syntax
 +    -- sent with its class as the scope: it then runs in that scope (it sees
 +    -- the variables of that class), the object's "nop" is passed over, and a
 +    -- method of the class named RUN is not in the way (self~run(u) had both
 +    -- problems; setMethod(name, u, "OBJECT") would run it in the scope of the
 +    -- object's class, not of a superclass that defines it)
 +    .Message~new(self, .array~of("UNINIT", u~scope))~send
++  catch syntax
++    nop                    -- an error in that UNINIT: the handle goes all the same
 +  end
-+syntax:
 +  self~jsRelease
 +::method jsRelease unguarded external "LIBRARY js js_uninit"
 +::method jsRef                      -- realm<tab>id, for the bridge
@@ -6253,90 +6314,118 @@ index 0000000..9e602ed
 +  if \var("FROMONE") then fromOne = self~jsInfo("fromone")
 +  return fromOne
 +::method items unguarded
-+  signal on syntax
-+  if \self~isFromOne then forward message "UNKNOWN" arguments (.array~of("ITEMS", arg(1, "A")))
-+  use strict arg
-+  return self~jsInfo("items")
-+syntax: raise propagate
++  do
++    if \self~isFromOne then forward message "UNKNOWN" arguments (.array~of("ITEMS", arg(1, "A")))
++    use strict arg
++    return self~jsInfo("items")
++  catch syntax
++    raise propagate
++  end
 +::method size unguarded
-+  signal on syntax
-+  if \self~isFromOne then forward message "UNKNOWN" arguments (.array~of("SIZE", arg(1, "A")))
-+  use strict arg
-+  return self~jsInfo("size")
-+syntax: raise propagate
++  do
++    if \self~isFromOne then forward message "UNKNOWN" arguments (.array~of("SIZE", arg(1, "A")))
++    use strict arg
++    return self~jsInfo("size")
++  catch syntax
++    raise propagate
++  end
 +::method dimension unguarded
-+  signal on syntax
-+  if \self~isFromOne then forward message "UNKNOWN" arguments (.array~of("DIMENSION", arg(1, "A")))
-+  use strict arg n = .nil
-+  if n == .nil then return self~jsInfo("dimension")
-+  return self~jsInfo("dimension", n)
-+syntax: raise propagate
++  do
++    if \self~isFromOne then forward message "UNKNOWN" arguments (.array~of("DIMENSION", arg(1, "A")))
++    use strict arg n = .nil
++    if n == .nil then return self~jsInfo("dimension")
++    return self~jsInfo("dimension", n)
++  catch syntax
++    raise propagate
++  end
 +::method dimensions unguarded
-+  signal on syntax
-+  if \self~isFromOne then forward message "UNKNOWN" arguments (.array~of("DIMENSIONS", arg(1, "A")))
-+  use strict arg
-+  return self~jsInfo("dimensions")
-+syntax: raise propagate
++  do
++    if \self~isFromOne then forward message "UNKNOWN" arguments (.array~of("DIMENSIONS", arg(1, "A")))
++    use strict arg
++    return self~jsInfo("dimensions")
++  catch syntax
++    raise propagate
++  end
 +::method hasIndex unguarded
-+  signal on syntax
-+  if \self~isFromOne then forward message "UNKNOWN" arguments (.array~of("HASINDEX", arg(1, "A")))
-+  use strict arg i
-+  return self~jsInfo("hasindex", i)~string == "1"
-+syntax: raise propagate
++  do
++    if \self~isFromOne then forward message "UNKNOWN" arguments (.array~of("HASINDEX", arg(1, "A")))
++    use strict arg i
++    return self~jsInfo("hasindex", i)~string == "1"
++  catch syntax
++    raise propagate
++  end
 +::method supplierData private unguarded external "LIBRARY js js_supplier"
 +::method supplier unguarded         -- DO WITH INDEX i ITEM v OVER o
-+  signal on syntax
-+  data = self~supplierData
-+  return .supplier~new(data[2], data[1])
-+syntax: raise propagate
++  do
++    data = self~supplierData
++    return .supplier~new(data[2], data[1])
++  catch syntax
++    raise propagate
++  end
 +::method js.byteString unguarded       external "LIBRARY js js_bytes"
 +::method js.instanceOf unguarded       external "LIBRARY js js_instanceof"
 +::method js.hasProperty unguarded      external "LIBRARY js js_has"
 +::method js.getStrict unguarded    -- the property name, exact (also of an array)
-+  signal on syntax
-+  use strict arg name
-+  return JsGlobal(self~realm)["Reflect"]~js.invokeStrict("get", self, name)
-+syntax: raise propagate
++  do
++    use strict arg name
++    return JsGlobal(self~realm)["Reflect"]~js.invokeStrict("get", self, name)
++  catch syntax
++    raise propagate
++  end
 +::method js.setStrict unguarded    -- set or make the property name, exact
-+  signal on syntax
-+  use strict arg name, value
-+  reflect = JsGlobal(self~realm)["Reflect"]
-+  reflect~js.invokeStrict("set", self, name, value)
-+  return
-+syntax: raise propagate
++  do
++    use strict arg name, value
++    reflect = JsGlobal(self~realm)["Reflect"]
++    reflect~js.invokeStrict("set", self, name, value)
++    return
++  catch syntax
++    raise propagate
++  end
 +::method uninit unguarded           external "LIBRARY js js_uninit"
 +
 +/** .js: the default realm's globalThis, and the bridge's helpers.  Their
 +    errors are raised in the caller (RAISE PROPAGATE), not in this file. */
 +::class JSGlobal public subclass JSObject
 +::method worker unguarded           -- the realm of the Web Worker running ooRexx (browser)
-+  signal on syntax
-+  return JsGlobal("worker")
-+syntax: raise propagate
++  do
++    return JsGlobal("worker")
++  catch syntax
++    raise propagate
++  end
 +::method node unguarded             -- Node's realm
-+  signal on syntax
-+  return JsGlobal("node")
-+syntax: raise propagate
++  do
++    return JsGlobal("node")
++  catch syntax
++    raise propagate
++  end
 +::method page unguarded             -- the page's window (browser; the page must grant it)
-+  signal on syntax
-+  return JsGlobal("page")
-+syntax: raise propagate
++  do
++    return JsGlobal("page")
++  catch syntax
++    raise propagate
++  end
 +::method require unguarded          -- Node's require(name), from the current directory
-+  signal on syntax
-+  use strict arg name
-+  return JsRequire(name)
-+syntax: raise propagate
++  do
++    use strict arg name
++    return JsRequire(name)
++  catch syntax
++    raise propagate
++  end
 +::method import unguarded           -- import(name): a Promise of the module
-+  signal on syntax
-+  use strict arg name
-+  return JsImport(name)
-+syntax: raise propagate
++  do
++    use strict arg name
++    return JsImport(name)
++  catch syntax
++    raise propagate
++  end
 +::method new unguarded              -- .js~new(constructor, args...)
-+  signal on syntax
-+  use arg ctor
-+  if \ctor~isA(.JSObject) then raise syntax 98.900 array(".js~new: the constructor must be a JSObject")
-+  return ctor~sendWith("NEW", arg(2, "A"))
-+syntax: raise propagate
++  do
++    use arg ctor
++    if \ctor~isA(.JSObject) then raise syntax 98.900 array(".js~new: the constructor must be a JSObject")
++    return ctor~sendWith("NEW", arg(2, "A"))
++  catch syntax
++    raise propagate
++  end
 +::method num unguarded              -- force a JavaScript number
 +  use strict arg x
 +  return .JSTyped~new("F", x)
@@ -6362,54 +6451,56 @@ index 0000000..9e602ed
 +  -- the type indicators of BSF4ooRexx's box(), caseless and shortened down
 +  -- to their capitals (BOolean, BYte, Char, Double, Float, Int, Long, Object,
 +  -- SHort, STring), and JavaScript's own Number and BIgint
-+  signal on syntax
-+  use strict arg type, x
-+  t = type~strip~upper
-+  names = .array~of("BOolean", "BYte", "Char", "Double", "Float", "Int", "Long", -
-+                    "Object", "SHort", "STring", "Number", "BIgint")
-+  name = ""
-+  do n over names
-+    if abbrev(n~upper, t, n~verify("ABCDEFGHIJKLMNOPQRSTUVWXYZ") - 1) then do
-+      name = n; leave
++  do
++    use strict arg type, x
++    t = type~strip~upper
++    names = .array~of("BOolean", "BYte", "Char", "Double", "Float", "Int", "Long", -
++                      "Object", "SHort", "STring", "Number", "BIgint")
++    name = ""
++    do n over names
++      if abbrev(n~upper, t, n~verify("ABCDEFGHIJKLMNOPQRSTUVWXYZ") - 1) then do
++        name = n; leave
++      end
 +    end
++    if name == "" then raise syntax 98.900 array(".js~box: unknown type" type"; one of" -
++      names~makeString("L", ", "))
++    whole = .array~of("BYte", -128, 127, "SHort", -32768, 32767, -
++                      "Int", -2147483648, 2147483647, "Long", -9007199254740991, 9007199254740991)
++    select
++      when name == "Object" then do
++        if x == .nil | x~isA(.JSObject) | x == .JSTyped~undefined then return x
++        raise syntax 98.900 array(".js~box: an Object must be a JSObject, .nil or .js~undefined")
++      end
++      when name == "BOolean" then return self~bool(x)
++      when name == "STring" then return x~string
++      when name == "Char" then do
++        -- one character: one byte, or one UTF-8 sequence
++        if x~string~length > 0 & x~string~substr(2)~verify(xrange("80"x, "BF"x)) == 0 -
++           & (x~string~length == 1 | x~string~left(1) >= "C0"x) then return x~string
++        raise syntax 98.900 array(".js~box:" x "cannot be a Char")
++      end
++      when name == "BIgint" then do
++        if datatype(x, "W") then return self~bigint(x)
++        numeric digits 40
++        if datatype(x, "W") then return self~bigint(x)
++        raise syntax 98.900 array(".js~box:" x "cannot be a BigInt")
++      end
++      when name == "Number" | name == "Double" | name == "Float" then do
++        if datatype(x, "N") | wordpos(x~string~strip~upper, "NAN INFINITY +INFINITY -INFINITY") > 0 then
++          return self~num(x)
++        raise syntax 98.900 array(".js~box:" x "cannot be a" name)
++      end
++      otherwise do                      -- BYte, SHort, Int, Long: a whole number in range
++        i = whole~index(name)
++        numeric digits 20
++        if datatype(x, "W") then if x >= whole[i + 1] & x <= whole[i + 2] then return self~num(x)
++        raise syntax 98.900 array(".js~box:" x "cannot be a" name -
++          "(a whole number from" whole[i + 1] "to" whole[i + 2]")")
++      end
++    end
++  catch syntax
++    raise propagate
 +  end
-+  if name == "" then raise syntax 98.900 array(".js~box: unknown type" type"; one of" -
-+    names~makeString("L", ", "))
-+  whole = .array~of("BYte", -128, 127, "SHort", -32768, 32767, -
-+                    "Int", -2147483648, 2147483647, "Long", -9007199254740991, 9007199254740991)
-+  select
-+    when name == "Object" then do
-+      if x == .nil | x~isA(.JSObject) | x == .JSTyped~undefined then return x
-+      raise syntax 98.900 array(".js~box: an Object must be a JSObject, .nil or .js~undefined")
-+    end
-+    when name == "BOolean" then return self~bool(x)
-+    when name == "STring" then return x~string
-+    when name == "Char" then do
-+      -- one character: one byte, or one UTF-8 sequence
-+      if x~string~length > 0 & x~string~substr(2)~verify(xrange("80"x, "BF"x)) == 0 -
-+         & (x~string~length == 1 | x~string~left(1) >= "C0"x) then return x~string
-+      raise syntax 98.900 array(".js~box:" x "cannot be a Char")
-+    end
-+    when name == "BIgint" then do
-+      if datatype(x, "W") then return self~bigint(x)
-+      numeric digits 40
-+      if datatype(x, "W") then return self~bigint(x)
-+      raise syntax 98.900 array(".js~box:" x "cannot be a BigInt")
-+    end
-+    when name == "Number" | name == "Double" | name == "Float" then do
-+      if datatype(x, "N") | wordpos(x~string~strip~upper, "NAN INFINITY +INFINITY -INFINITY") > 0 then
-+        return self~num(x)
-+      raise syntax 98.900 array(".js~box:" x "cannot be a" name)
-+    end
-+    otherwise do                      -- BYte, SHort, Int, Long: a whole number in range
-+      i = whole~index(name)
-+      numeric digits 20
-+      if datatype(x, "W") then if x >= whole[i + 1] & x <= whole[i + 2] then return self~num(x)
-+      raise syntax 98.900 array(".js~box:" x "cannot be a" name -
-+        "(a whole number from" whole[i + 1] "to" whole[i + 2]")")
-+    end
-+  end
-+syntax: raise propagate
 +::method unbox unguarded            -- .js~unbox(o): the Rexx value of a box or of a JavaScript wrapper
 +  use strict arg o
 +  if o~isA(.LogicalWrapper) then return o~value
@@ -6424,87 +6515,97 @@ index 0000000..9e602ed
 +  use strict arg x
 +  return .JSTyped~new("P", x)
 +::method newArray unguarded         -- a new JavaScript array of the arguments
-+  signal on syntax
-+  return JsValue(arg(1, "A"))
-+syntax: raise propagate
++  do
++    return JsValue(arg(1, "A"))
++  catch syntax
++    raise propagate
++  end
 +::method newObject unguarded        -- a new plain JavaScript object: from a Directory/StringTable, or names and values
-+  signal on syntax
-+  if arg() <= 1 then do
-+    use strict arg d = (.directory~new)
-+    return JsValue(d)
-+  end
-+  -- .js~newObject(name, value, ...): the names exact (a StringTable keeps them)
-+  if arg() // 2 \= 0 then raise syntax 98.900 array(".js~newObject: names and values go in pairs, found" arg() "arguments")
-+  d = .StringTable~new
-+  do i = 1 to arg() by 2
-+    if \arg(i, "E") then raise syntax 98.900 array(".js~newObject: argument" i "(a name) is missing")
-+    d[arg(i)] = arg(i + 1)
-+  end
-+  return JsValue(d)
-+syntax: raise propagate
-+::method extend unguarded           -- .js~extend(class, base [, names...]): see Classes above
-+  signal on syntax
-+  use strict arg cls, base, ...
-+  if \cls~isA(.Class) then raise syntax 98.900 array(".js~extend: the first argument must be a class, found" cls)
-+  if \cls~isSubclassOf(.JSObject) | cls == .JSGlobal then
-+    raise syntax 98.900 array(".js~extend:" cls~id "must be a subclass of JSObject")
-+  if cls~jsExtension \== .nil then
-+    raise syntax 98.900 array(".js~extend:" cls~id "already extends" cls~jsExtension)
-+  if \base~isA(.JSObject) & \base~isA(.String) then
-+    raise syntax 98.900 array(".js~extend: the base must be a JSObject (a class) or the name of one, found" base)
-+  -- the methods of the class and of its superclasses below JSObject, public
-+  names = .Set~new
-+  c = cls
-+  do while c \== .JSObject
-+    sup = c~methods(.nil)
-+    do while sup~available
-+      if sup~item \== .nil, \sup~item~isPrivate then names~put(sup~index)
-+      sup~next
++  do
++    if arg() <= 1 then do
++      use strict arg d = (.directory~new)
++      return JsValue(d)
 +    end
-+    c = c~superClass
++    -- .js~newObject(name, value, ...): the names exact (a StringTable keeps them)
++    if arg() // 2 \= 0 then raise syntax 98.900 array(".js~newObject: names and values go in pairs, found" arg() "arguments")
++    d = .StringTable~new
++    do i = 1 to arg() by 2
++      if \arg(i, "E") then raise syntax 98.900 array(".js~newObject: argument" i "(a name) is missing")
++      d[arg(i)] = arg(i + 1)
++    end
++    return JsValue(d)
++  catch syntax
++    raise propagate
 +  end
-+  names~removeItem("INIT"); names~removeItem("UNINIT"); names~removeItem("UNKNOWN")
-+  exact = .array~new
-+  do i = 3 to arg()
-+    exact~append(arg(i)~string)
++::method extend unguarded           -- .js~extend(class, base [, names...]): see Classes above
++  do
++    use strict arg cls, base, ...
++    if \cls~isA(.Class) then raise syntax 98.900 array(".js~extend: the first argument must be a class, found" cls)
++    if \cls~isSubclassOf(.JSObject) | cls == .JSGlobal then
++      raise syntax 98.900 array(".js~extend:" cls~id "must be a subclass of JSObject")
++    if cls~jsExtension \== .nil then
++      raise syntax 98.900 array(".js~extend:" cls~id "already extends" cls~jsExtension)
++    if \base~isA(.JSObject) & \base~isA(.String) then
++      raise syntax 98.900 array(".js~extend: the base must be a JSObject (a class) or the name of one, found" base)
++    -- the methods of the class and of its superclasses below JSObject, public
++    names = .Set~new
++    c = cls
++    do while c \== .JSObject
++      sup = c~methods(.nil)
++      do while sup~available
++        if sup~item \== .nil, \sup~item~isPrivate then names~put(sup~index)
++        sup~next
++      end
++      c = c~superClass
++    end
++    names~removeItem("INIT"); names~removeItem("UNINIT"); names~removeItem("UNKNOWN")
++    exact = .array~new
++    do i = 3 to arg()
++      exact~append(arg(i)~string)
++    end
++    r = JsExtend(base, cls~id, names~makeArray, exact)
++    ext = r[1]
++    -- self~name:super, the base's member: a mixin's private methods, after
++    -- JSObject in the search order (so found before its UNKNOWN)
++    mixin = .Object~mixinClass(cls~id "BASE")
++    extref = "'" || ext~jsRef~changeStr("09"x, "'||'09'x||'") || "'"
++    do o over r[2]
++      parse var o kind "09"x jsname "09"x rexxname "09"x hasBase
++      jsname = jsname~changeStr("'", "''")
++      if hasBase \== 1 then iterate
++      -- the class's own JavaScript class (ext), not that of the instance's class
++      if kind == "S" then
++        src = "do; use arg v; call JsSuper self," extref", 'S', '"jsname"', .array~of(v);" -
++              "return; catch syntax; raise propagate; end"
++      else
++        src = "do; return JsSuper(self," extref", '"kind"', '"jsname"', arg(1, 'A'));" -
++              "catch syntax; raise propagate; end"
++      m = .Method~new(rexxname, src, .context~package)
++      m~setPrivate
++      mixin~define(rexxname, m)
++    end
++    cls~inherit(mixin)
++    cls~jsSetExtension(ext)
++    return ext
++  catch syntax
++    raise propagate
 +  end
-+  r = JsExtend(base, cls~id, names~makeArray, exact)
-+  ext = r[1]
-+  -- self~name:super, the base's member: a mixin's private methods, after
-+  -- JSObject in the search order (so found before its UNKNOWN)
-+  mixin = .Object~mixinClass(cls~id "BASE")
-+  extref = "'" || ext~jsRef~changeStr("09"x, "'||'09'x||'") || "'"
-+  do o over r[2]
-+    parse var o kind "09"x jsname "09"x rexxname "09"x hasBase
-+    jsname = jsname~changeStr("'", "''")
-+    if hasBase \== 1 then iterate
-+    -- the class's own JavaScript class (ext), not that of the instance's class
-+    if kind == "S" then
-+      src = "signal on syntax; use arg v; call JsSuper self," extref", 'S', '"jsname"', .array~of(v);" -
-+            "return; syntax: raise propagate"
-+    else
-+      src = "signal on syntax; return JsSuper(self," extref", '"kind"', '"jsname"', arg(1, 'A'));" -
-+            "syntax: raise propagate"
-+    m = .Method~new(rexxname, src, .context~package)
-+    m~setPrivate
-+    mixin~define(rexxname, m)
-+  end
-+  cls~inherit(mixin)
-+  cls~jsSetExtension(ext)
-+  return ext
-+syntax: raise propagate
 +::method handler unguarded          -- .js~handler(object, message [, options]): see Events above
-+  signal on syntax
-+  use strict arg target, message, options = ""
-+  return .JSHandler~new(target, message, options)
-+syntax: raise propagate
++  do
++    use strict arg target, message, options = ""
++    return .JSHandler~new(target, message, options)
++  catch syntax
++    raise propagate
++  end
 +::method nextEvent unguarded        -- the next event (a .JSEvent), or .nil after seconds
-+  signal on syntax
-+  use strict arg seconds = (-1)
-+  if \datatype(seconds, "N") then raise syntax 98.900 array(".js~nextEvent: seconds must be a number, found" seconds)
-+  if seconds < 0 then return JsNextEvent()
-+  return JsNextEvent(seconds)
-+syntax: raise propagate
++  do
++    use strict arg seconds = (-1)
++    if \datatype(seconds, "N") then raise syntax 98.900 array(".js~nextEvent: seconds must be a number, found" seconds)
++    if seconds < 0 then return JsNextEvent()
++    return JsNextEvent(seconds)
++  catch syntax
++    raise propagate
++  end
 +::method runEventLoop unguarded     -- take and dispatch events until .js~stopEventLoop
 +  generation = JsLoopGeneration()
 +  do forever
@@ -6520,10 +6621,12 @@ index 0000000..9e602ed
 +    self~runEventLoop
 +  end
 +::method value unguarded            -- x as JavaScript sees it (a .JSObject unless a string)
-+  signal on syntax
-+  use strict arg x
-+  return JsValue(x)
-+syntax: raise propagate
++  do
++    use strict arg x
++    return JsValue(x)
++  catch syntax
++    raise propagate
++  end
 +
 +/** A Rexx object and message for JavaScript to call (.js~handler). */
 +/** The sentinel of a pair's Rexx object (.js~extend): only the Rexx object

@@ -18,17 +18,19 @@ end
 address sqlite "SELECT count(*) AS n FROM orders" with output stem lines.
 say "rows:" n.1 "/ WITH OUTPUT:" lines.1
 
-signal on error
-"SELECT item FROM orders WHERE qty > 100"
-say "not reached"
-error:
-say "ERROR, RC" rc
+do
+  "SELECT item FROM orders WHERE qty > 100"
+  say "not reached"
+catch error
+  say "ERROR, RC" rc
+end
 
-signal on failure
-address sqlite "SELECT * FROM nosuchtable" with error stem e.
-say "not reached"
-failure:
-say "FAILURE, RC" rc":" e.1
+do
+  address sqlite "SELECT * FROM nosuchtable" with error stem e.
+  say "not reached"
+catch failure
+  say "FAILURE, RC" rc":" e.1
+end
 "DISCONNECT"
 
 ::requires "sqlite.cls"

@@ -113,19 +113,19 @@ say left("Rexx object twice to JS: a === b", 40) same~call(.nil, acct, acct)
 say left("Rexx object round trip (== itself)", 40) (t~call(.nil, acct) == acct)
 
 say "--- errors: JavaScript exception in Rexx"
-signal on syntax name js1
-F~new("throw new TypeError('bad thing')")~call(.nil)
-js1:
-c = condition("O")
+do
+  F~new("throw new TypeError('bad thing')")~call(.nil)
+catch c = syntax
+end
 say left("code / errortext", 40) c~code "/" c~errortext
 say left("message", 40) c~message
 say left("additional items / [2] class", 40) c~additional~items "/" show(c~additional[2])
 say left("additional[2]~name / ~message", 40) c~additional[2]~name "/" c~additional[2]~message
 say left("additional[3] (the stack), first line", 40) c~additional[3]~makeArray("0a"x)[1]
-signal on syntax name js2
-F~new("throw 42")~call(.nil)
-js2:
-c = condition("O")
+do
+  F~new("throw 42")~call(.nil)
+catch c = syntax
+end
 say left("throw 42: message / additional[2]", 40) c~message "/" show(c~additional[2])
 say left("throw 42: additional items", 40) c~additional~items
 
@@ -186,33 +186,42 @@ show: procedure
 tryCall: procedure                  -- f~call(.nil, args...), or its condition
   use arg f
   args = arg(1, "A")~section(2)
-  signal on syntax name bad0
-  return show(f~sendWith("CALL", .array~of(.nil)~appendAll(args)))
-bad0: return "SYNTAX" condition("O")~code":" condition("O")~additional[1]
+  do
+    return show(f~sendWith("CALL", .array~of(.nil)~appendAll(args)))
+  catch syntax
+    return "SYNTAX" condition("O")~code":" condition("O")~additional[1]
+  end
 
 tryNum: procedure
-  signal on syntax name bad
-  return .js~num(arg(1))
-bad: return "SYNTAX" condition("O")~code":" condition("O")~message
+  do
+    return .js~num(arg(1))
+  catch syntax
+    return "SYNTAX" condition("O")~code":" condition("O")~message
+  end
 
 tryMsg: procedure
   use arg o, m
-  signal on syntax name bad2
-  return show(o~send(m))
-bad2: return "SYNTAX" condition("O")~code":" condition("O")~message
+  do
+    return show(o~send(m))
+  catch syntax
+    return "SYNTAX" condition("O")~code":" condition("O")~message
+  end
 
 tryAt: procedure
   use arg o, i
-  signal on syntax name bad3
-  return show(o[i])
-bad3: return "SYNTAX" condition("O")~code":" condition("O")~message
+  do
+    return show(o[i])
+  catch syntax
+    return "SYNTAX" condition("O")~code":" condition("O")~message
+  end
 
 tonum: procedure                     -- what JavaScript receives from .js~num(s)
   use arg k, s
-  signal on syntax
-  return k~call(.nil, .js~num(s))
-syntax:
-  return "SYNTAX" condition("O")~code condition("O")~additional[1]
+  do
+    return k~call(.nil, .js~num(s))
+  catch syntax
+    return "SYNTAX" condition("O")~code condition("O")~additional[1]
+  end
 
 ::class SubDir subclass Directory
 ::class SubTable subclass StringTable

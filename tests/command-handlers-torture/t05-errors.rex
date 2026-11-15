@@ -63,39 +63,40 @@ do what over .array~of("USER BOOM", "HALT", "NOTREADY", "SYNTAX 98.900")
 end
 
 -- SYNTAX while output is going to a stem: what was written is kept
-signal on syntax name partial
-drop out.
-address e "HALFWAY" with output stem out.
-partial:
-signal on syntax name unexpected
+do
+  drop out.
+  address e "HALFWAY" with output stem out.
+catch syntax
+end
 call check "SYNTAX halfway through the output: the lines written are there", out.0 == 5
 exit finish()
 
 syntaxOf: procedure expose in. out. err. mine
   use arg verb
-  signal on syntax name caught
-  address e verb "DIV" with input stem in. output stem out. error stem err.
-  return "no condition"
-caught:
-  return condition("O")~code
+  do
+    address e verb "DIV" with input stem in. output stem out. error stem err.
+    return "no condition"
+  catch syntax
+    return condition("O")~code
+  end
 
 signalled: procedure
   use arg kind
-  signal on error name caughtError
-  address e "RAISE" kind 5
-  return "nothing"
-caughtError:
-  return condition("C") rc
+  do
+    address e "RAISE" kind 5
+    return "nothing"
+  catch error                              -- a FAILURE too: no CATCH FAILURE here
+    return condition("C") rc
+  end
 
 odd: procedure
   use arg what
-  signal on any name caughtAny
-  signal on syntax name caughtAny
-  signal on user boom name caughtAny
-  address e "RAISE" what
-  return "nothing"
-caughtAny:
-  return describe(condition("O"))
+  do
+    address e "RAISE" what
+    return "nothing"
+  catch c = any, syntax, user boom
+    return describe(c)
+  end
 
 onError:   .local~errs = .local~errs + 1; return
 onFailure: .local~fails = .local~fails + 1; return
@@ -152,19 +153,21 @@ unexpected:
 
 ::method nestErr private
   use arg context
-  signal on error name inner
-  address e "RAISE ERROR 3"
-  return "not trapped"
-inner:
-  return context~raiseError(9)
+  do
+    address e "RAISE ERROR 3"
+    return "not trapped"
+  catch error
+    return context~raiseError(9)
+  end
 
 ::method selfTrap private
   use arg context
-  signal on syntax name trapped
-  context~output~arrayOut(context~input~arrayIn)
-  context~setVar("mine", "set before")
-  return 1 / 0
-trapped:
-  context~output~lineout("after")
-  context~setVar("mine", "set after")
-  return 7
+  do
+    context~output~arrayOut(context~input~arrayIn)
+    context~setVar("mine", "set before")
+    return 1 / 0
+  catch syntax
+    context~output~lineout("after")
+    context~setVar("mine", "set after")
+    return 7
+  end

@@ -79,24 +79,26 @@ exit finish()
 
 longName: procedure
   use arg len
-  signal on syntax name longSyntax
-  name = "L"~copies(len)
-  .CommandHandler~register(name, .Named~new(len))
-  address value name
-  "WHO"
-  return rc
-longSyntax:
-  return describe(condition("O"))
+  do
+    name = "L"~copies(len)
+    .CommandHandler~register(name, .Named~new(len))
+    address value name
+    "WHO"
+    return rc
+  catch syntax
+    return describe(condition("O"))
+  end
 
 longName2: procedure
   use arg name
-  signal on syntax name longSyntax2
-  .CommandHandler~register(name, .Named~new(name))
-  address value name
-  "WHO"
-  return rc
-longSyntax2:
-  return describe(condition("O"))
+  do
+    .CommandHandler~register(name, .Named~new(name))
+    address value name
+    "WHO"
+    return rc
+  catch syntax
+    return describe(condition("O"))
+  end
 
 onFailure:
   failed = rc

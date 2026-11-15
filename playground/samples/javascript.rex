@@ -21,9 +21,10 @@ files = .js~fetch("rexx-parser.json")~await~json~await
 say "The editor's Rexx Parser has" .js~Object~keys(files)~length "files."
 
 -- a JavaScript exception is a Rexx SYNTAX condition
-signal on syntax
-.js~JSON~parse("{oops")
-syntax:
-  say "Caught:" condition("O")~message
+do
+  .js~JSON~parse("{oops")
+catch c = syntax
+  say "Caught:" c~message
+end
 
 ::requires "js.cls"

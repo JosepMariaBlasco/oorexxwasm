@@ -58,30 +58,31 @@ address c "RCNIL";    call check "RC .nil", rc == .nil | rc == "The NIL object"
 address c "RCARRAY";  call check "RC an Array", rc~isA(.Array) | rc~isA(.String)
 address c "RCLONG";   call check "RC a long string", rc~length == 100000
 -- ERROR asked for, then a SYNTAX: the SYNTAX wins
-signal on syntax name bothSyntax
-address c "BOTH"
-call check "raiseError then SYNTAX: SYNTAX reaches the caller", .false
-bothSyntax:
-signal on syntax name unexpected
+do
+  address c "BOTH"
+  call check "raiseError then SYNTAX: SYNTAX reaches the caller", .false
+catch syntax
+end
 call check "raiseError then SYNTAX: SYNTAX reaches the caller", condition("C") == "SYNTAX"
 exit finish()
 
 stale: procedure
   use arg ctx, m
-  signal on syntax name staleSyntax
-  -- through .Message: the context's own (private) SEND would hide Object's
-  select case m
-    when "[]", "getVar", "hasVar", "dropVar" then args = .array~of("x")
-    when "[]=" then args = .array~of(1, "x")
-    when "raise" then args = .array~of("ERROR", 1)
-    when "isRedirected" then args = .array~of("Input")
-    when "setVar" then args = .array~of("x", 1)
-    otherwise args = .array~new
+  do
+    -- through .Message: the context's own (private) SEND would hide Object's
+    select case m
+      when "[]", "getVar", "hasVar", "dropVar" then args = .array~of("x")
+      when "[]=" then args = .array~of(1, "x")
+      when "raise" then args = .array~of("ERROR", 1)
+      when "isRedirected" then args = .array~of("Input")
+      when "setVar" then args = .array~of("x", 1)
+      otherwise args = .array~new
+    end
+    .Message~new(ctx, m, "A", args)~send
+    return "no error"
+  catch syntax
+    return condition("O")~code
   end
-  .Message~new(ctx, m, "A", args)~send
-  return "no error"
-staleSyntax:
-  return condition("O")~code
 
 summary: procedure
   use arg bag
@@ -126,13 +127,14 @@ unexpected:
 
 ::routine try public
   use arg context
-  signal on syntax name failed
-  x = context["x"]
-  context["y"] = 1
-  context~output~lineout("o")
-  return "ok"
-failed:
-  return condition("O")~code
+  do
+    x = context["x"]
+    context["y"] = 1
+    context~output~lineout("o")
+    return "ok"
+  catch syntax
+    return condition("O")~code
+  end
 
 ::class Other
 ::method run unguarded

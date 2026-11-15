@@ -29,8 +29,8 @@ qualify-node-cli.sh and web-api.py.  Not part of the posted RFE.
  wasm/tests/qualify-node-cli.sh |   7 +
  wasm/tests/web-api.py          |   6 +
  wasm/web/commandwords.cls      | 172 ++++++++++++++++
- wasm/web/fetch.cls             | 352 +++++++++++++++++++++++++++++++++
- 8 files changed, 716 insertions(+), 1 deletion(-)
+ wasm/web/fetch.cls             | 353 +++++++++++++++++++++++++++++++++
+ 8 files changed, 717 insertions(+), 1 deletion(-)
  create mode 100644 wasm/tests/fetch-server.py
  create mode 100644 wasm/tests/fetch.rex
  create mode 100644 wasm/web/commandwords.cls
@@ -251,7 +251,7 @@ index 0000000..a8642bc
 +
 +::requires "fetch.cls"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index a51c34e..0281c8b 100755
+index f953412..d1638a6 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -505,6 +505,13 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
@@ -269,7 +269,7 @@ index a51c34e..0281c8b 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 5be30ce..d997ea7 100755
+index 51fbec6..9c0667e 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -67,6 +67,9 @@ class H(SimpleHTTPRequestHandler):
@@ -283,7 +283,7 @@ index 5be30ce..d997ea7 100755
  
  CASES = [
 @@ -256,6 +259,9 @@ CASES = [
-                    'f: say "FAILURE" rc\n'
+                    'catch failure; say "FAILURE" rc; end\n'
                     '::requires "jdor.cls"\n::class Mine subclass CommandHandler\n::method command\n  return "mine"', {},
       lambda r: r["out"] == "30 40 3\n100 100\nmine\n100 100\nmine\nFAILURE 30\n"),
 +  # ADDRESS FETCH (wasm/web/fetch.cls over .CommandHandler and js.cls): the portable test
@@ -472,10 +472,10 @@ index 0000000..84327b4
 +  return lines
 diff --git a/wasm/web/fetch.cls b/wasm/web/fetch.cls
 new file mode 100644
-index 0000000..2b79bbd
+index 0000000..30b3a7b
 --- /dev/null
 +++ b/wasm/web/fetch.cls
-@@ -0,0 +1,352 @@
+@@ -0,0 +1,353 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -711,16 +711,17 @@ index 0000000..2b79bbd
 +  init["headers"] = h
 +  if body \== .nil then init["body"] = body
 +  if timeout > 0 then init["signal"] = .js~AbortSignal~timeout(.js~num(timeout * 1000))
-+  signal on syntax name failed
-+  response = .js~fetch(url, .js~newObject(init))~await
-+  return .true
-+failed:
-+  response = .nil
-+  reason = condition("O")~message
-+  parse var reason "JavaScript error: " js
-+  if js \== "" then reason = js
-+  .CommandIO~error(context, "FETCH" method url":" reason)
-+  return .false
++  do
++    response = .js~fetch(url, .js~newObject(init))~await
++    return .true
++  catch e = syntax
++    response = .nil
++    reason = e~message
++    parse var reason "JavaScript error: " js
++    if js \== "" then reason = js
++    .CommandIO~error(context, "FETCH" method url":" reason)
++    return .false
++  end
 +
 +-- RC for the last response: 0 for 2xx, else the status (and ERROR)
 +::method result private
@@ -796,9 +797,12 @@ index 0000000..2b79bbd
 +      .CommandIO~error(context, "FETCH JSON: no response body")
 +      return context~raiseError(2)
 +    end
-+    signal on syntax name notJson
-+    json = .array~of(.json~new~fromJSON(text))   -- in an Array: null is .nil
-+    signal off syntax
++    do
++      json = .array~of(.json~new~fromJSON(text))   -- in an Array: null is .nil
++    catch syntax
++      .CommandIO~error(context, "FETCH JSON: the response body is not JSON")
++      return context~raiseError(2)
++    end
 +  end
 +  value = json[1]
 +  where = ""
@@ -825,6 +829,3 @@ index 0000000..2b79bbd
 +missing:
 +  .CommandIO~error(context, "FETCH JSON: no" where~substr(2) "in the response")
 +  return context~raiseError(1)
-+notJson:
-+  .CommandIO~error(context, "FETCH JSON: the response body is not JSON")
-+  return context~raiseError(2)

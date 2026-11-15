@@ -359,7 +359,7 @@ index b13d517..cb5c6fa 100644
  };
  </script>
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index c0eddc7..5be30ce 100755
+index 09f958c..51fbec6 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -42,7 +42,7 @@ Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP
@@ -385,15 +385,15 @@ index c0eddc7..5be30ce 100755
 +  # with the TypeError and its stack; a JdorError is still ERROR -102
 +  ("jdor unexpected", 'w = .js; saved = w~js.getStrict("OffscreenCanvas")\n'
 +                      'w~js.setStrict("OffscreenCanvas", w~Function~new("throw new TypeError(\'no canvas\')"))\n'
-+                      'signal on syntax name s1; address jdor "newImage 20 20"\n'
-+                      's1: c = condition("O"); a = c~additional\n'
++                      'do; address jdor "newImage 20 20"\n'
++                      'catch c = syntax; end; a = c~additional\n'
 +                      'say c~code a~items a[1] "|" a[2]~js.className a[2]~message "|" (a[3]~length > 0)\n'
 +                      'w~js.setStrict("OffscreenCanvas", w~Function~new("throw \'x\'"))\n'
-+                      'signal on syntax name s2; address jdor "newImage 20 20"\n'
-+                      's2: a = condition("O")~additional; say condition("O")~code a~items a[1] "|" a[2]\n'
++                      'do; address jdor "newImage 20 20"\n'
++                      'catch c = syntax; a = c~additional; say c~code a~items a[1] "|" a[2]; end\n'
 +                      'w~js.setStrict("OffscreenCanvas", w~Function~new("throw null"))\n'
-+                      'signal on syntax name s3; address jdor "newImage 20 20"\n'
-+                      's3: a = condition("O")~additional; say condition("O")~code a~items a[1] "|" a[2]\n'
++                      'do; address jdor "newImage 20 20"\n'
++                      'catch c = syntax; a = c~additional; say c~code a~items a[1] "|" a[2]; end\n'
 +                      'w~js.setStrict("OffscreenCanvas", saved)\n'
 +                      'call on error name e1; address jdor "fillRect X 1"; say "no error"; exit\n'
 +                      'e1: say condition("C") rc\n'
@@ -407,12 +407,12 @@ index c0eddc7..5be30ce 100755
 +  # the objects say what they are (no Java): STRING, TOSTRING, KIND; errors "JDOR (web): ..."
 +  ("jdor identity", 'address jdor\nnewImage 50 40; image; say rc; say rc~toString; say rc~kind rc~width\n'
 +                    'font f "Serif bold 20"; font; say rc~kind; say rc~string~left(15)\n'
-+                    'signal on error; fillRect x 1\nerror: say rc condition("A")[1]\n::requires "jdor.cls"', {},
++                    'do; fillRect x 1\ncatch error; say rc condition("A")[1]; end\n::requires "jdor.cls"', {},
 +     lambda r: re.fullmatch(r"a JDOR Image \(#\d+\)\nJDOR Image #\d+: 50x40, type 2 \(ARGB\), an OffscreenCanvas\n"
 +                            r"Image 50\nFont\na JDOR Font \(#\d*\n-102 ERROR +-102 command # +\d+ \[FILLRECT X 1\].* cause: \[JDOR \(web\): not a number: \"X\"\]\n", r["out"]) is not None
 +               and "java" not in r["out"].lower()),
 +  ("jdor conditions", 'address jdor\nnoSuchCommand; say .rs rc\nfillRect x y; say .rs rc\n'
-+                      'signal on error; color unknownColor; say "not here"\nerror: say "ERROR" rc condition("D")\n'
++                      'do; color unknownColor; say "not here"\ncatch error; say "ERROR" rc condition("D"); end\n'
 +                      '::requires "jdor.cls"', {},
 +     lambda r: "-1 -1\n" in r["out"] and "1 -102\n" in r["out"] and "ERROR -3 COLOR UNKNOWNCOLOR" in r["out"]
 +               and "not here" not in r["out"]),
@@ -440,7 +440,7 @@ index c0eddc7..5be30ce 100755
 +                  'color half 0 255 0 128; fillRect 20 20; p = img~getRGB(15, 15); numeric digits 12; p = p + 2**32\n'
 +                  'say p % 2**24 (p % 256 // 256 >= 254); numeric digits\n'
 +                  'newImage 4 4 TYPE_INT_RGB; image; say rc~getRGB(0, 0)\n'
-+                  'signal on syntax; say img~getRGB(20, 0)\nsyntax: say condition("O")~code condition("O")~message\n'
++                  'do; say img~getRGB(20, 0)\ncatch c = syntax; say c~code c~message; end\n'
 +                  '::requires "jdor.cls"', {},
 +     lambda r: r["out"] == "0\n-65536 0\n-65536 -16776961\n128 1\n-16777216\n93.900 JDOR (web): Coordinate out of bounds!.\n"),
 +  ("jdor getters", 'address jdor\nnewImage 20 20\n\'stroke s 2 0 0 10 "(4,2)" 1\'; stroke; da = rc~getDashArray; say da~items da[1] da[2]\n'
@@ -449,7 +449,7 @@ index c0eddc7..5be30ce 100755
 +                   'shape e ellipse 0 0 10 10; shape b area e; say rc~isRectangular; areaSubtract a r; say rc~isEmpty\n'
 +                   '\'shape pg Polygon "(10,40,10)" "(10,10,40)" 3\'; say rc~npoints\n'
 +                   'pathIterator r; say rc~isDone rc~getWindingRule\n'
-+                   'signal on syntax; say rc~noSuchMethod(1)\nsyntax: say condition("O")~code\n::requires "jdor.cls"', {},
++                   'do; say rc~noSuchMethod(1)\ncatch c = syntax; say c~code; end\n::requires "jdor.cls"', {},
 +     lambda r: r["out"] == "2 4.0 2.0\nThe NIL object\n1 0\n0\n1\n3\n0 1\n97.1\n"),
 +  # render aliasOff: a pixel is painted or not, as Java without antialiasing
 +  ("jdor aliasOff", 'address jdor\nnewImage 40 40; render aliasOff; color red\nmoveTo 3 3; fillOval 30 25; moveTo 2 36; drawLine 37 36\n'
@@ -488,8 +488,8 @@ index c0eddc7..5be30ce 100755
 +                   '.CommandHandler~register("PAD", .Mine~new); address pad "x"; say rc\n'
 +                   'x = .CommandHandler~deregister("PAD"); address pad "imageSize"; say rc\n'
 +                   'x = .CommandHandler~deregister("PAD"); address pad "x"; say rc\n'
-+                   'x = .CommandHandler~deregister("PAD"); signal on failure name f; address pad "x"; exit\n'
-+                   'f: say "FAILURE" rc\n'
++                   'x = .CommandHandler~deregister("PAD"); do; address pad "x"; exit\n'
++                   'catch failure; say "FAILURE" rc; end\n'
 +                   '::requires "jdor.cls"\n::class Mine subclass CommandHandler\n::method command\n  return "mine"', {},
 +     lambda r: r["out"] == "30 40 3\n100 100\nmine\n100 100\nmine\nFAILURE 30\n"),
    # .JSObject: JavaScript objects as Rexx objects (wasm/web-js.cpp, wasm/js-bridge.js, wasm/web/js.cls)

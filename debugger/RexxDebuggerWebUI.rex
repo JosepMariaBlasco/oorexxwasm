@@ -323,6 +323,8 @@ return t
 ::routine DebuggerString
 ------------------------------------------------------
 use arg v
-signal on syntax
-return v~makedebuggerstring~string
-syntax: return '?'
+do
+  return v~makedebuggerstring~string
+catch syntax
+  return '?'
+end

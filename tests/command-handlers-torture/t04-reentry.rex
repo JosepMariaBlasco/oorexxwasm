@@ -36,12 +36,13 @@ call check "still works after hitting the limit", out.0 == 5 & rc == "ok"
 exit finish()
 
 down: procedure
-  signal on syntax name downEnd
-  .local~deepest = 0
-  address deep "DOWN 1"
-  return "returned"
-downEnd:
-  return condition("O")~code
+  do
+    .local~deepest = 0
+    address deep "DOWN 1"
+    return "returned"
+  catch syntax
+    return condition("O")~code
+  end
 
 unexpected:
   say "UNEXPECTED" describe(condition("O")) "line" sigl

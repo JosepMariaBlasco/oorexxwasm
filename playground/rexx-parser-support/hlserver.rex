@@ -13,7 +13,6 @@
 /* https://rexx.epbcn.com/rexx-parser/                                        */
 
 rs = '1e'x
-Signal On NotReady
 Do Forever
   Parse Value LineIn() With id count style .
   If \DataType(count, "W") Then Iterate
@@ -28,27 +27,25 @@ Do Forever
     Say rs || id "OK"
   End
   Else Say rs || id "ERR" rest
+Catch NotReady                    -- the end of the input
 End
-
-NotReady:
-  Exit
+Exit
 
 ::Routine Highlight
   Use Arg source, style
-  Signal On Syntax
-  options. = 0
-  options.mode  = "HTML"
-  options.style = style
-  html = .Highlighter~new("program", source, options.)~parse
-  If html~isA(.Array) Then html = html~makeString("L", "0a"x)
-  Return "OK" html || "0a"x
-
-Syntax:
-  co    = Condition("O")
-  extra = co~additional~lastItem
-  line  = ""
-  If extra~isA(.Directory) Then line = extra~position
-  Return "ERR" line co~code Ansi.ErrorText(co~code, co~additional)
+  Do
+    options. = 0
+    options.mode  = "HTML"
+    options.style = style
+    html = .Highlighter~new("program", source, options.)~parse
+    If html~isA(.Array) Then html = html~makeString("L", "0a"x)
+    Return "OK" html || "0a"x
+  Catch co = Syntax
+    extra = co~additional~lastItem
+    line  = ""
+    If extra~isA(.Directory) Then line = extra~position
+    Return "ERR" line co~code Ansi.ErrorText(co~code, co~additional)
+  End
 
 ::Requires "Rexx.Parser.cls"
 ::Requires "parser/Highlighter.cls"

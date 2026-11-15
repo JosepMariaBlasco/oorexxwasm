@@ -36,13 +36,13 @@ function, is SYNTAX 93.900.
 Not part of the posted RFE.
 ---
  wasm/README.md                 |  15 ++
- wasm/tests/js-commands.rex     | 348 +++++++++++++++++++++++++++++++++
+ wasm/tests/js-commands.rex     | 364 +++++++++++++++++++++++++++++++++
  wasm/tests/qualify-node-cli.sh |   5 +
  wasm/tests/web-api.py          |  50 +++++
- wasm/web-js.cpp                | 101 +++++++++-
+ wasm/web-js.cpp                | 101 ++++++++-
  wasm/web/js.cls                |  70 +++++++
- wasm/web/ooRexx.js             |  33 +++-
- 7 files changed, 612 insertions(+), 10 deletions(-)
+ wasm/web/ooRexx.js             |  33 ++-
+ 7 files changed, 628 insertions(+), 10 deletions(-)
  create mode 100644 wasm/tests/js-commands.rex
 
 diff --git a/wasm/README.md b/wasm/README.md
@@ -73,10 +73,10 @@ index 4a4c08c..3fa6fcd 100644
    passed synchronously to the main runtime thread, where `js-bridge.js` (a
 diff --git a/wasm/tests/js-commands.rex b/wasm/tests/js-commands.rex
 new file mode 100644
-index 0000000..162cd01
+index 0000000..62bbd86
 --- /dev/null
 +++ b/wasm/tests/js-commands.rex
-@@ -0,0 +1,348 @@
+@@ -0,0 +1,364 @@
 +/*----------------------------------------------------------------------------*/
 +/* Command environments written in JavaScript (.JSCommandHandler, one of    */
 +/* the interpreter's .CommandHandlers), in the realm of .js: the worker's in */
@@ -147,9 +147,10 @@ index 0000000..162cd01
 +"in";                    call check "ctx.isRedirected('Input') without WITH INPUT: false", rc == "no input"
 +address calc "lines" with input stem i.; call check "ctx.input().arrayIn(): all of WITH INPUT", rc == 2
 +address calc "redir" with input stem i. output stem o.; call check "ctx.isRedirected: booleans", rc == "truetruefalse"
-+signal on syntax name s7
-+"noout"
-+s7:
++do
++  "noout"
++catch syntax
++end
 +call check "ctx.output() without WITH OUTPUT: SYNTAX 98.900, the core's", condition("O")~code == "98.900" & -
 +  condition("O")~message~pos("not given WITH OUTPUT") > 0
 +x = 42
@@ -196,10 +197,10 @@ index 0000000..162cd01
 +call userCommand "CALC", "raiseuser"
 +call check "ctx.raise('USER MINE', 4, ...): the caller's SIGNAL ON, as itself", -
 +  .local~userTrapped == "USER MINE | from JavaScript | -" & .local~userRc == 4
-+signal on syntax name s0
-+"twice"
-+s0:
-+c = condition("O")
++do
++  "twice"
++catch c = syntax
++end
 +call check "a second ctx.raise in one command: SYNTAX 93.900", c~code == "93.900" & -
 +  c~message~pos("already raised") > 0
 +-- with ::OPTIONS ERROR SYNTAX it is still the condition raised (ooRexx #2119,
@@ -232,30 +233,32 @@ index 0000000..162cd01
 +.CommandHandler~register("REXXHALT", .HaltingHandler~new)
 +call check "a handler in Rexx: a routine's HALT is SYNTAX 4.1, as in plain Rexx", haltSignalOn("halt", "REXXHALT") == "SYNTAX 4.1"
 +
-+signal on syntax name s1
-+"throw"
-+s1:
++do
++  "throw"
++catch syntax
++end
 +c = condition("O"); a = c~additional
 +call check "a JavaScript exception: SYNTAX 98.900 where the command was issued", c~code == "98.900"
 +call check "  additional: the message, the TypeError, its stack", a~items == 3 & -
 +  a[1] == "JavaScript error: TypeError: from the handler" & a[2]~isA(.JSObject) & a[2]~message == "from the handler"
-+signal on syntax name s2
-+"reject"
-+s2:
-+c = condition("O")
++do
++  "reject"
++catch c = syntax
++end
 +call check "a rejected Promise: SYNTAX 98.900, the RangeError", c~code == "98.900" & c~additional[2]~message == "rejected"
-+signal on syntax name s3
-+"badname"
-+s3:
-+c = condition("O")
++do
++  "badname"
++catch c = syntax
++end
 +call check "a Rexx condition the handler lets through: itself (93.900)", c~code == "93.900" & -
 +  c~message~pos("not a Rexx variable name: 1abc") > 0
 +
 +"keep";                  call check "ctx.isValid() while the command runs", rc == "valid"
 +call check "ctx after the command: not valid (a boolean)", F("", "return globalThis.keptCtx.isValid() === false")~call(.nil) == 1
-+signal on syntax name s4
-+F("", "return globalThis.keptCtx.getVar('X')")~call(.nil)
-+s4:
++do
++  F("", "return globalThis.keptCtx.getVar('X')")~call(.nil)
++catch syntax
++end
 +call check "ctx after the command: SYNTAX 98.900, as itself", condition("O")~code == "98.900" & -
 +  condition("O")~additional[1]~pos("JavaScript error") == 0
 +
@@ -274,16 +277,18 @@ index 0000000..162cd01
 +raised = ""
 +address calc "anything"; call check "none left: FAILURE, RC 30 (an unknown environment)", raised == "FAILURE 30"
 +call off failure
-+signal on syntax name s6
-+.CommandHandler~deregister("calc")
-+s6:
++do
++  .CommandHandler~deregister("calc")
++catch syntax
++end
 +call check "deregister with nothing registered: SYNTAX 93.900", condition("O")~code == "93.900"
 +call check ".JSCommandHandler~new(.nil): SYNTAX 93.900", refused(.nil)~word(1) == "93.900"
 +call check "a Rexx string: SYNTAX 93.900", refused("return 1")~word(1) == "93.900"
 +call check "a JavaScript object that is not a function: SYNTAX 93.900", refused(.js~newObject)~word(1) == "93.900"
-+signal on syntax name s5
-+.CommandHandler~register("", .JSCommandHandler~new(calc))
-+s5:
++do
++  .CommandHandler~register("", .JSCommandHandler~new(calc))
++catch syntax
++end
 +call check "an empty name: SYNTAX 93.900", condition("O")~code == "93.900"
 +call check "function: the JavaScript function", first~function == calc
 +
@@ -345,51 +350,62 @@ index 0000000..162cd01
 +
 +haltSignalOn: procedure
 +  use arg cmd, env = "CALC"
-+  signal on halt name hs; signal on syntax name hx
-+  address value env
-+  cmd
-+  return "nothing"
++  signal on halt name hs
++  do
++    address value env
++    cmd
++    return "nothing"
++  catch syntax
++    return "SYNTAX" condition("O")~code
++  end
 +hs: return "HALT"
-+hx: return "SYNTAX" condition("O")~code
 +
 +haltCallOn: procedure               -- CALL ON HALT runs after the next clause
 +  use arg cmd
 +  .local~halted = ""
-+  call on halt name hc; signal on syntax name hy
-+  address calc cmd
-+  nop
-+  return .local~halted "rc" rc
++  call on halt name hc
++  do
++    address calc cmd
++    nop
++    return .local~halted "rc" rc
++  catch syntax
++    return "SYNTAX" condition("O")~code
++  end
 +hc: .local~halted = "HALT"; return
 +
 +haltErrorCallOn: procedure          -- both conditions, each by its CALL ON
 +  .local~halted = ""
-+  call on halt name hec; call on error name hee; signal on syntax name hez
-+  address calc "errorhalt"
-+  nop
-+  return strip(.local~halted) "rc" rc
++  call on halt name hec; call on error name hee
++  do
++    address calc "errorhalt"
++    nop
++    return strip(.local~halted) "rc" rc
++  catch syntax
++    return "SYNTAX" condition("O")~code
++  end
 +hec: .local~halted = .local~halted "HALT"; return
 +hee: .local~halted = .local~halted "ERROR"; return
-+hez: return "SYNTAX" condition("O")~code
-+hy: return "SYNTAX" condition("O")~code
 +
 +haltUntrapped: procedure
 +  use arg cmd
-+  signal on syntax name hz
-+  address calc cmd
-+  return "nothing"
-+hz: return "SYNTAX" condition("O")~code
++  do
++    address calc cmd
++    return "nothing"
++  catch syntax
++    return "SYNTAX" condition("O")~code
++  end
 +
 +F: procedure                        -- F(params, body): a JavaScript function
 +  return .fn~call(.nil, arg(1), arg(2))
 +
 +refused: procedure                  -- "code message" of .JSCommandHandler~new(fn)
 +  use arg fn
-+  signal on syntax name refusedSyntax
-+  h = .JSCommandHandler~new(fn)
-+  return "no error"
-+refusedSyntax:
-+  c = condition("O")
-+  return c~code c~message
++  do
++    h = .JSCommandHandler~new(fn)
++    return "no error"
++  catch c = syntax
++    return c~code c~message
++  end
 +
 +check: procedure
 +  parse arg what, ok
@@ -426,7 +442,7 @@ index 0000000..162cd01
 +::routine haltsHere
 +  raise halt
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 0281c8b..4c86a54 100755
+index d1638a6..b0b1f26 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -505,6 +505,11 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
@@ -442,7 +458,7 @@ index 0281c8b..4c86a54 100755
  "$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
  FETCH_SRV=$!; sleep 0.5
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index e1e49c8..ba84912 100755
+index dcf896f..3e12af0 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -99,6 +99,28 @@ CASES = [
@@ -458,11 +474,11 @@ index e1e49c8..ba84912 100755
 +                       'g = .js~page~Function~new("c", "ctx", "return ctx.hasVar(\'X\').then((b) => b === true ? 1 : 0)")\n'
 +                       '.CommandHandler~register("P", .JSCommandHandler~new(g)); address p "go"; say rc\n'
 +                       'h = .js~page~Function~new("c", "ctx", "throw new TypeError(\'in the page\')")\n'
-+                       '.CommandHandler~register("P", .JSCommandHandler~new(h)); signal on syntax; address p "go"\n'
-+                       'syntax: say condition("O")~code condition("O")~additional[2]~message\n'
++                       '.CommandHandler~register("P", .JSCommandHandler~new(h)); do; address p "go"\n'
++                       'catch c = syntax; say c~code c~additional[2]~message; end\n'
 +                       'k = .js~page~Function~new("c", "ctx", "return ctx.getVar(\'1abc\')")\n'
-+                       '.CommandHandler~register("P", .JSCommandHandler~new(k)); signal on syntax name s2; address p "go"\n'
-+                       's2: say condition("O")~code (condition("O")~message~pos("1abc") > 0)\n'
++                       '.CommandHandler~register("P", .JSCommandHandler~new(k)); do; address p "go"\n'
++                       'catch c = syntax; say c~code (c~message~pos("1abc") > 0); end\n'
 +                       'e = .js~page~Function~new("c", "ctx", "return ctx.raiseError(5)")\n'
 +                       '.CommandHandler~register("P", .JSCommandHandler~new(e)); call on error name e1; address p "go"; call off error\n'
 +                       'n = .js~page~Function~new("c", "ctx", "return -3")\n'
@@ -492,8 +508,8 @@ index e1e49c8..ba84912 100755
 +    r.push(String((await s.removeCommandEnvironment('low')) !== covered));
 +    r.push(await s.eval('address low "ABC"; return rc'));
 +    await s.addCommandEnvironment('BAD', () => { throw new TypeError('page'); });
-+    r.push(await s.eval('signal on syntax; address bad "x"; return "no error"\\n' +
-+      'syntax: return condition("O")~code condition("O")~additional[2]~message'));
++    r.push(await s.eval('do; address bad "x"; return "no error"\\n' +
++      'catch c = syntax; return c~code c~additional[2]~message; end'));
 +    await s.removeCommandEnvironment('LOW');
 +    r.push(await s.eval('address low "x"; return rc'));
 +    try { await s.addCommandEnvironment('N', null); r.push('no error'); } catch (e) { r.push(e.name + ' ' + e.code); }
@@ -647,7 +663,7 @@ index f698c88..ed21a66 100644
  };
  
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
-index 9e602ed..f2437bd 100644
+index 2f92244..0811bce 100644
 --- a/wasm/web/js.cls
 +++ b/wasm/web/js.cls
 @@ -218,6 +218,19 @@
@@ -680,7 +696,7 @@ index 9e602ed..f2437bd 100644
   *
   * What these make sees js.cls and the public classes and routines of what
   * the session made before (later code sees earlier definitions, as the
-@@ -703,6 +719,12 @@ syntax: raise propagate
+@@ -747,6 +763,12 @@ call JsSetup .JSObject, .JSTyped, .JSHandler, .JSEvent, .JSTyped~undefined, .Log
    else p = .Package~new(name, self~lines(source), context)
    context~addPackage(p)
    return p
@@ -693,7 +709,7 @@ index 9e602ed..f2437bd 100644
  ::method lines private              -- source text (a string, maybe with line ends) as an Array of lines
    use arg source
    if source~isA(.String) then return source~makeArray
-@@ -710,6 +732,54 @@ syntax: raise propagate
+@@ -754,6 +776,54 @@ call JsSetup .JSObject, .JSTyped, .JSHandler, .JSEvent, .JSTyped~undefined, .Log
  ::method string
    return "a JSSession"
  

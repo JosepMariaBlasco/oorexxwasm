@@ -49,14 +49,15 @@ exit finish()
 spinUntilHalted: procedure
   use arg pid
   signal on halt name gotHalt
-  signal on syntax name gotSyntax
-  .Killer~new~start("run", pid)
-  address h "SPIN"
-  return "returned" rc
+  do
+    .Killer~new~start("run", pid)
+    address h "SPIN"
+    return "returned" rc
+  catch syntax
+    return condition("O")~code
+  end
 gotHalt:
   return "HALT"
-gotSyntax:
-  return condition("O")~code
 
 unexpected:
   say "UNEXPECTED" describe(condition("O")) "line" sigl

@@ -26,9 +26,9 @@ part of the posted RFE.
  wasm/tests/dom.rex      |  259 ++++++++++
  wasm/tests/web-api.html |    2 +-
  wasm/tests/web-api.py   |   11 +
- wasm/web/dom.cls        | 1046 +++++++++++++++++++++++++++++++++++++++
+ wasm/web/dom.cls        | 1048 +++++++++++++++++++++++++++++++++++++++
  wasm/web/ooRexx.js      |   14 +-
- 6 files changed, 1333 insertions(+), 3 deletions(-)
+ 6 files changed, 1335 insertions(+), 3 deletions(-)
  create mode 100644 wasm/tests/dom.rex
  create mode 100644 wasm/web/dom.cls
 
@@ -329,7 +329,7 @@ index cb5c6fa..f56ea5d 100644
      onErr: o.console ? undefined : (t, kind) => { err += t; mark(t, kind); }, onJdor,
      onInput: (info) => { asks++; debug.push(!!(info && info.debug));
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index d997ea7..e1e49c8 100755
+index 9c0667e..dcf896f 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -262,6 +262,17 @@ CASES = [
@@ -352,10 +352,10 @@ index d997ea7..e1e49c8 100755
       lambda r: "did not grant the worker realm" in r["errmsg"] and r["rc"] != 0),
 diff --git a/wasm/web/dom.cls b/wasm/web/dom.cls
 new file mode 100644
-index 0000000..e318063
+index 0000000..9fde099
 --- /dev/null
 +++ b/wasm/web/dom.cls
-@@ -0,0 +1,1046 @@
+@@ -0,0 +1,1048 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -520,9 +520,12 @@ index 0000000..e318063
 +  expose ready doc root current
 +  use strict arg context
 +  if ready then return .true
-+  signal on syntax name noPage
-+  doc = .js~page~document
-+  signal off syntax
++  do
++    doc = .js~page~document
++  catch syntax
++    .CommandIO~error(context, "DOM: there is no page (the page must grant it: js: {page: true})")
++    return .false
++  end
 +  ready = .true
 +  which = value("ORX_DOM_ROOT", , "ENVIRONMENT")
 +  if which == "none" then return .true
@@ -530,9 +533,6 @@ index 0000000..e318063
 +  if root == .nil then root = doc~body
 +  current = root
 +  return .true
-+noPage:
-+  .CommandIO~error(context, "DOM: there is no page (the page must grant it: js: {page: true})")
-+  return .false
 +
 +::method command
 +  expose root current
@@ -573,48 +573,49 @@ index 0000000..e318063
 +  verb = verb~upper
 +  if target \== .nil, "NEW ROOT LOCATE UP TOP WAIT CSS"~caselessWordPos(verb) > 0 then
 +    return self~bad(context, verb "takes no target")
-+  signal on syntax name jsError
-+  select case verb
-+    when "NEW"    then return self~new(words, into, context)
-+    when "ROOT"   then return self~setRoot(words, into, context)
-+    when "LOCATE" then return self~locate(words, into, context)
-+    when "TOP"    then return self~top(words, into, context)
-+    when "WAIT"   then return self~wait(words, into, context)
-+    when "CSS"    then return self~css(words, into, context)
-+    otherwise nop
++  do
++    select case verb
++      when "NEW"    then return self~new(words, into, context)
++      when "ROOT"   then return self~setRoot(words, into, context)
++      when "LOCATE" then return self~locate(words, into, context)
++      when "TOP"    then return self~top(words, into, context)
++      when "WAIT"   then return self~wait(words, into, context)
++      when "CSS"    then return self~css(words, into, context)
++      otherwise nop
++    end
++    if target == .nil then target = current
++    if target == .nil then return self~noRoot(context)
++    select case verb
++      when "UP"      then return self~up(words, into, context)
++      when "CLOSE"   then return self~close(target, words, into, context)
++      when "CREATE"  then return self~create(target, words, into, context)
++      when "REMOVE"  then return self~remove(target, words, into, context)
++      when "CLEAR"   then return self~clear(target, words, into, context)
++      when "TEXT"    then return self~property(target, "textContent", words, into, context)
++      when "VALUE"   then return self~value(target, words, into, context)
++      when "ATTR"    then return self~attr(target, words, into, context)
++      when "STYLE"   then return self~style(target, words, into, context)
++      when "CLASS"   then return self~classes(target, words, into, context)
++      when "SHOW"    then return self~flag(target, "hidden", .false, words, into, context)
++      when "HIDE"    then return self~flag(target, "hidden", .true, words, into, context)
++      when "ENABLE"  then return self~flag(target, "disabled", .false, words, into, context)
++      when "DISABLE" then return self~flag(target, "disabled", .true, words, into, context)
++      when "FOCUS"   then return self~focus(target, words, into, context)
++      when "FIELD"   then return self~field(target, words, into, context)
++      when "BUTTON"  then return self~button(target, words, into, context)
++      when "TABLE"   then return self~table(target, words, into, context)
++      when "LIST"    then return self~list(target, words, into, context)
++      when "ON"      then return self~on(target, words, into, context)
++      when "OFF"     then return self~off(target, words, into, context)
++      otherwise return self~bad(context, "unknown command" verb)
++    end
++  catch e = syntax
++    reason = e~message
++    parse var reason "JavaScript error: " js
++    if js \== "" then reason = js
++    .CommandIO~error(context, "DOM" verb":" reason)
++    return context~raiseFailure(-5)
 +  end
-+  if target == .nil then target = current
-+  if target == .nil then return self~noRoot(context)
-+  select case verb
-+    when "UP"      then return self~up(words, into, context)
-+    when "CLOSE"   then return self~close(target, words, into, context)
-+    when "CREATE"  then return self~create(target, words, into, context)
-+    when "REMOVE"  then return self~remove(target, words, into, context)
-+    when "CLEAR"   then return self~clear(target, words, into, context)
-+    when "TEXT"    then return self~property(target, "textContent", words, into, context)
-+    when "VALUE"   then return self~value(target, words, into, context)
-+    when "ATTR"    then return self~attr(target, words, into, context)
-+    when "STYLE"   then return self~style(target, words, into, context)
-+    when "CLASS"   then return self~classes(target, words, into, context)
-+    when "SHOW"    then return self~flag(target, "hidden", .false, words, into, context)
-+    when "HIDE"    then return self~flag(target, "hidden", .true, words, into, context)
-+    when "ENABLE"  then return self~flag(target, "disabled", .false, words, into, context)
-+    when "DISABLE" then return self~flag(target, "disabled", .true, words, into, context)
-+    when "FOCUS"   then return self~focus(target, words, into, context)
-+    when "FIELD"   then return self~field(target, words, into, context)
-+    when "BUTTON"  then return self~button(target, words, into, context)
-+    when "TABLE"   then return self~table(target, words, into, context)
-+    when "LIST"    then return self~list(target, words, into, context)
-+    when "ON"      then return self~on(target, words, into, context)
-+    when "OFF"     then return self~off(target, words, into, context)
-+    otherwise return self~bad(context, "unknown command" verb)
-+  end
-+jsError:
-+  reason = condition("O")~message
-+  parse var reason "JavaScript error: " js
-+  if js \== "" then reason = js
-+  .CommandIO~error(context, "DOM" verb":" reason)
-+  return context~raiseFailure(-5)
 +
 +-- ---- helpers ---------------------------------------------------------------
 +
@@ -679,11 +680,12 @@ index 0000000..e318063
 +    nicks~remove(ref~upper)                     -- it was removed meanwhile
 +  end
 +  if root == .nil then return .nil
-+  signal on syntax name badSelector
-+  return root~querySelector(ref)
-+badSelector:
-+  .CommandIO~error(context, "DOM: not a nickname, and not a CSS selector:" ref)
-+  return ""
++  do
++    return root~querySelector(ref)
++  catch syntax
++    .CommandIO~error(context, "DOM: not a nickname, and not a CSS selector:" ref)
++    return ""
++  end
 +
 +-- the nickname of an element, or .nil
 +::method nickOf private

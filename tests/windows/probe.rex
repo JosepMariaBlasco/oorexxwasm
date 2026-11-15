@@ -97,13 +97,13 @@ exit 0
 
 probe: procedure
   use arg name, code
-  signal on syntax
-  say name "=" evaluate(code)
-  return
-syntax:
-  c = condition("O")
-  say name "!!" c~code c~errortext c~message
-  return
+  do
+    say name "=" evaluate(code)
+    return
+  catch c = syntax
+    say name "!!" c~code c~errortext c~message
+    return
+  end
 
 quote: return "'" || changestr("'", arg(1), "''") || "'"
 
