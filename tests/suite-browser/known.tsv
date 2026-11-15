@@ -48,7 +48,7 @@ processes	base/class/String/comparisonOperators	test/trunk r13515: TEST_COMPARE_
 processes	base/expressions/SPECIAL	test/trunk r13515 (bug #1247): TEST_1247_* run a rexx child process, RC 127 in the browsers (under Node they pass: Error 11.1)
 processes	base/keyword/FORWARD	test/trunk r13515: TEST_FORWARD_SELF_RECURSION runs a rexx child process, RC 127
 processes	base/keyword/RAISE	test/trunk r13515: TEST_PROPAGATE_TRACEBACK_NOT_STRING runs a rexx child process, RC 127
-processes	base/keyword/CATCH	test/trunk r13515: 15 errors and 3 failures, all from tests that run rexx or rexxc as a child process (RC 127) in the browsers; under Node 144/144
+processes	base/keyword/CATCH	test/trunk r13518: 17 errors and 3 failures, all from tests that run rexx or rexxc as a child process (RC 127) in the browsers; TEST_COMPILED and TEST_COMPILED_VARIABLE run rexxc with ADDRESS SYSTEM, so the compiled file is never written and the routine made of it returns nothing (91.999); under Node 146/146
 processes	base/bif/SETLOCAL	test/trunk r13515: runs a rexx child process, RC 127
 processes	base/rexxutil/SysDumpVariables	test/trunk r13515: TEST_STRING_RAISES runs a rexx child process, RC 127
 processes	base/rexxutil/SysFormatMessage	test/trunk r13515: TEST_STRING_RAISES runs a rexx child process, RC 127
