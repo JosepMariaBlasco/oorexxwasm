@@ -46,8 +46,8 @@ through REXX_PATH: cmd.exe would take rexx.js in PATH for "rexx").
  wasm/README.md                                |  16 ++
  wasm/build-node.sh                            |   8 +-
  wasm/build-test.sh                            |   6 +
- wasm/node-pre.js                              |  36 ++-
- 15 files changed, 574 insertions(+), 37 deletions(-)
+ wasm/node-pre.js                              |  75 +++++-
+ 15 files changed, 613 insertions(+), 37 deletions(-)
 
 diff --git a/common/platform/unix/SysProcess.cpp b/common/platform/unix/SysProcess.cpp
 index 31d36cb..0cab080 100644
@@ -1110,7 +1110,7 @@ index 6d39774..b2e7383 100755
  if [[ $WHICH != node ]]; then
    EXTRA_OBJECTS="${objects[*]}" "$SRC/wasm/build-web.sh" "$BUILD" "$BUILD/bin-web-test"
 diff --git a/wasm/node-pre.js b/wasm/node-pre.js
-index b5eef88..dfd7b7e 100644
+index b5eef88..66cca4e 100644
 --- a/wasm/node-pre.js
 +++ b/wasm/node-pre.js
 @@ -45,12 +45,21 @@
@@ -1138,7 +1138,7 @@ index b5eef88..dfd7b7e 100644
      }
      for (var s in orxSignals) process.removeAllListeners(s);
      process.kill(process.pid, name);
-@@ -59,8 +68,27 @@ if (!ENVIRONMENT_IS_PTHREAD && !/^--orx-wasm-/.test(process.argv[2] || ''))
+@@ -59,8 +68,66 @@ if (!ENVIRONMENT_IS_PTHREAD && !/^--orx-wasm-/.test(process.argv[2] || ''))
  }
  
  Module['preRun'] = (Module['preRun'] || []).concat([function() {
@@ -1163,6 +1163,45 @@ index b5eef88..dfd7b7e 100644
 +      strings.push(u + '=' + process.env[n]);
 +    }
 +    getEnvStrings.strings = strings;
++  }
++  // Windows: "file/" names a directory (ooRexx #1940 keeps the separator), as
++  // on Unix: a name ending in a separator that is not a directory is ENOTDIR,
++  // and creating anything but a directory under such a name is EISDIR.
++  // Windows ignores the separator, and would find or create "file" (on Unix
++  // the kernel answers; web-pre.js does the same for MEMFS)
++  if (process.platform === 'win32')
++  {
++    var ENOTDIR = 54, EISDIR = 31, O_CREAT = 64;
++    var trailing = function(path) {
++      if (typeof path !== 'string' || path.length < 2) return false;
++      var c = path.charAt(path.length - 1);
++      return c === '/' || c === String.fromCharCode(92);
++    };
++    var isDir = function(path) {     // undefined if it does not exist
++      try { return fs.statSync(path).isDirectory(); } catch (e) { return undefined; }
++    };
++    var origLookupPath = FS.lookupPath, origStat = FS.stat, origOpen = FS.open, origMknod = FS.mknod;
++    FS.lookupPath = function(path, opts) {
++      if (trailing(path) && !(opts && opts.parent) && isDir(path) === false) throw new FS.ErrnoError(ENOTDIR);
++      return origLookupPath(path, opts);
++    };
++    FS.stat = function(path, dontFollow) {
++      if (trailing(path) && isDir(path) === false) throw new FS.ErrnoError(ENOTDIR);
++      return origStat(path, dontFollow);
++    };
++    FS.open = function(path, flags, mode) {
++      if (trailing(path)) {
++        var d = isDir(path);
++        if (d === false) throw new FS.ErrnoError(ENOTDIR);
++        var f = typeof flags === 'string' ? (flags.indexOf('w') >= 0 || flags.indexOf('a') >= 0) : (flags & O_CREAT);
++        if (d === undefined && f) throw new FS.ErrnoError(EISDIR);
++      }
++      return origOpen(path, flags, mode);
++    };
++    FS.mknod = function(path, mode, dev) {
++      if (trailing(path) && !FS.isDir(mode)) throw new FS.ErrnoError(EISDIR);
++      return origMknod(path, mode, dev);
++    };
 +  }
    // LINES()/CHARS() on STDIN: SysFile::hasData() asks ioctl(FIONREAD), which
    // Emscripten answers 0 (success) without writing the count, so the caller

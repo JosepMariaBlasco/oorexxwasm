@@ -8,7 +8,7 @@ processes, memfs, flaky	base/class/File	searchPath('sh'): no shell on PATH; *_FR
 processes	base/class/Method	rexxc: RC 127
 processes	base/class/RexxQueue	'rexx -e ...' RC 127
 processes	base/class/Routine	rexxc: RC 127
-processes	base/class/Stream	'id -u' / 'rexx ...' RC 127; TEST_STREAM_SUPPLIER_TRANSIENT_UNOPENED (test/trunk r13515, bug #2169), Node: the child gets its input from a socket (libuv), which ooRexx takes for a persistent stream (natively too, with a socket)
+processes	base/class/Stream	'id -u' / 'rexx ...' RC 127
 processes	base/directives/OPTIONS	command results RC 127
 processes	base/keyword/ADDRESS	shell commands (cd, exit, cat, sort...) RC 127
 processes	base/keyword/PARSE	external command RC 127
@@ -49,10 +49,10 @@ processes	base/expressions/SPECIAL	test/trunk r13515 (bug #1247): TEST_1247_* ru
 processes	base/keyword/FORWARD	test/trunk r13515: TEST_FORWARD_SELF_RECURSION runs a rexx child process, RC 127
 processes	base/keyword/RAISE	test/trunk r13515: TEST_PROPAGATE_TRACEBACK_NOT_STRING runs a rexx child process, RC 127
 processes	base/keyword/CATCH	test/trunk r13518: 17 errors and 3 failures, all from tests that run rexx or rexxc as a child process (RC 127) in the browsers; TEST_COMPILED and TEST_COMPILED_VARIABLE run rexxc with ADDRESS SYSTEM, so the compiled file is never written and the routine made of it returns nothing (91.999); under Node 146/146
+processes	base/keyword/FINALLY	test/trunk r13536: 14 errors, all from tests that run rexx as a child process (RC 127) in the browsers (TEST_CHILD_*, TEST_TRACE_PAUSE_*); under Node 203/203
 processes	base/bif/SETLOCAL	test/trunk r13515: runs a rexx child process, RC 127
 processes	base/rexxutil/SysDumpVariables	test/trunk r13515: TEST_STRING_RAISES runs a rexx child process, RC 127
 processes	base/rexxutil/SysFormatMessage	test/trunk r13515: TEST_STRING_RAISES runs a rexx child process, RC 127
 processes	base/rexxutil/SysMutexSem	test/trunk r13515: TEST_CREATE_NO_NAME runs a rexx child process, RC 127
 processes	base/rexxutil/SysStemCopy	test/trunk r13515: TEST_STEM_NAME_DROPPED_BY_ARGUMENT runs a rexx child process, RC 127
 processes	base/security.manager/SecurityManager	test/trunk r13515: the REQUIRES and stream-replacement tests run a rexx child process, RC 127
-test-bug	base/rexxutil/platform/unix/SysGetMessage	test/trunk r13515, Node: the damaged-catalog tests detect glibc with the host's "getconf GNU_LIBC_VERSION", but rexx.wasm uses Emscripten's musl, and ooRexx checks catalogs only when built with __GLIBC__: 7 failures ("Message catalog not found")
