@@ -603,6 +603,22 @@ with sync_playwright() as p:
         check(f"{name}: no horizontal scroll", w <= size[0], f"scrollWidth={w}")
         if SHOTS: q.screenshot(path=f"{SHOTS}/{name}.png", full_page=True)
         ctx.close()
+    # a browser that cannot compile the interpreter: the page says why, and what to do
+    for name, init, want in (
+            ("wasm interpreter", "WebAssembly.compileStreaming = () => Promise.reject(new WebAssembly.CompileError("
+             "'WebAssembly.compileStreaming(): exnref not supported by the Wasm interpreter @+49'))",
+             ("interpreting it", "Enhanced security mode", "exnref not supported by the Wasm interpreter @+49")),
+            ("no WebAssembly", "delete globalThis.WebAssembly",
+             ("WebAssembly is turned off", "reload the page", "WebAssembly is not defined")),
+            ("another failure", "WebAssembly.compileStreaming = () => Promise.reject(new Error('something else'))",
+             ("something else",))):
+        ctx = b.new_context(); ctx.add_init_script(init)
+        q = ctx.new_page(); q.goto(BASE)
+        q.wait_for_selector("#rstate[data-state=failed]", timeout=20000)
+        t = q.locator("#fatal").inner_text()
+        check(f"runtime failed, {name}: explained", all(w in t for w in want) and
+              (len(want) > 1 or t.strip() == want[0]) and q.locator("#run").is_disabled(), t)
+        ctx.close()
     b.close()
 print(f"== {len(fails)} failed" + (": " + ", ".join(fails) if fails else ""))
 sys.exit(1 if fails else 0)

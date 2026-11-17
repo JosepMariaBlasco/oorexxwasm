@@ -2108,6 +2108,23 @@ footer a { color: var(--accent); }
   if (data.build) $("build").textContent = data.build;
 
   // ---- runtime ----------------------------------------------------------------------
+  // What a browser that cannot compile the interpreter says, in plain words. A
+  // browser with just-in-time compilation turned off runs WebAssembly in an
+  // interpreter of its own, without the standard exceptions (exnref) that the
+  // C++ code of ooRexx is compiled with, or has no WebAssembly at all.
+  function runtimeHint(msg) {
+    const reload = "allow it for this site (in Microsoft Edge: Settings, Privacy, search, and services, Security, " +
+      "\u201CNever use enhanced security for these sites\u201D; in Chrome: Settings, Privacy and security, Site settings, " +
+      "V8 optimizer), then reload the page. The browser said: ";
+    if (/Wasm interpreter|exnref/i.test(msg))
+      return "This browser is not compiling WebAssembly but interpreting it, and its interpreter cannot run ooRexx. " +
+        "That is what a security setting that turns just-in-time compilation off does (Microsoft Edge\u2019s " +
+        "\u201CEnhanced security mode\u201D, for one). To use the playground, " + reload;
+    if (typeof WebAssembly === "undefined" || /WebAssembly is not defined/i.test(msg))
+      return "WebAssembly is turned off in this browser, and the interpreter is a WebAssembly program. " +
+        "A security setting that turns just-in-time compilation off does that. To use the playground, " + reload;
+    return "";
+  }
   const t0 = performance.now();
   ooRexx.load().then((r) => {
     rexx = r;
@@ -2121,7 +2138,8 @@ footer a { color: var(--accent); }
     rstate.textContent = "runtime: failed";
     const f = $("fatal");
     f.hidden = false;
-    f.textContent = (window.crossOriginIsolated ? "" : "This page is not cross-origin isolated, so the browser does not allow shared memory (the interpreter needs it for its threads). ") + String(e.message || e);
+    const msg = String(e.message || e);
+    f.textContent = (window.crossOriginIsolated ? "" : "This page is not cross-origin isolated, so the browser does not allow shared memory (the interpreter needs it for its threads). ") + runtimeHint(msg) + msg;
   });
 })();
 </script>
