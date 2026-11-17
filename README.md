@@ -125,22 +125,25 @@ interpreter) runs with `tests/run-suite.sh` under Node and with
 with the test suite's native libraries (`build-wasm/bin-node-test`,
 `bin-web-test`, from `wasm/build-test.sh`: the API test groups need them).
 Results on
-r13517 (test/trunk r13518),
-409 test groups (run locally, Ubuntu 24.04; Firefox, WebKit and Windows in
-GitHub Actions on demand):
+r13535 (test/trunk r13536),
+412 test groups (GitHub Actions, the native build from the same patched tree):
 
 | | groups passing |
 |---|---:|
-| native (same series) | 406 |
-| Node | 404 |
-| Chromium | 360 |
+| native (same series) | 410 |
+| Node | 408 |
+| Chromium | 362 |
+| Firefox | 362 |
+| WebKit | 363 |
+| Windows (Node) | 397 |
 
 Every difference with native has a known cause (mostly: no processes in the
-browser, and test/trunk r13515 and later run many new tests as child processes):
-[`results/suite-platforms-r13518-series.md`](results/suite-platforms-r13518-series.md)
-and, for r13514,
+browser, and test/trunk r13515 and later run many tests as child processes):
+[`results/suite-platforms-r13536-series.md`](results/suite-platforms-r13536-series.md)
+and, for r13517 and r13514,
+[`results/suite-platforms-r13518-series.md`](results/suite-platforms-r13518-series.md),
 [`results/suite-platforms-r13515-series.md`](results/suite-platforms-r13515-series.md).
-The results on r13389 (six platforms, test/trunk r13388), r13379, r13358, r13346, r13344, r13331, r13325, r13299, r13291, r13286, r13284, r13282, r13278, r13275, r13268 and r13263, the previous bases, are kept next to them.
+The results on r13517 and r13514 (native, Node, Chromium), r13389 (six platforms, test/trunk r13388), r13379, r13358, r13346, r13344, r13331, r13325, r13299, r13291, r13286, r13284, r13282, r13278, r13275, r13268 and r13263, the previous bases, are kept next to them.
 
 The suite also runs in GitHub Actions on demand
 ([`.github/workflows/suite.yml`](.github/workflows/suite.yml): Actions >

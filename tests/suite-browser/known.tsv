@@ -56,3 +56,4 @@ processes	base/rexxutil/SysFormatMessage	test/trunk r13515: TEST_STRING_RAISES r
 processes	base/rexxutil/SysMutexSem	test/trunk r13515: TEST_CREATE_NO_NAME runs a rexx child process, RC 127
 processes	base/rexxutil/SysStemCopy	test/trunk r13515: TEST_STEM_NAME_DROPPED_BY_ARGUMENT runs a rexx child process, RC 127
 processes	base/security.manager/SecurityManager	test/trunk r13515: the REQUIRES and stream-replacement tests run a rexx child process, RC 127
+flaky	base/rexxutil/SysFileTree	TEST_TREE_DIRECTORY compares SysFileTree of the temporary directory with File~listFiles of it: a group running alongside that creates or deletes a file there in between (Stream's test_bug_1742) makes the counts differ (Windows in GitHub Actions, test/trunk r13536; alone 26/26)
