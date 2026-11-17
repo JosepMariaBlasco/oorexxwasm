@@ -32,7 +32,7 @@ sessions by pid).  qualify-node-cli.sh checks queues across processes.
  create mode 100644 rexxapi/common/platform/unix/SysNodeConnection.hpp
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index c3866a0..13a993d 100644
+index 9937ec0..fee3160 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -694,12 +694,15 @@ else ()

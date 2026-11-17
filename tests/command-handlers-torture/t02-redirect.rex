@@ -37,10 +37,16 @@ call check "INPUT / OUTPUT USING arrays", outArr~items == k & outArr[k] == k
 
 f = .File~temporaryPath || "/command-handlers-torture-" || SysQueryProcess("PID") || ".txt"
 fs = .stream~new(f); fs~open("write replace")
-address r "COPY" with input stem in. output using (fs)
-fs~close
-call check "OUTPUT USING a stream", .stream~new(f)~lines == k
-call SysFileDelete f
+do
+  do
+    address r "COPY" with input stem in. output using (fs)
+  finally
+    fs~close
+  end
+  call check "OUTPUT USING a stream", .stream~new(f)~lines == k
+finally
+  call SysFileDelete f
+end
 
 -- the handler changes the stems while the interpreter reads and writes them
 address r "MESS" with input stem in. output stem out.

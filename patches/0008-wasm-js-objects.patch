@@ -159,7 +159,7 @@ Rexx has read it, even if JavaScript collects the proxy meanwhile.
  wasm/js-realm.js                       | 1004 ++++++++++++
  wasm/tests/js-arrays.rex               |  171 ++
  wasm/tests/js-booleans.rex             |   79 +
- wasm/tests/js-errors.rex               |  473 ++++++
+ wasm/tests/js-errors.rex               |  474 ++++++
  wasm/tests/js-extend-gc.rex            |  111 ++
  wasm/tests/js-extend.rex               |  164 ++
  wasm/tests/js-floats.rex               |  114 ++
@@ -171,10 +171,10 @@ Rexx has read it, even if JavaScript collects the proxy meanwhile.
  wasm/tests/web-scripts.html            |   62 +
  wasm/tests/web-scripts.rex             |    4 +
  wasm/web-js.cpp                        | 2050 ++++++++++++++++++++++++
- wasm/web/js.cls                        |  794 +++++++++
+ wasm/web/js.cls                        |  797 +++++++++
  wasm/web/ooRexx-worker.js              |   19 +-
  wasm/web/ooRexx.js                     |  217 +++
- 24 files changed, 6541 insertions(+), 12 deletions(-)
+ 24 files changed, 6545 insertions(+), 12 deletions(-)
  create mode 100644 wasm/extra-packages.cpp
  create mode 100644 wasm/js-bridge.js
  create mode 100644 wasm/js-realm.js
@@ -192,7 +192,7 @@ Rexx has read it, even if JavaScript collects the proxy meanwhile.
  create mode 100644 wasm/web/js.cls
 
 diff --git a/interpreter/package/PackageManager.cpp b/interpreter/package/PackageManager.cpp
-index c27be5d..eedaa63 100644
+index 45349bc..c110e44 100644
 --- a/interpreter/package/PackageManager.cpp
 +++ b/interpreter/package/PackageManager.cpp
 @@ -99,6 +99,11 @@ const PackageManager::EmbeddedPackage PackageManager::embeddedPackages[] =
@@ -2159,10 +2159,10 @@ index 0000000..7d308f3
 +::requires "json.cls"
 diff --git a/wasm/tests/js-errors.rex b/wasm/tests/js-errors.rex
 new file mode 100644
-index 0000000..e45eddc
+index 0000000..95fd86c
 --- /dev/null
 +++ b/wasm/tests/js-errors.rex
-@@ -0,0 +1,473 @@
+@@ -0,0 +1,474 @@
 +/* js-errors.rex: tests of errors and text across the JavaScript bridge      */
 +/* (wasm/js-realm.js, wasm/web-js.cpp), in the realm where Rexx runs: the    */
 +/* worker's in the browser, Node's under Node.  A Rexx condition in          */
@@ -2236,8 +2236,9 @@ index 0000000..e45eddc
 +-- any other condition reaches the caller's trap as without JavaScript in between
 +.local~userTrapped = ""
 +call userThroughJs o
++-- (RESULT: RAISE ... RETURN 7 fills it for every condition since ooRexx r13522, #2174)
 +call check "a USER condition through JavaScript: the caller's SIGNAL ON, as itself", -
-+  .local~userTrapped == "USER MINE | the description | two | (none)"
++  .local~userTrapped == "USER MINE | the description | two | 7"
 +call check "... and JavaScript is not left waiting: it was told, and goes on", -
 +  .js~Promise~resolve(5)~await == 5 & .js~lastSignalled~pos("went past this call") > 0
 +call check "... and meanwhile a further call of Rexx from JavaScript is refused, not run", -
@@ -5954,10 +5955,10 @@ index 0000000..1ba7d9f
 +}
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
 new file mode 100644
-index 0000000..2f92244
+index 0000000..f87f65a
 --- /dev/null
 +++ b/wasm/web/js.cls
-@@ -0,0 +1,794 @@
+@@ -0,0 +1,797 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -6251,19 +6252,22 @@ index 0000000..2f92244
 +::method jsFinal unguarded          -- for the bridge: a pair is over: its class's UNINIT, and the handle
 +  expose jsuninit jssentinel
 +  drop jssentinel
-+  if var("JSUNINIT") then if jsuninit \== .nil then do
-+    u = jsuninit
-+    drop jsuninit
-+    -- sent with its class as the scope: it then runs in that scope (it sees
-+    -- the variables of that class), the object's "nop" is passed over, and a
-+    -- method of the class named RUN is not in the way (self~run(u) had both
-+    -- problems; setMethod(name, u, "OBJECT") would run it in the scope of the
-+    -- object's class, not of a superclass that defines it)
-+    .Message~new(self, .array~of("UNINIT", u~scope))~send
++  do
++    if var("JSUNINIT") then if jsuninit \== .nil then do
++      u = jsuninit
++      drop jsuninit
++      -- sent with its class as the scope: it then runs in that scope (it sees
++      -- the variables of that class), the object's "nop" is passed over, and a
++      -- method of the class named RUN is not in the way (self~run(u) had both
++      -- problems; setMethod(name, u, "OBJECT") would run it in the scope of the
++      -- object's class, not of a superclass that defines it)
++      .Message~new(self, .array~of("UNINIT", u~scope))~send
++    end
 +  catch syntax
 +    nop                    -- an error in that UNINIT: the handle goes all the same
++  finally
++    self~jsRelease         -- however that UNINIT ends (an error, a HALT)
 +  end
-+  self~jsRelease
 +::method jsRelease unguarded external "LIBRARY js js_uninit"
 +::method jsRef                      -- realm<tab>id, for the bridge
 +  expose jsref

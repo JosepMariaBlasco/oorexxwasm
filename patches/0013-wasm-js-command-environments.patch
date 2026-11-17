@@ -663,7 +663,7 @@ index f698c88..ed21a66 100644
  };
  
 diff --git a/wasm/web/js.cls b/wasm/web/js.cls
-index 2f92244..0811bce 100644
+index f87f65a..41fb541 100644
 --- a/wasm/web/js.cls
 +++ b/wasm/web/js.cls
 @@ -218,6 +218,19 @@
@@ -696,7 +696,7 @@ index 2f92244..0811bce 100644
   *
   * What these make sees js.cls and the public classes and routines of what
   * the session made before (later code sees earlier definitions, as the
-@@ -747,6 +763,12 @@ call JsSetup .JSObject, .JSTyped, .JSHandler, .JSEvent, .JSTyped~undefined, .Log
+@@ -750,6 +766,12 @@ call JsSetup .JSObject, .JSTyped, .JSHandler, .JSEvent, .JSTyped~undefined, .Log
    else p = .Package~new(name, self~lines(source), context)
    context~addPackage(p)
    return p
@@ -709,7 +709,7 @@ index 2f92244..0811bce 100644
  ::method lines private              -- source text (a string, maybe with line ends) as an Array of lines
    use arg source
    if source~isA(.String) then return source~makeArray
-@@ -754,6 +776,54 @@ call JsSetup .JSObject, .JSTyped, .JSHandler, .JSEvent, .JSTyped~undefined, .Log
+@@ -757,6 +779,54 @@ call JsSetup .JSObject, .JSTyped, .JSHandler, .JSEvent, .JSTyped~undefined, .Log
  ::method string
    return "a JSSession"
  

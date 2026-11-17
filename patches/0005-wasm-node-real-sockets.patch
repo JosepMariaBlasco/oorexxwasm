@@ -25,10 +25,10 @@ name resolution.
  create mode 100644 wasm/node-sockets-pre.js
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 13a993d..cdb620f 100644
+index fee3160..d4b683f 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1180,6 +1180,8 @@ if (EMSCRIPTEN)
+@@ -1181,6 +1181,8 @@ if (EMSCRIPTEN)
        -sNODERAWFS=1
        # passwd entry of the current user (see SysProcess.cpp)
        -Wl,--wrap=getpwnam,--wrap=getpwuid
@@ -37,7 +37,7 @@ index 13a993d..cdb620f 100644
        -sEXIT_RUNTIME=1
        -sSTACK_SIZE=8388608
        -sINITIAL_MEMORY=67108864
-@@ -1261,6 +1263,8 @@ if (EMSCRIPTEN)
+@@ -1262,6 +1264,8 @@ if (EMSCRIPTEN)
        # (each new worker loads the whole module); timing-sensitive tests
        # (GUARD, TRACE of REPLY) depend on it
        -sPTHREAD_POOL_SIZE=4

@@ -29,21 +29,27 @@ end
 -- TRACE in the caller and in the handler, to a file
 f = .File~temporaryPath || "/command-handlers-torture-trace-" || SysQueryProcess("PID") || ".txt"
 fs = .stream~new(f); fs~open("write replace")
-previous = .traceOutput~destination(fs)
-in.0 = 2; in.1 = "a"; in.2 = "b"
-do i = 1 to n(200)
-  trace i
-  address h "TRACED" with input stem in. output stem out.
-  trace off
-  if out.0 \== 2 | rc \== 2 then leave
+do
+  previous = .traceOutput~destination(fs)
+  in.0 = 2; in.1 = "a"; in.2 = "b"
+  do
+    do i = 1 to n(200)
+      trace i
+      address h "TRACED" with input stem in. output stem out.
+      trace off
+      if out.0 \== 2 | rc \== 2 then leave
+    end
+  finally
+    .traceOutput~destination(previous)
+    fs~close
+  end
+  call check n(200) "commands with TRACE I in the caller and TRACE R in the handler", i > n(200)
+  lines = .stream~new(f)~arrayIn
+  call check "the trace has the caller's command and the handler's clauses", -
+    lines~items > n(200) * 4 & lines~makeString~pos('"TRACED"') > 0 & lines~makeString~pos("in~linein") > 0
+finally
+  call SysFileDelete f
 end
-.traceOutput~destination(previous)
-fs~close
-call check n(200) "commands with TRACE I in the caller and TRACE R in the handler", i > n(200)
-lines = .stream~new(f)~arrayIn
-call check "the trace has the caller's command and the handler's clauses", -
-  lines~items > n(200) * 4 & lines~makeString~pos('"TRACED"') > 0 & lines~makeString~pos("in~linein") > 0
-call SysFileDelete f
 exit finish()
 
 spinUntilHalted: procedure

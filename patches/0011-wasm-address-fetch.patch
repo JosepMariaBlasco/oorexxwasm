@@ -25,12 +25,12 @@ qualify-node-cli.sh and web-api.py.  Not part of the posted RFE.
  wasm/build-node.sh             |   2 +-
  wasm/build-web.sh              |   2 +
  wasm/tests/fetch-server.py     |  36 ++++
- wasm/tests/fetch.rex           | 140 +++++++++++++
+ wasm/tests/fetch.rex           | 143 +++++++++++++
  wasm/tests/qualify-node-cli.sh |   7 +
  wasm/tests/web-api.py          |   6 +
  wasm/web/commandwords.cls      | 172 ++++++++++++++++
- wasm/web/fetch.cls             | 353 +++++++++++++++++++++++++++++++++
- 8 files changed, 717 insertions(+), 1 deletion(-)
+ wasm/web/fetch.cls             | 356 +++++++++++++++++++++++++++++++++
+ 8 files changed, 723 insertions(+), 1 deletion(-)
  create mode 100644 wasm/tests/fetch-server.py
  create mode 100644 wasm/tests/fetch.rex
  create mode 100644 wasm/web/commandwords.cls
@@ -106,10 +106,10 @@ index 0000000..1d84ec7
 +ThreadingHTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 diff --git a/wasm/tests/fetch.rex b/wasm/tests/fetch.rex
 new file mode 100644
-index 0000000..a8642bc
+index 0000000..35a39a6
 --- /dev/null
 +++ b/wasm/tests/fetch.rex
-@@ -0,0 +1,140 @@
+@@ -0,0 +1,143 @@
 +/* fetch.rex: tests of ADDRESS FETCH (wasm/web/fetch.cls), Node and browser.  */
 +/* Needs the server wasm/tests/fetch-server.py:                              */
 +/*   python3 fetch-server.py 8123 &  rexx fetch.rex http://127.0.0.1:8123     */
@@ -229,10 +229,13 @@ index 0000000..a8642bc
 +call off failure
 +
 +file = "fetch-test.bin"
-+"SAVE" base"/bin" file
-+data = charin(file, 1, 300); call stream file, "c", "close"
-+call check "SAVE: bytes to a file", rc == 0 & data == xrange("00"x, "ff"x)
-+call SysFileDelete file
++do
++  "SAVE" base"/bin" file
++  data = charin(file, 1, 300); call stream file, "c", "close"
++  call check "SAVE: bytes to a file", rc == 0 & data == xrange("00"x, "ff"x)
++finally
++  call SysFileDelete file
++end
 +address fetch "HEAD" base"/data.json" with output stem hd.
 +call check "HEAD: no body", rc == 0 & hd.0 == 0
 +
@@ -472,10 +475,10 @@ index 0000000..84327b4
 +  return lines
 diff --git a/wasm/web/fetch.cls b/wasm/web/fetch.cls
 new file mode 100644
-index 0000000..30b3a7b
+index 0000000..514a99e
 --- /dev/null
 +++ b/wasm/web/fetch.cls
-@@ -0,0 +1,353 @@
+@@ -0,0 +1,356 @@
 +/*----------------------------------------------------------------------------*/
 +/*                                                                            */
 +/* Copyright (c) 2026 Rexx Language Association. All rights reserved.         */
@@ -691,8 +694,11 @@ index 0000000..30b3a7b
 +    .CommandIO~error(context, "FETCH SAVE: cannot write" file)
 +    return context~raiseFailure(-4)
 +  end
-+  s~charout(bytes)
-+  s~close
++  do
++    s~charout(bytes)
++  finally
++    s~close
++  end
 +  return self~result(context)
 +
 +-- fetch(); .false (and the reason to the error output) on a network error

@@ -22,9 +22,12 @@ call check "an external command and its rc", rc == 3
 push "pushed"; parse pull x
 call check "the session queue", x == "pushed"
 name = .RexxQueue~create
-q = .RexxQueue~new(name)
-q~queue("hello"); y = q~pull
-.RexxQueue~delete(name)
+do
+  q = .RexxQueue~new(name)
+  q~queue("hello"); y = q~pull
+finally
+  .RexxQueue~delete(name)
+end
 call check "a named queue (the RexxAPI daemon)", y == "hello"
 
 -- rexxc: compile a program and run the result

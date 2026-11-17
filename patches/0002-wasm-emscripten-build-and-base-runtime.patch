@@ -56,10 +56,10 @@ Common Public License 1.0.
  create mode 100755 wasm/tests/ws_echo.py
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index cfe9521..c3866a0 100644
+index a996b32..9937ec0 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1055,6 +1055,20 @@ if (CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+@@ -1056,6 +1056,20 @@ if (CMAKE_INTERPROCEDURAL_OPTIMIZATION)
          endif ()
      endif ()
  endif ()
@@ -80,7 +80,7 @@ index cfe9521..c3866a0 100644
  install(TARGETS rexx RUNTIME DESTINATION ${INSTALL_LIB_DIR} COMPONENT Core
                       LIBRARY DESTINATION ${INSTALL_LIB_DIR} COMPONENT Core
                       ARCHIVE DESTINATION ${INSTALL_INCLUDE_DIR} COMPONENT DevLib)
-@@ -1156,6 +1170,18 @@ if (ORX_WASM)
+@@ -1157,6 +1171,18 @@ if (ORX_WASM)
  else ()
    target_link_libraries(rexximage rexx rexxapi ${CMAKE_REQUIRED_LIBRARIES})
  endif ()
@@ -99,7 +99,7 @@ index cfe9521..c3866a0 100644
  
  # handy macro for copying files from the source into the build directory.
  macro (copy_build_file name source)
-@@ -1215,6 +1241,34 @@ else ()
+@@ -1216,6 +1242,34 @@ else ()
  endif ()
  
  add_custom_target(rexx_img ALL DEPENDS ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img)
@@ -652,10 +652,10 @@ index 9e0c84c..98ae27c 100644
      // evaluate both expression terms
      RexxObject *left = left_term->evaluate(context, stack);
 diff --git a/interpreter/parser/LanguageParser.cpp b/interpreter/parser/LanguageParser.cpp
-index 4ab50bc..f1f2be3 100644
+index 18c5100..de47748 100644
 --- a/interpreter/parser/LanguageParser.cpp
 +++ b/interpreter/parser/LanguageParser.cpp
-@@ -3909,6 +3909,21 @@ RexxInternalObject* LanguageParser::parseSubTerm(int terminators)
+@@ -3967,6 +3967,21 @@ RexxInternalObject* LanguageParser::parseSubTerm(int terminators)
      // with very complex instructions, it is possible to recurse quite deeply here.
      // so give a look at the stack space on each call so we can terminate "nicely"
      ActivityManager::currentActivity.load()->checkStackSpace();
@@ -678,10 +678,10 @@ index 4ab50bc..f1f2be3 100644
      // get the first token and make sure we really have something here.
      // The caller knows how to deal with a missing term.
 diff --git a/interpreter/parser/LanguageParser.hpp b/interpreter/parser/LanguageParser.hpp
-index f0dcf47..108feea 100644
+index ff5b41a..62ddb97 100644
 --- a/interpreter/parser/LanguageParser.hpp
 +++ b/interpreter/parser/LanguageParser.hpp
-@@ -509,6 +509,9 @@ protected:
+@@ -513,6 +513,9 @@ protected:
      ArrayClass      *calls;              // root of call list
  
      size_t           currentStack;       // current expression stack depth
