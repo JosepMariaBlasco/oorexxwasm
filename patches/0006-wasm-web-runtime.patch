@@ -87,7 +87,7 @@ index 9875e7c..31d36cb 100644
  #endif
  
 diff --git a/interpreter/concurrency/Activity.cpp b/interpreter/concurrency/Activity.cpp
-index 5048817..e0a3044 100644
+index 0a45359..e7a95b2 100644
 --- a/interpreter/concurrency/Activity.cpp
 +++ b/interpreter/concurrency/Activity.cpp
 @@ -86,6 +86,52 @@
@@ -143,7 +143,7 @@ index 5048817..e0a3044 100644
  
  const size_t ACT_STACK_SIZE = 20;
  
-@@ -1625,6 +1671,9 @@ void Activity::display(DirectoryClass *exobj)
+@@ -1897,6 +1943,9 @@ void Activity::display(DirectoryClass *exobj)
          }
      }
  
@@ -153,7 +153,7 @@ index 5048817..e0a3044 100644
      // get the error code, and format a message header
      RexxString *rc = (RexxString *)exobj->get(GlobalNames::RC);
      wholenumber_t errorCode = Interpreter::messageNumber(rc);
-@@ -1682,6 +1731,8 @@ void Activity::display(DirectoryClass *exobj)
+@@ -1954,6 +2003,8 @@ void Activity::display(DirectoryClass *exobj)
   */
  void Activity::displayDebug(DirectoryClass *exobj)
  {
@@ -162,7 +162,7 @@ index 5048817..e0a3044 100644
      // see display()
      FlagSetter displaying(displayingCondition);
      FlagSetter failed(traceTargetFailed, false);
-@@ -3498,6 +3549,8 @@ class TraceOutputDispatcher : public ConditionTrappingDispatcher
+@@ -3770,6 +3821,8 @@ class TraceOutputDispatcher : public ConditionTrappingDispatcher
   */
  void Activity::traceOutput(RexxActivation *activation, RexxString *line, StringTable *traceObject)
  {
@@ -171,7 +171,7 @@ index 5048817..e0a3044 100644
      if (callTraceExit(activation, line))
      {
          // if in profiling mode we only let collect the traceObjects,
-@@ -3590,6 +3643,7 @@ void Activity::sayOutput(RexxActivation *activation, RexxString *line)
+@@ -3862,6 +3915,7 @@ void Activity::sayOutput(RexxActivation *activation, RexxString *line)
  RexxString* Activity::traceInput(RexxActivation *activation)
  {
      RexxString *value;

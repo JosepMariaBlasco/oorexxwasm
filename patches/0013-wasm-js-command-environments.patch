@@ -36,20 +36,20 @@ function, is SYNTAX 93.900.
 Not part of the posted RFE.
 ---
  wasm/README.md                 |  15 ++
- wasm/tests/js-commands.rex     | 364 +++++++++++++++++++++++++++++++++
+ wasm/tests/js-commands.rex     | 384 +++++++++++++++++++++++++++++++++
  wasm/tests/qualify-node-cli.sh |   5 +
  wasm/tests/web-api.py          |  50 +++++
  wasm/web-js.cpp                | 101 ++++++++-
- wasm/web/js.cls                |  70 +++++++
+ wasm/web/js.cls                |  70 ++++++
  wasm/web/ooRexx.js             |  33 ++-
- 7 files changed, 628 insertions(+), 10 deletions(-)
+ 7 files changed, 648 insertions(+), 10 deletions(-)
  create mode 100644 wasm/tests/js-commands.rex
 
 diff --git a/wasm/README.md b/wasm/README.md
-index 4a4c08c..3fa6fcd 100644
+index 2bd004a..57e1bae 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -561,6 +561,21 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -567,6 +567,21 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    `prepare`, `attach`, `instrument`; see `web/ooRexx.js`).  Tests:
    `tests/web-api.py` (session eval, session page, rexx scripts with
    `tests/web-scripts.html`, the debugger hook with `tests/web-debugger.js`).
@@ -73,10 +73,10 @@ index 4a4c08c..3fa6fcd 100644
    passed synchronously to the main runtime thread, where `js-bridge.js` (a
 diff --git a/wasm/tests/js-commands.rex b/wasm/tests/js-commands.rex
 new file mode 100644
-index 0000000..62bbd86
+index 0000000..39f6267
 --- /dev/null
 +++ b/wasm/tests/js-commands.rex
-@@ -0,0 +1,364 @@
+@@ -0,0 +1,384 @@
 +/*----------------------------------------------------------------------------*/
 +/* Command environments written in JavaScript (.JSCommandHandler, one of    */
 +/* the interpreter's .CommandHandlers), in the realm of .js: the worker's in */
@@ -292,6 +292,26 @@ index 0000000..62bbd86
 +call check "an empty name: SYNTAX 93.900", condition("O")~code == "93.900"
 +call check "function: the JavaScript function", first~function == calc
 +
++-- a handler that throws a Rexx condition (RexxError.throwing()): the code
++-- that issued the command gets it, thrown
++.CommandHandler~register("THROWS", .JSCommandHandler~new(F("command,ctx", -
++  "if (command === 'later') return Promise.reject(RexxError.throwing('user later', { description: 'in a Promise' }));" -
++  "throw RexxError.throwing('user cmd', { description: 'from ' + command, additional: [command] })")))
++r = ""
++do
++  address throws "boom"
++catch c = user cmd
++  r = c~description "|" c~thrown "|" c~additional[1]
++end
++call check "throwing: the issuer of the command catches the condition", r == "from boom | 1 | boom"
++r = ""
++do
++  address throws "later"
++catch c = user later
++  r = c~description "|" c~thrown
++end
++call check "throwing: from a Promise the handler gives", r == "in a Promise | 1"
++
 +say
 +say .ok "passed," .bad "failed"
 +exit .bad > 0
@@ -442,7 +462,7 @@ index 0000000..62bbd86
 +::routine haltsHere
 +  raise halt
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index d1638a6..b0b1f26 100755
+index 6b45c27..5d594fd 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -505,6 +505,11 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
@@ -451,14 +471,14 @@ index d1638a6..b0b1f26 100755
  
 +# --- command environments written in JavaScript (.JSCommandHandler in js.cls,
 +# one of the interpreter's .CommandHandlers), portable test
-+check "command handlers in JavaScript (.JSCommandHandler)" '^72 passed, 0 failed$' '!^FAIL ' -- \
++check "command handlers in JavaScript (.JSCommandHandler)" '^74 passed, 0 failed$' '!^FAIL ' -- \
 +  "$X '$(cd "$(dirname "$0")" && pwd)/js-commands.rex'"
 +
  # --- ADDRESS FETCH (wasm/web/fetch.cls over .CommandHandler and js.cls), portable test
  "$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
  FETCH_SRV=$!; sleep 0.5
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index dcf896f..3e12af0 100755
+index ef571ba..01c1c90 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -99,6 +99,28 @@ CASES = [
@@ -467,7 +487,7 @@ index dcf896f..3e12af0 100755
       {}, lambda r: r["out"] == "1\n"),
 +  # command environments written in JavaScript (.JSCommandHandler), in the worker's realm: the portable test
 +  ("js commands", open(f"{SRC}/wasm/tests/js-commands.rex").read(), {"js": {"worker": True}},
-+     lambda r: "72 passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
++     lambda r: "74 passed, 0 failed" in r["out"] and "FAIL " not in r["out"] and r["rc"] == 0),
 +  # ... and a function of the page: its ctx calls give Promises
 +  ("js commands page", 'f = .js~page~Function~new("c", "ctx", "return ctx.getVar(\'X\').then((x) => \' \' + c + \' \' + x * 2)")\n'
 +                       '.CommandHandler~register("P", .JSCommandHandler~new(f)); x = 21; address p "go"; say "["rc"]"\n'
@@ -526,10 +546,10 @@ index dcf896f..3e12af0 100755
      const s = await rexxLib.start({ js: { page: true } });
      await s.eval('d = .js~page~document; b = d~createElement("button"); b~id = "rx"; d~body~appendChild(b)\\n' +
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
-index f698c88..ed21a66 100644
+index d123aab..74bcbe1 100644
 --- a/wasm/web-js.cpp
 +++ b/wasm/web-js.cpp
-@@ -340,10 +340,28 @@ static void answered(SyncCall *sc)
+@@ -344,10 +344,28 @@ static void answered(SyncCall *sc)
  // the RexxAPI's I/O thread (rexxapi/common/platform/unix/SysNodeConnection.cpp)
  extern "C" int orxNetIoStart();
  
@@ -558,7 +578,7 @@ index f698c88..ed21a66 100644
      // Under Node, the RexxAPI's sockets need an event loop that runs while
      // the main runtime thread waits for a synchronous handler: their own
      // thread's.  Starting it takes the main runtime thread, which is free
-@@ -1174,10 +1192,16 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
+@@ -1214,10 +1232,16 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
          RexxObjectPtr cond = toRexx(c, reply, pos);
          if (isHaltSyntax(c, cond))
          {
@@ -579,8 +599,8 @@ index f698c88..ed21a66 100644
              return c->Nil();
          }
          reraise(c, cond);
-@@ -1568,6 +1592,74 @@ RexxMethod0(RexxObjectPtr, js_await)
-     return request(context->threadContext, OP_AWAIT, s);
+@@ -1665,6 +1689,74 @@ RexxMethod0(RexxObjectPtr, js_await)
+     return request(context, OP_AWAIT, s);
  }
  
 +static RexxObjectPtr jsCommandCall(RexxMethodContext *context, RexxThreadContext *c,
@@ -654,7 +674,7 @@ index f698c88..ed21a66 100644
  // introspection: TYPEOF, CLASSNAME, PROPERTYNAMES, MAKEARRAY, SUPPLIER (its data), BYTESTRING,
  // INSTANCEOF(c), HASPROPERTY(n)
  static RexxObjectPtr info(RexxMethodContext *context, const char *what, RexxObjectPtr arg)
-@@ -2013,6 +2105,7 @@ static RexxMethodEntry jsMethods[] =
+@@ -2112,6 +2204,7 @@ static RexxMethodEntry jsMethods[] =
      REXX_METHOD(js_has, js_has),
      REXX_METHOD(js_info, js_info),
      REXX_METHOD(js_uninit, js_uninit),

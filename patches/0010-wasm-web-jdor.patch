@@ -63,13 +63,13 @@ the HTML canvas, no Java involved.
  wasm/tests/web-api.py                  |  119 +-
  wasm/web-jdor.cpp                      |  544 ++++++
  wasm/web-jdor.js                       | 2236 ++++++++++++++++++++++++
- wasm/web-js.cpp                        |    8 +
+ wasm/web-js.cpp                        |   15 +
  wasm/web/BSF.CLS                       |  110 ++
  wasm/web/jdor.cls                      |  126 ++
  wasm/web/ooRexx-worker.js              |   14 +-
  wasm/web/ooRexx.js                     |   19 +-
  wasm/web/polygon-clipping.umd.min.js   |   39 +
- 16 files changed, 3332 insertions(+), 23 deletions(-)
+ 16 files changed, 3339 insertions(+), 23 deletions(-)
  create mode 100644 wasm/web-jdor.cpp
  create mode 100644 wasm/web-jdor.js
  create mode 100644 wasm/web/BSF.CLS
@@ -92,7 +92,7 @@ index c110e44..867d25d 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index b94c93d..4a4c08c 100644
+index ca171b1..2bd004a 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -257,7 +257,81 @@ off, or changes the strings.
@@ -178,7 +178,7 @@ index b94c93d..4a4c08c 100644
  
  ## The test suite's API groups (`wasm/build-test.sh`)
  
-@@ -512,7 +586,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -518,7 +592,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
@@ -295,10 +295,10 @@ index ea8b80b..cf52734 100644
    // a RexxError nobody catches (a synchronous handler's condition thrown in an
    // event listener, which JavaScript reports instead of passing on): written
 diff --git a/wasm/js-realm.js b/wasm/js-realm.js
-index 9aca10d..07b62b3 100644
+index d36ed50..888679b 100644
 --- a/wasm/js-realm.js
 +++ b/wasm/js-realm.js
-@@ -999,6 +999,6 @@ var orxJsRealm = (function () {
+@@ -1039,6 +1039,6 @@ var orxJsRealm = (function () {
      return w.bytes();
    }
  
@@ -359,7 +359,7 @@ index b13d517..cb5c6fa 100644
  };
  </script>
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 09f958c..51fbec6 100755
+index c5e4ac3..229f295 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -42,7 +42,7 @@ Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP
@@ -3288,10 +3288,10 @@ index 0000000..63aa1a9
 +  };
 +})();
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
-index 1ba7d9f..f698c88 100644
+index 01edf3e..d123aab 100644
 --- a/wasm/web-js.cpp
 +++ b/wasm/web-js.cpp
-@@ -739,6 +739,7 @@ static RexxObjectPtr toRexx(RexxThreadContext *c, const std::string &s, size_t &
+@@ -743,6 +743,7 @@ static RexxObjectPtr toRexx(RexxThreadContext *c, const std::string &s, size_t &
              size_t t1 = r.data.find('\t'), t2 = r.data.find('\t', t1 + 1);
              if (jsObjectClass == NULLOBJECT || t1 == std::string::npos || t2 == std::string::npos)
              {
@@ -3299,7 +3299,7 @@ index 1ba7d9f..f698c88 100644
                  return c->String(r.data.c_str());
              }
              RexxArrayObject args = c->ArrayOfThree(c->String(r.data.substr(0, t1).c_str()),
-@@ -1197,6 +1198,13 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
+@@ -1255,6 +1256,20 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
      return NULLOBJECT;
  }
  
@@ -3308,6 +3308,13 @@ index 1ba7d9f..f698c88 100644
 +void orxJsRaiseThrown(RexxThreadContext *c, const std::string &records)
 +{
 +    result(c, records);
++    // a thrown condition has no context here to throw it: a JavaScript error
++    if (pendingThrow.set)
++    {
++        std::string msg = "JavaScript error: RexxError: condition " + pendingThrow.name + " thrown";
++        pendingThrow = PendingThrow();
++        c->RaiseException1(Rexx_Error_Execution_user_defined, c->String(msg.c_str()));
++    }
 +}
 +
  static RexxObjectPtr request(RexxThreadContext *c, int op, const std::string &data)
