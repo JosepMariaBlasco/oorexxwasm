@@ -92,7 +92,7 @@ index c110e44..867d25d 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index ca171b1..2bd004a 100644
+index 860fafc..5a7c57e 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -257,7 +257,81 @@ off, or changes the strings.
@@ -178,7 +178,7 @@ index ca171b1..2bd004a 100644
  
  ## The test suite's API groups (`wasm/build-test.sh`)
  
-@@ -518,7 +592,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -519,7 +593,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
@@ -359,7 +359,7 @@ index b13d517..cb5c6fa 100644
  };
  </script>
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index c5e4ac3..229f295 100755
+index d696efb..db6bdf8 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -42,7 +42,7 @@ Serves BIN_WEB (plus wasm/tests/web-api.html, copied into it) with COOP/COEP
@@ -3288,7 +3288,7 @@ index 0000000..63aa1a9
 +  };
 +})();
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
-index 01edf3e..d123aab 100644
+index 0424db3..513da18 100644
 --- a/wasm/web-js.cpp
 +++ b/wasm/web-js.cpp
 @@ -743,6 +743,7 @@ static RexxObjectPtr toRexx(RexxThreadContext *c, const std::string &s, size_t &
@@ -3299,7 +3299,7 @@ index 01edf3e..d123aab 100644
                  return c->String(r.data.c_str());
              }
              RexxArrayObject args = c->ArrayOfThree(c->String(r.data.substr(0, t1).c_str()),
-@@ -1255,6 +1256,20 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
+@@ -1258,6 +1259,20 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
      return NULLOBJECT;
  }
  

@@ -462,7 +462,7 @@ index f2539df..fd47f6b 100644
      // set the errno information
      setErrno(context, rc >= 0);
 diff --git a/interpreter/concurrency/Activity.cpp b/interpreter/concurrency/Activity.cpp
-index 3909827..0a45359 100644
+index 904038a..c0210f6 100644
 --- a/interpreter/concurrency/Activity.cpp
 +++ b/interpreter/concurrency/Activity.cpp
 @@ -193,6 +193,9 @@ void Activity::runThread()
@@ -485,7 +485,7 @@ index 3909827..0a45359 100644
      }
  }
  
-@@ -2753,6 +2759,60 @@ void Activity::setupCurrentActivity()
+@@ -2779,6 +2785,60 @@ void Activity::setupCurrentActivity()
      Numerics::setCurrentSettings(numericSettings);
  }
  
@@ -546,7 +546,7 @@ index 3909827..0a45359 100644
  void Activity::checkStackSpace()
  /******************************************************************************/
  /* Function:  Make sure there is enough stack space to run a method           */
-@@ -2784,8 +2844,38 @@ void Activity::checkStackSpace()
+@@ -2810,8 +2870,38 @@ void Activity::checkStackSpace()
      {
          reportException(Error_Control_stack_full);
      }
@@ -585,7 +585,7 @@ index 3909827..0a45359 100644
  
  
  /**
-@@ -3936,6 +4026,9 @@ void Activity::run(ActivityDispatcher &target)
+@@ -3962,6 +4052,9 @@ void Activity::run(ActivityDispatcher &target)
  
      // update the stack base
      stackLimit = currentThread.getStackBase() + errorRecoveryStack;
@@ -596,10 +596,10 @@ index 3909827..0a45359 100644
      // get a new random seed
      generateRandomNumberSeed();
 diff --git a/interpreter/concurrency/Activity.hpp b/interpreter/concurrency/Activity.hpp
-index 132911d..be9d062 100644
+index d26a58a..95b0521 100644
 --- a/interpreter/concurrency/Activity.hpp
 +++ b/interpreter/concurrency/Activity.hpp
-@@ -221,6 +221,9 @@ class Activity : public RexxInternalObject
+@@ -225,6 +225,9 @@ class Activity : public RexxInternalObject
      void        requestAccess();
      void        setupCurrentActivity();
      void        checkStackSpace();
@@ -609,7 +609,7 @@ index 132911d..be9d062 100644
      void        cleanupActivityResources();
      void        terminatePoolActivity();
      thread_id_t threadIdMethod();
-@@ -478,6 +481,9 @@ class Activity : public RexxInternalObject
+@@ -482,6 +485,9 @@ class Activity : public RexxInternalObject
      size_t   attachCount;               // extent of nested attaches
      bool     newThreadAttached;         // Indicates this thread was a "side door" attach.
      char    *stackLimit;                // pointer to base to the C stack location that will trigger a control stack error

@@ -31,7 +31,7 @@ the series is cut as the work needs.
 
 ## The patch series
 
-Applied in order on top of ooRexx SVN trunk **r13550** (the minimum)
+Applied in order on top of ooRexx SVN trunk **r13564** (the minimum)
 (`https://svn.code.sf.net/p/oorexx/code-0/main/trunk`):
 
 | Patch | What it adds |
@@ -81,7 +81,7 @@ and installs a build. Everything goes into the directory that contains your
 clone (`$ORX_WASM_WORK`, overridable), next to it:
 
 ```
-oorexx/        ooRexx trunk r13550 + patches
+oorexx/        ooRexx trunk r13564 + patches
 build-wasm/    bin/ (Node and browser, MEMFS), bin-node/ (Node CLI), bin-web/ (pages)
 saved-build/   the prebuilt binaries it downloaded
 emsdk/         Emscripten, only when compiling
@@ -125,7 +125,7 @@ interpreter) runs with `tests/run-suite.sh` under Node and with
 with the test suite's native libraries (`build-wasm/bin-node-test`,
 `bin-web-test`, from `wasm/build-test.sh`: the API test groups need them).
 Results on
-r13550 (test/trunk r13553),
+r13564 (test/trunk r13565),
 413 test groups (run locally, the native build from the same patched tree;
 Firefox, WebKit and Windows: r13535's, 412 groups, GitHub Actions):
 
@@ -133,19 +133,20 @@ Firefox, WebKit and Windows: r13535's, 412 groups, GitHub Actions):
 |---|---:|
 | native (same series) | 410 |
 | Node | 410 |
-| Chromium | 362 |
+| Chromium | 361 |
 | Firefox | 362 |
 | WebKit | 363 |
 | Windows (Node) | 397 |
 
 Every difference with native has a known cause (mostly: no processes in the
 browser, and test/trunk r13515 and later run many tests as child processes):
-[`results/suite-platforms-r13553-series.md`](results/suite-platforms-r13553-series.md)
-and, for r13535, r13517 and r13514,
+[`results/suite-platforms-r13565-series.md`](results/suite-platforms-r13565-series.md)
+and, for r13550, r13535, r13517 and r13514,
+[`results/suite-platforms-r13553-series.md`](results/suite-platforms-r13553-series.md),
 [`results/suite-platforms-r13536-series.md`](results/suite-platforms-r13536-series.md),
 [`results/suite-platforms-r13518-series.md`](results/suite-platforms-r13518-series.md),
 [`results/suite-platforms-r13515-series.md`](results/suite-platforms-r13515-series.md).
-The results on r13535 (six platforms), r13517 and r13514 (native, Node, Chromium), r13389 (six platforms, test/trunk r13388), r13379, r13358, r13346, r13344, r13331, r13325, r13299, r13291, r13286, r13284, r13282, r13278, r13275, r13268 and r13263, the previous bases, are kept next to them.
+The results on r13550 (native, Node, Chromium), r13535 (six platforms), r13517 and r13514 (native, Node, Chromium), r13389 (six platforms, test/trunk r13388), r13379, r13358, r13346, r13344, r13331, r13325, r13299, r13291, r13286, r13284, r13282, r13278, r13275, r13268 and r13263, the previous bases, are kept next to them.
 
 The suite also runs in GitHub Actions on demand
 ([`.github/workflows/suite.yml`](.github/workflows/suite.yml): Actions >

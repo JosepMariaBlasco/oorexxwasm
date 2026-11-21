@@ -254,7 +254,7 @@ index 0000000..35a39a6
 +
 +::requires "fetch.cls"
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index b4981e8..6b45c27 100755
+index 18f5532..0024da5 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -505,6 +505,13 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
@@ -272,7 +272,7 @@ index b4981e8..6b45c27 100755
  if (( ${#FAILED[@]} )); then
    echo "QUALIFICATION FAIL (${#FAILED[@]}): ${FAILED[*]}"
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index 229f295..7f218d8 100755
+index db6bdf8..61eced4 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -67,6 +67,9 @@ class H(SimpleHTTPRequestHandler):

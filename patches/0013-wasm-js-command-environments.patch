@@ -46,10 +46,10 @@ Not part of the posted RFE.
  create mode 100644 wasm/tests/js-commands.rex
 
 diff --git a/wasm/README.md b/wasm/README.md
-index 2bd004a..57e1bae 100644
+index 5a7c57e..27a6b50 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -567,6 +567,21 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -568,6 +568,21 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    `prepare`, `attach`, `instrument`; see `web/ooRexx.js`).  Tests:
    `tests/web-api.py` (session eval, session page, rexx scripts with
    `tests/web-scripts.html`, the debugger hook with `tests/web-debugger.js`).
@@ -462,7 +462,7 @@ index 0000000..39f6267
 +::routine haltsHere
 +  raise halt
 diff --git a/wasm/tests/qualify-node-cli.sh b/wasm/tests/qualify-node-cli.sh
-index 6b45c27..5d594fd 100755
+index 0024da5..ae1f0ef 100755
 --- a/wasm/tests/qualify-node-cli.sh
 +++ b/wasm/tests/qualify-node-cli.sh
 @@ -505,6 +505,11 @@ check "JavaScript objects: the RexxAPI while JavaScript waits for a handler" '^s
@@ -478,7 +478,7 @@ index 6b45c27..5d594fd 100755
  "$TIMEOUT" 120 python3 "$(cd "$(dirname "$0")" && pwd)/fetch-server.py" 50125 >/dev/null 2>&1 &
  FETCH_SRV=$!; sleep 0.5
 diff --git a/wasm/tests/web-api.py b/wasm/tests/web-api.py
-index ef571ba..01c1c90 100755
+index 2acbacf..6bf6778 100755
 --- a/wasm/tests/web-api.py
 +++ b/wasm/tests/web-api.py
 @@ -99,6 +99,28 @@ CASES = [
@@ -546,7 +546,7 @@ index ef571ba..01c1c90 100755
      const s = await rexxLib.start({ js: { page: true } });
      await s.eval('d = .js~page~document; b = d~createElement("button"); b~id = "rx"; d~body~appendChild(b)\\n' +
 diff --git a/wasm/web-js.cpp b/wasm/web-js.cpp
-index d123aab..74bcbe1 100644
+index 513da18..2bee862 100644
 --- a/wasm/web-js.cpp
 +++ b/wasm/web-js.cpp
 @@ -344,10 +344,28 @@ static void answered(SyncCall *sc)
@@ -578,7 +578,7 @@ index d123aab..74bcbe1 100644
      // Under Node, the RexxAPI's sockets need an event loop that runs while
      // the main runtime thread waits for a synchronous handler: their own
      // thread's.  Starting it takes the main runtime thread, which is free
-@@ -1214,10 +1232,16 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
+@@ -1217,10 +1235,16 @@ static RexxObjectPtr result(RexxThreadContext *c, const std::string &reply)
          RexxObjectPtr cond = toRexx(c, reply, pos);
          if (isHaltSyntax(c, cond))
          {
@@ -599,7 +599,7 @@ index d123aab..74bcbe1 100644
              return c->Nil();
          }
          reraise(c, cond);
-@@ -1665,6 +1689,74 @@ RexxMethod0(RexxObjectPtr, js_await)
+@@ -1668,6 +1692,74 @@ RexxMethod0(RexxObjectPtr, js_await)
      return request(context, OP_AWAIT, s);
  }
  
@@ -674,7 +674,7 @@ index d123aab..74bcbe1 100644
  // introspection: TYPEOF, CLASSNAME, PROPERTYNAMES, MAKEARRAY, SUPPLIER (its data), BYTESTRING,
  // INSTANCEOF(c), HASPROPERTY(n)
  static RexxObjectPtr info(RexxMethodContext *context, const char *what, RexxObjectPtr arg)
-@@ -2112,6 +2204,7 @@ static RexxMethodEntry jsMethods[] =
+@@ -2115,6 +2207,7 @@ static RexxMethodEntry jsMethods[] =
      REXX_METHOD(js_has, js_has),
      REXX_METHOD(js_info, js_info),
      REXX_METHOD(js_uninit, js_uninit),
