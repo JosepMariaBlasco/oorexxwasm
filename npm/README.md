@@ -1,6 +1,6 @@
 # oorexxwasm
 
-[ooRexx](https://www.oorexx.org/) 5.3.0 (SVN trunk r13564) compiled to
+[ooRexx](https://www.oorexx.org/) 5.3.0 (SVN trunk r13591) compiled to
 WebAssembly, for Node.js 22 or later: `rexx`, `rexxc`, `rxqueue` and
 `rxsubcom`. It runs on Linux, macOS and Windows.
 
@@ -37,7 +37,9 @@ does. Sockets are real TCP and UDP. Queues, registrations and the
 macrospace are shared between processes through a daemon, as with native
 `rxapi`. The extension classes (`socket.cls`, `json.cls`, `yaml.cls`,
 `csvStream.cls`, `dateparser.cls`, `rxftp.cls`, `smtp.cls`, ...) are
-included.
+included, and so is the Rexx Parser and Highlighter (`parser.cls`), with its
+utilities: `rexx highlight.rex`, `rexx rexxcheck.rex` and
+`rexx fencedcode.rex`.
 
 On Windows, file names are Windows names written with forward slashes
 (`C:/Users/me/data.txt`; backslashes are accepted too), `PATH`-like lists
@@ -61,3 +63,6 @@ See [the specification](https://github.com/JosepMariaBlasco/oorexxwasm/blob/main
 ## License
 
 ooRexx is distributed under the Common Public License 1.0 (`CPLv1.0.txt`).
+The Rexx Parser's Unicode tables (`lib/parser/resources/`) are part of the
+Unicode Character Database, under the Unicode License V3, whose text is next
+to them (`Unicode-LICENSE.txt`).

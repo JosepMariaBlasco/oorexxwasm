@@ -32,10 +32,10 @@ sessions by pid).  qualify-node-cli.sh checks queues across processes.
  create mode 100644 rexxapi/common/platform/unix/SysNodeConnection.hpp
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index 9937ec0..fee3160 100644
+index d8ebb3d..27489ad 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -694,12 +694,15 @@ else ()
+@@ -695,12 +695,15 @@ else ()
  endif ()
  # Library definition
  if (ORX_WASM)
@@ -1207,7 +1207,7 @@ index dc04468..0346d6d 100644
          {
              return rc;
 diff --git a/wasm/README.md b/wasm/README.md
-index 67abaf3..8a77152 100644
+index 5c14b4b..82da659 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -29,9 +29,11 @@ Emscripten's: this directory's build, the browser and Node runtimes, and the
@@ -1225,7 +1225,7 @@ index 67abaf3..8a77152 100644
  * user identity: Emscripten has no passwd database, so `getpwnam()` and
    `getpwuid()` are wrapped to return the user the process runs as (the host
    user under Node, the synthetic user `wasm` in the browser), for `USERID()`,
-@@ -125,6 +127,17 @@ on the JS main thread and calls `orxWasmSignal()`, which does what the native
+@@ -129,6 +131,17 @@ on the JS main thread and calls `orxWasmSignal()`, which does what the native
  signal handler does; a SysSleep in progress ends at once (result 4, EINTR).
  SIGQUIT (Ctrl-\) still ends the process.
  
@@ -1244,7 +1244,7 @@ index 67abaf3..8a77152 100644
      ./wasm/tests/qualify-node-cli.sh /tmp/oorexx-wasm-build/bin-node
  
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index bc6b47b..90cbc5d 100755
+index 9fca32f..3593ad6 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
 @@ -37,13 +37,14 @@
@@ -1264,7 +1264,7 @@ index bc6b47b..90cbc5d 100755
  set -euo pipefail
  SRC=$(cd "$(dirname "$0")/.." && pwd)
  BUILD=$(cd "${1:-$SRC/build-wasm}" && pwd)
-@@ -79,7 +80,7 @@ SH
+@@ -87,7 +88,7 @@ SH
  }
  launcher rexx
  # multi-call tools of the same rexx.js/rexx.wasm (see wasm/rexxc-main.cpp)

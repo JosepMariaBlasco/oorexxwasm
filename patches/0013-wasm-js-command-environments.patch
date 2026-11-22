@@ -46,10 +46,10 @@ Not part of the posted RFE.
  create mode 100644 wasm/tests/js-commands.rex
 
 diff --git a/wasm/README.md b/wasm/README.md
-index 5a7c57e..27a6b50 100644
+index 58d60ad..326dd6b 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -568,6 +568,21 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -574,6 +574,21 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    `prepare`, `attach`, `instrument`; see `web/ooRexx.js`).  Tests:
    `tests/web-api.py` (session eval, session page, rexx scripts with
    `tests/web-scripts.html`, the debugger hook with `tests/web-debugger.js`).

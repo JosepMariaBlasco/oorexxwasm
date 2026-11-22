@@ -28,12 +28,12 @@ command-line ooRexx that sees the host file system and environment
 ---
  common/platform/unix/SysProcess.cpp          |  41 ++++++
  interpreter/platform/unix/SystemCommands.cpp | 143 +++++++++++++++++++
- wasm/README.md                               |  26 +++-
- wasm/build-node.sh                           |  85 +++++++++++
+ wasm/README.md                               |  30 +++-
+ wasm/build-node.sh                           |  93 ++++++++++++
  wasm/build-wasm.sh                           |   4 +-
  wasm/node-pre.js                             | 101 +++++++++++++
  wasm/tests/qualify-node-cli.sh               | 133 +++++++++++++++++
- 7 files changed, 530 insertions(+), 3 deletions(-)
+ 7 files changed, 542 insertions(+), 3 deletions(-)
  create mode 100755 wasm/build-node.sh
  create mode 100644 wasm/node-pre.js
  create mode 100755 wasm/tests/qualify-node-cli.sh
@@ -245,7 +245,7 @@ index 18378e9..607691e 100644
   * A redirecting test command handler.
   *
 diff --git a/wasm/README.md b/wasm/README.md
-index 487bf41..67abaf3 100644
+index 487bf41..5c14b4b 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -27,7 +27,8 @@ Emscripten's: this directory's build, the browser and Node runtimes, and the
@@ -258,7 +258,7 @@ index 487bf41..67abaf3 100644
  * no external rxapi daemon: the API server (external data queues, function
    and subcom registration, macrospace) is linked in and reached through an
    in-process transport (`rexxapi/common/platform/unix/SysLoopbackConnection`);
-@@ -106,6 +107,27 @@ connect/send/recv, 5,000-byte partial stream reads, arbitrary binary strings,
+@@ -106,6 +107,31 @@ connect/send/recv, 5,000-byte partial stream reads, arbitrary binary strings,
  finite select timeout/readiness, nonblocking EINPROGRESS completion,
  connection refusal, DNS/localhost, and the unchanged `.StreamSocket` wrapper.
  
@@ -274,6 +274,10 @@ index 487bf41..67abaf3 100644
 +entry of the same `rexx.js` (`wasm/rexxc-main.cpp`).  Error numbers seen by
 +Rexx programs (RC of CD, stream `ERROR:n`, SysMkDir, ...) are the Linux ones,
 +not the WASI ones of the Emscripten libc (`HOST_ERRNO`).
++Next to `rexx.js` are the portable extension classes and the Rexx Parser
++(`parser.cls`, its `parser/` directory, and its utilities `highlight.rex`,
++`rexxcheck.rex` and `fencedcode.rex`), as in a native installation's bin
++directory.
 +Ctrl-C (SIGINT), SIGTERM and SIGHUP raise HALT in the running program, as
 +natively, instead of ending the Node process: `wasm/node-pre.js` catches them
 +on the JS main thread and calls `orxWasmSignal()`, which does what the native
@@ -286,7 +290,7 @@ index 487bf41..67abaf3 100644
  ## Browser status
  
  The generated `rexx.js/rexx.wasm/rexx.data` target `node,web,worker`. A pthread
-@@ -125,7 +147,7 @@ browser; see the limits below).
+@@ -125,7 +151,7 @@ browser; see the limits below).
  * UDP/datagram semantics are not qualified.
  * Native TCP servers need a WebSocket-facing endpoint/proxy; a real WebSocket
    server can be addressed directly.
@@ -297,10 +301,10 @@ index 487bf41..67abaf3 100644
    4,000; browser workers about 900 / 700 / 500 in Chromium, 1,300 / 900 / 700
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
 new file mode 100755
-index 0000000..bc6b47b
+index 0000000..9fca32f
 --- /dev/null
 +++ b/wasm/build-node.sh
-@@ -0,0 +1,85 @@
+@@ -0,0 +1,93 @@
 +#!/usr/bin/env bash
 +#/*----------------------------------------------------------------------------*/
 +#/*                                                                            */
@@ -369,6 +373,14 @@ index 0000000..bc6b47b
 +           logicalwrapper/logicalwrapper.cls \
 +           csvStream/csvStream.cls dateparser/dateparser.cls; do
 +  cp "$SRC/extensions/$cls" "$OUT/"
++done
++# the Rexx Parser and Highlighter: parser.cls and its parser/ directory, and
++# its utilities (highlight.rex, rexxcheck.rex, fencedcode.rex), as a native
++# installation has them in its bin directory
++cp "$SRC/extensions/parser/parser.cls" "$OUT/"
++rm -rf "$OUT/parser" && cp -R "$SRC/extensions/parser/parser" "$OUT/parser"
++for u in highlight rexxcheck fencedcode; do
++  if [[ -f "$BUILD/bin/$u.rex" ]]; then cp "$BUILD/bin/$u.rex" "$OUT/"; fi
 +done
 +
 +launcher() {   # launcher NAME [rexx.js option]

@@ -33,12 +33,12 @@ part of the posted RFE.
  create mode 100644 wasm/web/dom.cls
 
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index fe3dea4..82fd5f5 100755
+index e0c1be3..edbfa34 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
-@@ -77,10 +77,12 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
-            csvStream/csvStream.cls dateparser/dateparser.cls; do
-   PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
+@@ -84,10 +84,12 @@ PRELOAD+=("--preload-file" "$SRC/extensions/parser/parser.cls@/usr/lib/ooRexx/pa
+ for u in highlight rexxcheck fencedcode; do
+   if [[ -f "$BUILD/bin/$u.rex" ]]; then PRELOAD+=("--preload-file" "$BUILD/bin/$u.rex@/usr/lib/ooRexx/$u.rex"); fi
  done
 -# JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
 +# js.cls and what is built on it (FETCH, DOM), JDOR's classes; BSF.CLS (also as

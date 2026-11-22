@@ -56,10 +56,10 @@ Common Public License 1.0.
  create mode 100755 wasm/tests/ws_echo.py
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index a996b32..9937ec0 100644
+index b31c1d4..d8ebb3d 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1056,6 +1056,20 @@ if (CMAKE_INTERPROCEDURAL_OPTIMIZATION)
+@@ -1057,6 +1057,20 @@ if (CMAKE_INTERPROCEDURAL_OPTIMIZATION)
          endif ()
      endif ()
  endif ()
@@ -80,7 +80,7 @@ index a996b32..9937ec0 100644
  install(TARGETS rexx RUNTIME DESTINATION ${INSTALL_LIB_DIR} COMPONENT Core
                       LIBRARY DESTINATION ${INSTALL_LIB_DIR} COMPONENT Core
                       ARCHIVE DESTINATION ${INSTALL_INCLUDE_DIR} COMPONENT DevLib)
-@@ -1157,6 +1171,18 @@ if (ORX_WASM)
+@@ -1158,6 +1172,18 @@ if (ORX_WASM)
  else ()
    target_link_libraries(rexximage rexx rexxapi ${CMAKE_REQUIRED_LIBRARIES})
  endif ()
@@ -99,7 +99,7 @@ index a996b32..9937ec0 100644
  
  # handy macro for copying files from the source into the build directory.
  macro (copy_build_file name source)
-@@ -1216,6 +1242,34 @@ else ()
+@@ -1217,6 +1243,34 @@ else ()
  endif ()
  
  add_custom_target(rexx_img ALL DEPENDS ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img)

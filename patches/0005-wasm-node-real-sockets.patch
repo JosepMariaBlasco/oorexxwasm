@@ -25,10 +25,10 @@ name resolution.
  create mode 100644 wasm/node-sockets-pre.js
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index fee3160..d4b683f 100644
+index 27489ad..d62f9ac 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -1181,6 +1181,8 @@ if (EMSCRIPTEN)
+@@ -1182,6 +1182,8 @@ if (EMSCRIPTEN)
        -sNODERAWFS=1
        # passwd entry of the current user (see SysProcess.cpp)
        -Wl,--wrap=getpwnam,--wrap=getpwuid
@@ -37,7 +37,7 @@ index fee3160..d4b683f 100644
        -sEXIT_RUNTIME=1
        -sSTACK_SIZE=8388608
        -sINITIAL_MEMORY=67108864
-@@ -1262,6 +1264,8 @@ if (EMSCRIPTEN)
+@@ -1263,6 +1265,8 @@ if (EMSCRIPTEN)
        # (each new worker loads the whole module); timing-sensitive tests
        # (GUARD, TRACE of REPLY) depend on it
        -sPTHREAD_POOL_SIZE=4
@@ -273,7 +273,7 @@ index fd47f6b..b459669 100644
      // set the errno information
      setErrno(context, rc >= 0);
 diff --git a/wasm/README.md b/wasm/README.md
-index 8a77152..cf611cc 100644
+index 82da659..4d8b2be 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
 @@ -6,7 +6,8 @@ This development port compiles the ooRexx interpreter and API statically to
@@ -317,7 +317,7 @@ index 8a77152..cf611cc 100644
  `bin-node/rexx` and `bin-node/rexxc` are launchers; `rexxc` is a multi-call
  entry of the same `rexx.js` (`wasm/rexxc-main.cpp`).  Error numbers seen by
  Rexx programs (RC of CD, stream `ERROR:n`, SysMkDir, ...) are the Linux ones,
-@@ -138,6 +142,16 @@ event loop), not on the JS main thread, so that the RexxAPI keeps working
+@@ -142,6 +146,16 @@ event loop), not on the JS main thread, so that the RexxAPI keeps working
  while that thread waits for a Rexx thread.
  `bin-node/rxqueue` and `bin-node/rxsubcom` are multi-call entries as well.
  
@@ -334,7 +334,7 @@ index 8a77152..cf611cc 100644
      ./wasm/build-node.sh /tmp/oorexx-wasm-build
      ./wasm/tests/qualify-node-cli.sh /tmp/oorexx-wasm-build/bin-node
  
-@@ -155,11 +169,11 @@ browser; see the limits below).
+@@ -159,11 +173,11 @@ browser; see the limits below).
  
  ## Known limitations / deliberate non-claims
  
@@ -352,7 +352,7 @@ index 8a77152..cf611cc 100644
  * Maximum recursion depth is set by the JS engine's native stack (internal
    CALL / internal function calls / method calls): Node about 7,100 / 5,400 /
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index 90cbc5d..6be72d9 100755
+index 3593ad6..688f2d5 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
 @@ -37,8 +37,10 @@

@@ -1040,10 +1040,10 @@ index 08ad6c6..d4b1997 100644
      stringToUTF8(name, buf, size);
      return 1;
 diff --git a/wasm/README.md b/wasm/README.md
-index 3beda3e..860fafc 100644
+index 81bcdec..d9bceb6 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -155,6 +155,22 @@ host name and interface address come from `node:os`
+@@ -159,6 +159,22 @@ host name and interface address come from `node:os`
      ./wasm/build-node.sh /tmp/oorexx-wasm-build
      ./wasm/tests/qualify-node-cli.sh /tmp/oorexx-wasm-build/bin-node
  
@@ -1067,7 +1067,7 @@ index 3beda3e..860fafc 100644
  
  The generated `rexx.js/rexx.wasm/rexx.data` target `node,web,worker`. A pthread
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index ddb6e69..9525374 100755
+index 2c7e933..d8c35ab 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
 @@ -49,7 +49,8 @@
@@ -1080,7 +1080,7 @@ index ddb6e69..9525374 100755
  set -euo pipefail
  SRC=$(cd "$(dirname "$0")/.." && pwd)
  BUILD=$(cd "${1:-$SRC/build-wasm}" && pwd)
-@@ -92,6 +93,11 @@ DIR=\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)
+@@ -100,6 +101,11 @@ DIR=\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)
  PATH="\$DIR:\$PATH" exec node "\$DIR/rexx.js" ${2:+$2 }"\$@"
  SH
    chmod +x "$OUT/$1"

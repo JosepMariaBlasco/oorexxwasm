@@ -37,7 +37,7 @@ on:
       test_rev:
         description: test/trunk revision (the references in results/ are for it; empty = the port's base revision)
         type: string
-        default: '13565'
+        default: '13592'
 
 permissions:
   contents: read

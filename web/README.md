@@ -25,7 +25,7 @@ Opening `index.html` as a file does not work: see *Serving* below.
 | `ooRexx.js` | what a page loads (`<script src="ooRexx.js">`); finds the others next to it |
 | `ooRexx-worker.js` | the Web Worker that runs the interpreter (one per run) |
 | `rexx.js`, `rexx.wasm` | the interpreter |
-| `rexx.data` | the ooRexx image and the extension classes (`js.cls`, `rxsock.cls`, …) |
+| `rexx.data` | the ooRexx image and the extension classes (`js.cls`, `rxsock.cls`, …), and the Rexx Parser and Highlighter (`parser.cls`) |
 | `js-realm.js` | the page's side of `.JSObject` (`.js~page`) |
 | `polygon-clipping.umd.min.js` | used by `ADDRESS JDOR` (MIT license, in the file) |
 | `index.html`, `app.rex` | the example page |
@@ -102,6 +102,9 @@ Current Chrome, Edge, Firefox and Safari all work.
 
 The interpreter files (`ooRexx.js`, `ooRexx-worker.js`, `rexx.js`,
 `rexx.wasm`, `rexx.data`, `js-realm.js`) are ooRexx, under the Common Public
-License 1.0 (`CPLv1.0.txt`). `polygon-clipping.umd.min.js` is under the MIT
+License 1.0 (`CPLv1.0.txt`); in `rexx.data`, the Rexx Parser's Unicode tables
+(`parser/resources/`) are part of the Unicode Character Database, under the
+Unicode License V3, whose text is next to them (`Unicode-LICENSE.txt`).
+`polygon-clipping.umd.min.js` is under the MIT
 license (in the file). `index.html`, `app.rex`, `serve.mjs` and this README
 are under the Apache License 2.0 (`LICENSE-Apache-2.0.txt`).

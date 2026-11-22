@@ -92,10 +92,10 @@ index c110e44..867d25d 100644
  
  
 diff --git a/wasm/README.md b/wasm/README.md
-index 860fafc..5a7c57e 100644
+index d9bceb6..58d60ad 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -257,7 +257,81 @@ off, or changes the strings.
+@@ -263,7 +263,81 @@ off, or changes the strings.
  isolated (see above).  `wasm/tests/web-api.py BIN_WEB` runs assertions over the
  API in headless Chromium (Python Playwright): output, interactive and fixed
  stdin, EOF, stop, threads, files in and out, extension classes, rexxtry,
@@ -178,7 +178,7 @@ index 860fafc..5a7c57e 100644
  
  ## The test suite's API groups (`wasm/build-test.sh`)
  
-@@ -519,7 +593,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
+@@ -525,7 +599,8 @@ fs = .js~require("node:fs")                  -- Node: require, npm modules
    with EOPNOTSUPP under Node); native TCP servers need a WebSocket-facing
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
@@ -189,7 +189,7 @@ index 860fafc..5a7c57e 100644
    in the MEMFS runtime of the CMake build (`bin/`).
  * Maximum recursion depth is set by the JS engine's native stack (internal
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index 331ea1d..392b3fd 100755
+index e2f1d2e..c22b11f 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
 @@ -48,6 +48,7 @@
@@ -214,9 +214,9 @@ index 331ea1d..392b3fd 100755
  for f in web-js extra-packages; do
    "$EMXX" -O3 -std=gnu++11 -pthread -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=0 -DHAVE_CONFIG_H -DOPSYS_EMSCRIPTEN \
      -I"$SRC/api" -I"$SRC/api/platform/unix" -I"$BUILD" -c "$SRC/wasm/$f.cpp" -o "$BUILD/$f.o"
-@@ -73,8 +77,11 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
-            csvStream/csvStream.cls dateparser/dateparser.cls; do
-   PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
+@@ -80,8 +84,11 @@ PRELOAD+=("--preload-file" "$SRC/extensions/parser/parser.cls@/usr/lib/ooRexx/pa
+ for u in highlight rexxcheck fencedcode; do
+   if [[ -f "$BUILD/bin/$u.rex" ]]; then PRELOAD+=("--preload-file" "$BUILD/bin/$u.rex@/usr/lib/ooRexx/$u.rex"); fi
  done
 -# the JavaScript bridge's classes
 -PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls")
@@ -228,7 +228,7 @@ index 331ea1d..392b3fd 100755
  
  # The most the memory may grow to.  Every run creates a shared
  # WebAssembly.Memory, and WebKit charges its declared maximum, not its size,
-@@ -96,13 +103,14 @@ wasm,websocket,mainScriptUrlOrBlob]"
+@@ -103,13 +110,14 @@ wasm,websocket,mainScriptUrlOrBlob]"
  cmd=$(cat "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
  cmd=$(sed -E 's/--preload-file [^ ]+//g; s/-sENVIRONMENT=[^ ]+//' <<<"$cmd")
  cmd=${cmd//-o bin\/rexx.js/-o $OUT\/rexx.js}

@@ -37,12 +37,12 @@ qualify-node-cli.sh and web-api.py.  Not part of the posted RFE.
  create mode 100644 wasm/web/fetch.cls
 
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index 9525374..035e678 100755
+index d8c35ab..2b7a796 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
-@@ -83,7 +83,7 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
-            csvStream/csvStream.cls dateparser/dateparser.cls; do
-   cp "$SRC/extensions/$cls" "$OUT/"
+@@ -91,7 +91,7 @@ rm -rf "$OUT/parser" && cp -R "$SRC/extensions/parser/parser" "$OUT/parser"
+ for u in highlight rexxcheck fencedcode; do
+   if [[ -f "$BUILD/bin/$u.rex" ]]; then cp "$BUILD/bin/$u.rex" "$OUT/"; fi
  done
 -cp "$SRC/wasm/web/js.cls" "$OUT/"
 +cp "$SRC/wasm/web/js.cls" "$SRC/wasm/web/commandwords.cls" "$SRC/wasm/web/fetch.cls" "$OUT/"
@@ -50,10 +50,10 @@ index 9525374..035e678 100755
  launcher() {   # launcher NAME [rexx.js option]
    cat > "$OUT/$1" <<SH
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index 392b3fd..fe3dea4 100755
+index c22b11f..e0c1be3 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
-@@ -79,6 +79,8 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
+@@ -86,6 +86,8 @@ for u in highlight rexxcheck fencedcode; do
  done
  # JDOR's classes; BSF.CLS (also as bsf.cls) lets BSF4ooRexx's JDOR programs run unchanged
  PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls"

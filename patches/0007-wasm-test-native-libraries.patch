@@ -35,10 +35,10 @@ natively (796 tests).  The standard builds are unchanged.
  create mode 100755 wasm/build-test.sh
 
 diff --git a/wasm/README.md b/wasm/README.md
-index 9eecae3..88e8833 100644
+index 059617e..819e086 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -243,6 +243,29 @@ API in headless Chromium (Python Playwright): output, interactive and fixed
+@@ -249,6 +249,29 @@ API in headless Chromium (Python Playwright): output, interactive and fixed
  stdin, EOF, stop, threads, files in and out, extension classes, rexxtry,
  trace and error marks, debug input.
  
@@ -69,7 +69,7 @@ index 9eecae3..88e8833 100644
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index 6be72d9..f153370 100755
+index 688f2d5..64888ae 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
 @@ -45,6 +45,8 @@
@@ -319,7 +319,7 @@ index 0000000..6d39774
 +  EXTRA_OBJECTS="${objects[*]}" "$SRC/wasm/build-web.sh" "$BUILD" "$BUILD/bin-web-test"
 +fi
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index e72bb77..84df5f7 100755
+index bbab862..0e22343 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
 @@ -45,6 +45,8 @@
@@ -331,7 +331,7 @@ index e72bb77..84df5f7 100755
  # Output: OUTDIR/{rexx.js,rexx.wasm,rexx.data,ooRexx.js,ooRexx-worker.js}
  set -euo pipefail
  SRC=$(cd "$(dirname "$0")/.." && pwd)
-@@ -85,7 +87,7 @@ wasm,websocket,mainScriptUrlOrBlob]"
+@@ -92,7 +94,7 @@ wasm,websocket,mainScriptUrlOrBlob]"
  cmd=$(cat "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
  cmd=$(sed -E 's/--preload-file [^ ]+//g; s/-sENVIRONMENT=[^ ]+//' <<<"$cmd")
  cmd=${cmd//-o bin\/rexx.js/-o $OUT\/rexx.js}

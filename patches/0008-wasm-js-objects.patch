@@ -231,10 +231,10 @@ index 45349bc..c110e44 100644
  #endif
      if (package == NULL)
 diff --git a/wasm/README.md b/wasm/README.md
-index 88e8833..3beda3e 100644
+index 819e086..81bcdec 100644
 --- a/wasm/README.md
 +++ b/wasm/README.md
-@@ -266,6 +266,236 @@ from the test suite's directory:
+@@ -272,6 +272,236 @@ from the test suite's directory:
  BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
  ```
  
@@ -471,7 +471,7 @@ index 88e8833..3beda3e 100644
  ## Known limitations / deliberate non-claims
  
  * WebSocket transport (browser, and the MEMFS build under Node): listening
-@@ -274,6 +504,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
+@@ -280,6 +510,8 @@ BUILD_DIR/bin-node-test/rexx testOORexx.rex -R ooRexx/API
    endpoint/proxy; a real WebSocket server can be addressed directly.
  * UDP/datagram semantics are qualified only in the Node command-line build.
  * Browser: ADDRESS commands requiring an OS child process fail closed (RC 127).
@@ -481,7 +481,7 @@ index 88e8833..3beda3e 100644
    CALL / internal function calls / method calls): Node about 7,100 / 5,400 /
    4,000; browser workers about 900 / 700 / 500 in Chromium, 1,300 / 900 / 700
 diff --git a/wasm/build-node.sh b/wasm/build-node.sh
-index f153370..ddb6e69 100755
+index 64888ae..2c7e933 100755
 --- a/wasm/build-node.sh
 +++ b/wasm/build-node.sh
 @@ -40,7 +40,8 @@
@@ -517,16 +517,16 @@ index f153370..ddb6e69 100755
  cp "$BUILD/bin/rexx.img" "$OUT/"
  # rexxtry, as native installs have it next to rexx (rexx rexxtry)
  cp "$SRC/samples/rexxtry.rex" "$OUT/"
-@@ -72,6 +82,7 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
-            csvStream/csvStream.cls dateparser/dateparser.cls; do
-   cp "$SRC/extensions/$cls" "$OUT/"
+@@ -80,6 +90,7 @@ rm -rf "$OUT/parser" && cp -R "$SRC/extensions/parser/parser" "$OUT/parser"
+ for u in highlight rexxcheck fencedcode; do
+   if [[ -f "$BUILD/bin/$u.rex" ]]; then cp "$BUILD/bin/$u.rex" "$OUT/"; fi
  done
 +cp "$SRC/wasm/web/js.cls" "$OUT/"
  
  launcher() {   # launcher NAME [rexx.js option]
    cat > "$OUT/$1" <<SH
 diff --git a/wasm/build-web.sh b/wasm/build-web.sh
-index 84df5f7..331ea1d 100755
+index 0e22343..e2f1d2e 100755
 --- a/wasm/build-web.sh
 +++ b/wasm/build-web.sh
 @@ -47,7 +47,8 @@
@@ -552,16 +552,16 @@ index 84df5f7..331ea1d 100755
  
  # the portable extension classes (not ncurses: no native library here)
  PRELOAD=()
-@@ -66,6 +73,8 @@ for cls in rxsock/socket.cls rxsock/streamsocket.cls rxsock/mime.cls rxsock/smtp
-            csvStream/csvStream.cls dateparser/dateparser.cls; do
-   PRELOAD+=("--preload-file" "$SRC/extensions/$cls@/usr/lib/ooRexx/$(basename "$cls")")
+@@ -73,6 +80,8 @@ PRELOAD+=("--preload-file" "$SRC/extensions/parser/parser.cls@/usr/lib/ooRexx/pa
+ for u in highlight rexxcheck fencedcode; do
+   if [[ -f "$BUILD/bin/$u.rex" ]]; then PRELOAD+=("--preload-file" "$BUILD/bin/$u.rex@/usr/lib/ooRexx/$u.rex"); fi
  done
 +# the JavaScript bridge's classes
 +PRELOAD+=("--preload-file" "$SRC/wasm/web/js.cls@/usr/lib/ooRexx/js.cls")
  
  # The most the memory may grow to.  Every run creates a shared
  # WebAssembly.Memory, and WebKit charges its declared maximum, not its size,
-@@ -87,13 +96,13 @@ wasm,websocket,mainScriptUrlOrBlob]"
+@@ -94,13 +103,13 @@ wasm,websocket,mainScriptUrlOrBlob]"
  cmd=$(cat "$BUILD/CMakeFiles/rexx_exe.dir/link.txt")
  cmd=$(sed -E 's/--preload-file [^ ]+//g; s/-sENVIRONMENT=[^ ]+//' <<<"$cmd")
  cmd=${cmd//-o bin\/rexx.js/-o $OUT\/rexx.js}

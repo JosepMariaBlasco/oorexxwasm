@@ -75,7 +75,7 @@ is under #if defined(ORX_WASM); native builds are unchanged.
  create mode 100644 wasm/rxsubcom-main.cpp
 
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index b0bba92..a996b32 100644
+index afe6c9d..b31c1d4 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
 @@ -177,13 +177,26 @@ set (VERSION_INFO "-version-info ${ORX_CURRENT}:${ORX_REVISION}:${ORX_AGE}")
@@ -135,7 +135,7 @@ index b0bba92..a996b32 100644
  
    message(STATUS "-- determine available libraries --")
    set(CMAKE_REQUIRED_LIBRARIES ${CMAKE_DL_LIBS})
-@@ -675,9 +693,25 @@ else ()
+@@ -676,9 +694,25 @@ else ()
              ${build_rexxapi_common_platform_dir}/SysCSStream.cpp)
  endif ()
  # Library definition
@@ -164,7 +164,7 @@ index b0bba92..a996b32 100644
  # Include file definition
  target_include_directories(rexxapi PUBLIC
              ${build_rexxapi_client_dir}
-@@ -954,9 +988,36 @@ else ()
+@@ -955,9 +989,36 @@ else ()
  endif ()
  
  # Library definition
@@ -204,7 +204,7 @@ index b0bba92..a996b32 100644
  
  set (core_platform_classes ${build_interpreter_platform_dir}/PlatformObjects.orx)
  # Include file definition
-@@ -1009,6 +1070,14 @@ endif ()
+@@ -1010,6 +1071,14 @@ endif ()
  # have a rexx library target
  add_executable(rexx_exe ${build_utilities_rexx_dir}/rexx.cpp
                          ${platform_rexx_exe_sources})
@@ -219,7 +219,7 @@ index b0bba92..a996b32 100644
  # This allows the executable to have the same name as the library.
  SET_TARGET_PROPERTIES(rexx_exe
    PROPERTIES OUTPUT_NAME rexx)
-@@ -1033,7 +1102,21 @@ target_include_directories(rexx_exe PUBLIC
+@@ -1034,7 +1103,21 @@ target_include_directories(rexx_exe PUBLIC
              ${build_api_platform_dir}
              ${build_messages_dir})
  # Extra link library definitions
@@ -242,7 +242,7 @@ index b0bba92..a996b32 100644
  # Merge in extra manifestinformation on Windows
  if (WIN32)
  add_custom_command(TARGET rexx_exe POST_BUILD
-@@ -1063,7 +1146,17 @@ target_include_directories(rexximage PUBLIC
+@@ -1064,7 +1147,17 @@ target_include_directories(rexximage PUBLIC
              ${build_api_dir}
              ${build_api_platform_dir})
  # Extra link library definitions
@@ -261,7 +261,7 @@ index b0bba92..a996b32 100644
  
  # handy macro for copying files from the source into the build directory.
  macro (copy_build_file name source)
-@@ -1110,10 +1203,17 @@ if (WIN32)
+@@ -1111,10 +1204,17 @@ if (WIN32)
  endif ()
  
  # Build the rexx.img file
@@ -283,7 +283,7 @@ index b0bba92..a996b32 100644
  
  add_custom_target(rexx_img ALL DEPENDS ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img)
  install(PROGRAMS ${ORX_IMAGE_OUTPUT_LOCATION}/rexx.img COMPONENT Core DESTINATION ${INSTALL_LIB_DIR} PERMISSIONS OWNER_EXECUTE GROUP_EXECUTE WORLD_EXECUTE OWNER_WRITE OWNER_READ GROUP_READ WORLD_READ)
-@@ -1315,6 +1415,9 @@ set_target_properties(rxmath PROPERTIES SOVERSION ${ORX_API_LEVEL})
+@@ -1316,6 +1416,9 @@ set_target_properties(rxmath PROPERTIES SOVERSION ${ORX_API_LEVEL})
  create_install_symlink(rxmath)
  
  #################### librxsock.so ################
@@ -293,7 +293,7 @@ index b0bba92..a996b32 100644
  # additional source files required by specific platforms
  if (WIN32)
     set (platform_rxsock_sources ${build_platform_dir}/verinfo.rc)
-@@ -1330,6 +1433,7 @@ install(TARGETS rxsock RUNTIME COMPONENT Core DESTINATION ${INSTALL_LIB_DIR}
+@@ -1331,6 +1434,7 @@ install(TARGETS rxsock RUNTIME COMPONENT Core DESTINATION ${INSTALL_LIB_DIR}
                         LIBRARY DESTINATION ${INSTALL_LIB_DIR} COMPONENT Core)
  set_target_properties(rxsock PROPERTIES SOVERSION ${ORX_API_LEVEL})
  create_install_symlink(rxsock)
@@ -301,7 +301,7 @@ index b0bba92..a996b32 100644
  
  
  #################### librxregexp.so ################
-@@ -1396,7 +1500,7 @@ install(TARGETS rxunixsys RUNTIME DESTINATION ${INSTALL_LIB_DIR}
+@@ -1397,7 +1501,7 @@ install(TARGETS rxunixsys RUNTIME DESTINATION ${INSTALL_LIB_DIR}
  endif ()
  
  #################### liborxncurses.so ################
