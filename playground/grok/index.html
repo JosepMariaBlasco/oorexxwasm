@@ -230,11 +230,10 @@ footer { padding: 0 22px 14px; font-size: 13px; color: var(--soft); }
 "use strict";
 (() => {
   const PROGRAM = "grok-live.rex";
-  const RXPATH = "/usr/lib/ooRexx:/usr/lib/rexx-parser/bin";
+  const RXPATH = "/usr/lib/ooRexx";
   const $ = (id) => document.getElementById(id);
   const codeBox = $("code"), runBtn = $("run"), state = $("state"), clock = $("clock");
   const out = $("out"), stage = $("stage"), canvas = $("canvas");
-  const enc = new TextEncoder();
   const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
 
   // A one-shot highlighter: the Rexx Parser's Highlighter, run once on the program.
@@ -250,7 +249,7 @@ footer { padding: 0 22px 14px; font-size: 13px; color: var(--soft); }
     'html = .Highlighter~new(file, source, options.)~parse',
     'If html~isA(.Array) Then html = html~makeString("L", "0a"x)',
     'Call CharOut , html',
-    '::Requires "Rexx.Parser.cls"',
+    '::Requires "parser.cls"',
     '::Requires "parser/Highlighter.cls"',
   ].join("\n");
 
@@ -298,11 +297,7 @@ footer { padding: 0 22px 14px; font-size: 13px; color: var(--soft); }
 
   async function highlight() {
     $("hlnote").textContent = "highlighting, in Rexx…";
-    const r = await fetch("../rexx-parser.json");
-    if (!r.ok) throw new Error("rexx-parser.json: HTTP " + r.status);
-    const files = {};
-    const j = await r.json();
-    for (const k in j) files[k] = enc.encode(j[k]);
+    const files = {};                   // the Rexx Parser comes with ooRexx (rexx.data)
     files["/tmp/hl/hl.rex"] = HL;
     files["/tmp/hl/" + PROGRAM] = source;
     let html = "";

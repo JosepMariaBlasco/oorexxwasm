@@ -24,9 +24,6 @@ Workbench, a separate page.
   with COEP `require-corp` third-party fonts may be blocked.
   Mono has real bold (700) and italic (400, 700) faces for the highlighted
   editor (a synthetic bold would change character widths in some browsers).
-- `rexx-parser/` — the part of the Rexx Parser (J. M. Blasco, Apache 2.0) the
-  playground uses, vendored by `import-rexx-parser.sh RELEASE.zip` (see the
-  script for how the set was chosen). `VERSION` says which release.
 - `rexx-parser-support/hlserver.rex` — the editor's highlighting server.
 - Debug uses the repository's `debugger/` (Dom Wise's ooRexx debugger and
   its web front end; see `debugger/README.md`), which `build-site.sh` copies
@@ -152,13 +149,14 @@ in headless Chromium.
   breakpoint (also before Debug; kept per file for the page's life). The
   session ends, and the run with it, when the debugger says it could open
   another program (`canopensource`), i.e. after the program ends or Exit.
-- Rexx Parser: `build-site.sh` writes `rexx-parser.json` ({path:
-  text}, ~3.9 MB, ~0.55 MB deflated) which the page fetches once and writes into
-  every run under `/usr/lib/rexx-parser/` with `REXX_PATH=/usr/lib/ooRexx:
-  /usr/lib/rexx-parser/bin`. So programs can `::requires "Rexx.Parser.cls"`,
-  `"parser/Highlighter.cls"`, or `call highlight "-a file"` / `call elements`.
-  Sample: `samples/parser.rex`. A Run pressed before the file has arrived
-  waits for it ("loading the Rexx Parser…"), so every run has the Parser.
+- Rexx Parser: it comes with ooRexx (RFE #878) and is in `rexx.data`
+  (`/usr/lib/ooRexx/parser.cls` and `parser/`, with the utilities
+  `highlight.rex`, `rexxcheck.rex` and `fencedcode.rex`), so programs can
+  `::requires "parser.cls"`, `"parser/Highlighter.cls"`, or
+  `call highlight "-a file"`. Sample: `samples/parser.rex`. `build-site.sh`
+  copies its style sheets to `rexx-parser/` (the editor, the style chooser)
+  and writes `rexx-parser.json` ({path: text}), which holds only the
+  editor's highlighting server, written into every run.
 - Highlighted editor: a run that stays up for the page's life runs
   `hlserver.rex` (parser loaded once) and answers each "id count" + lines
   request on stdin with the Highlighter's HTML (or `ERR line code text`). The

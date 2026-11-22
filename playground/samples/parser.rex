@@ -1,6 +1,6 @@
-/* The Rexx Parser, by Josep Maria Blasco, comes preloaded:                  */
-/* ::requires "Rexx.Parser.cls" (and "parser/Highlighter.cls" to highlight), */
-/* or call its utilities: call highlight "-a prog.rex", call elements ...    */
+/* The Rexx Parser, by Josep Maria Blasco, comes with ooRexx:               */
+/* ::requires "parser.cls" (and "parser/Highlighter.cls" to highlight),     */
+/* or call its utilities: call highlight "-a prog.rex", call rexxcheck ...  */
 /* Docs: https://rexx.epbcn.com/rexx-parser/                                 */
 
 source = .context~package~source          -- this very program
@@ -27,5 +27,5 @@ Do kw Over keywords~uniqueIndexes~sort
 End
 say
 
-::Requires "Rexx.Parser.cls"
+::Requires "parser.cls"
 ::Requires "parser/Highlighter.cls"

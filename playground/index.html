@@ -319,7 +319,7 @@ footer a { color: var(--accent); }
       <span class="tag state" id="rstate" data-state="loading">runtime: loading…</span>
       <button class="iconbtn" id="helpbtn" type="button" title="How the playground works (F1)">? Help</button>
     </div>
-    <p class="lede">Write ooRexx and press Run. This is the real ooRexx interpreter, the same C++ code as the one you install, compiled to WebAssembly and running in your browser, threads included. Standard input is interactive: when a program reads, type in the console. Your files stay in your browser: upload them (or drop them on the page, or link a folder) to run them or <code>::requires</code> them. The extension classes (<code>json.cls</code>, <code>rxregexp.cls</code>, <code>csvStream.cls</code>…) and the <a href="https://rexx.epbcn.com/rexx-parser/" target="_blank" rel="noopener">Rexx Parser</a> (<code>Rexx.Parser.cls</code>, which also highlights and checks the program as you type) are preloaded. There is no shell, but a program can use JavaScript and the page, as objects (<code>.JSObject</code>) or as commands (<code>ADDRESS DOM</code>, <code>ADDRESS FETCH</code>), and <code>ADDRESS JDOR</code> draws: JDOR, Rony G. Flatscher's drawing commands from BSF4ooRexx, on the browser's canvas (see the <i>JavaScript &amp; the page</i>, <i>The page, the classic way</i> and <i>Drawing</i> samples). <b>Debug</b> runs the program in <a href="https://sourceforge.net/p/oorexxdebugger/" target="_blank" rel="noopener">Dom Wise's ooRexx debugger</a>: step through it, watch its variables and the stack, and click a line number to set a breakpoint.</p>
+    <p class="lede">Write ooRexx and press Run. This is the real ooRexx interpreter, the same C++ code as the one you install, compiled to WebAssembly and running in your browser, threads included. Standard input is interactive: when a program reads, type in the console. Your files stay in your browser: upload them (or drop them on the page, or link a folder) to run them or <code>::requires</code> them. The extension classes (<code>json.cls</code>, <code>rxregexp.cls</code>, <code>csvStream.cls</code>…) and the <a href="https://rexx.epbcn.com/rexx-parser/" target="_blank" rel="noopener">Rexx Parser</a> (<code>parser.cls</code>, which also highlights and checks the program as you type) are preloaded. There is no shell, but a program can use JavaScript and the page, as objects (<code>.JSObject</code>) or as commands (<code>ADDRESS DOM</code>, <code>ADDRESS FETCH</code>), and <code>ADDRESS JDOR</code> draws: JDOR, Rony G. Flatscher's drawing commands from BSF4ooRexx, on the browser's canvas (see the <i>JavaScript &amp; the page</i>, <i>The page, the classic way</i> and <i>Drawing</i> samples). <b>Debug</b> runs the program in <a href="https://sourceforge.net/p/oorexxdebugger/" target="_blank" rel="noopener">Dom Wise's ooRexx debugger</a>: step through it, watch its variables and the stack, and click a line number to set a breakpoint.</p>
     <noscript><p class="noscript">The playground needs JavaScript.</p></noscript>
     <p class="fatal" id="fatal" hidden></p>
   </header>
@@ -409,7 +409,7 @@ footer a { color: var(--accent); }
     <p>Each run starts a fresh interpreter in its own Web Worker, and every ooRexx thread (<code>START</code>, early <code>REPLY</code>, <code>.Alarm</code>) is a further worker sharing its memory, so the page stays responsive and Stop always works. When a program reads standard input, its thread waits on shared memory until you send a line: <code>PULL</code>, <code>LINEIN</code>, <code>CHARIN</code>, <code>TRACE ?</code> and <code>rexxtry</code> work as in a terminal. Ctrl+D sends end of file.</p>
     <p>Your files live in <code>/home/rexx</code>, the current directory of every run: what you upload or create there, and what a program writes there, is kept in this browser, on this device, until you delete it. Folders keep their structure (Folder, a dropped folder, or an uploaded .zip), so relative <code>::requires</code> work; Download all gives everything back as a .zip. In Chrome and Edge, Link folder mounts a folder of your computer as <code>/home/rexx/NAME/</code>, read &amp; write or read only: edit there with your own tools, run here. Click a file to edit it and Run to run it; any program can <code>::requires</code> it or read it. In the console, &uarr; and &darr; recall earlier lines. The console understands ANSI escape sequences for colors and styles (<code>'1b'x || '[31m'</code>…; see the ANSI colors sample). Sockets reach only WebSocket servers, and there is no shell, so <code>ADDRESS</code> commands for one fail (<code>ADDRESS DOM</code>, <code>FETCH</code> and <code>JDOR</code> work).</p>
     <p>The same interpreter runs the Rexx of a web page of your own, in <code>&lt;script type="text/rexx"&gt;</code> elements: see the <a href="examples/">examples</a>, each one small, complete, and ready to debug.</p>
-    <p>WebAssembly port started by Tom Dyer; threads, RexxAPI, browser runtime and playground by Josep Maria Blasco. The <a href="https://rexx.epbcn.com/rexx-parser/" target="_blank" rel="noopener">Rexx Parser</a> and its Highlighter are by Josep Maria Blasco (Apache 2.0): <code>::requires "Rexx.Parser.cls"</code>, <code>"parser/Highlighter.cls"</code>, or <code>call highlight "-a prog.rex"</code>. Debug is <a href="https://sourceforge.net/p/oorexxdebugger/" target="_blank" rel="noopener">Dom Wise's ooRexx debugger</a> (MIT), with a front end for the page.</p>
+    <p>WebAssembly port started by Tom Dyer; threads, RexxAPI, browser runtime and playground by Josep Maria Blasco. The <a href="https://rexx.epbcn.com/rexx-parser/" target="_blank" rel="noopener">Rexx Parser</a> and its Highlighter, by Josep Maria Blasco, come with ooRexx: <code>::requires "parser.cls"</code>, <code>"parser/Highlighter.cls"</code>, or <code>call highlight "-a prog.rex"</code>. Debug is <a href="https://sourceforge.net/p/oorexxdebugger/" target="_blank" rel="noopener">Dom Wise's ooRexx debugger</a> (MIT), with a front end for the page.</p>
     <p>ooRexx is developed by the <a href="https://www.rexxla.org/" target="_blank" rel="noopener">Rexx Language Association</a>; see <a href="https://www.oorexx.org/" target="_blank" rel="noopener">oorexx.org</a>. <span id="build"></span></p>
   </footer>
 </div>
@@ -459,7 +459,7 @@ footer a { color: var(--accent); }
       <li>Any program can <code>::requires</code> or read these files, with relative paths as usual.</li>
     </ul>
     <h3>Libraries</h3>
-    <p>Preloaded: the extension classes (<code>json.cls</code>, <code>rxregexp.cls</code>, <code>csvStream.cls</code>, <code>yaml.cls</code>, <code>dateparser.cls</code>, <code>socket.cls</code>, <code>streamsocket.cls</code>, <code>mime.cls</code>, <code>smtp.cls</code>, <code>rxftp.cls</code>) and the Rexx Parser: <code>::requires "Rexx.Parser.cls"</code>, <code>"parser/Highlighter.cls"</code>, or <code>call highlight "-a prog.rex"</code> and <code>call elements "prog.rex"</code> (see the <i>Rexx Parser</i> sample).</p>
+    <p>Preloaded: the extension classes (<code>json.cls</code>, <code>rxregexp.cls</code>, <code>csvStream.cls</code>, <code>yaml.cls</code>, <code>dateparser.cls</code>, <code>socket.cls</code>, <code>streamsocket.cls</code>, <code>mime.cls</code>, <code>smtp.cls</code>, <code>rxftp.cls</code>) and the Rexx Parser, which comes with ooRexx: <code>::requires "parser.cls"</code>, <code>"parser/Highlighter.cls"</code>, or <code>call highlight "-a prog.rex"</code> and <code>call rexxcheck "prog.rex"</code> (see the <i>Rexx Parser</i> sample).</p>
     <h3>Drawing (JDOR)</h3>
     <p><code>ADDRESS JDOR</code> draws: JDOR, the drawing command handler of BSF4ooRexx by Rony G. Flatscher, here on the browser's canvas. <code>::requires "jdor.cls"</code> sets up the JDOR environment, an image and its window, and <code>address jdor</code> selects it (in each routine, as for any environment: the default one, the shell, does not exist here); <code>call addJdorHandler "NAME"</code> sets up another one. Then commands like <code>newImage 300 200</code>, <code>color red</code>, <code>moveTo 10 10</code>, <code>fillRect 100 50</code>, <code>winShow</code> draw, as documented in BSF4ooRexx's <i>JDOR Synopsis</i>. There is no Java here: objects that commands return say what they are (<code>a JDOR Image (#99)</code>), and errors read <code>JDOR (web): ...</code>. The <i>Drawing (JDOR)</i> samples are Rony's, adapted to <code>::requires "jdor.cls"</code> (instead of BSF4ooRexx); programs written for BSF4ooRexx also run unchanged, through this build's small <code>BSF.CLS</code> (just what JDOR programs use). Windows float over the page: drag them by the title bar (frameless ones anywhere), close them with &times; (on a frameless one it shows when the pointer is over it); they stay until the next run. <code>loadImage</code> and <code>saveImage</code> use your files; <code>winScreenSize</code> is the size of this page. Printing and the clipboard depend on what the browser allows.</p>
     <h3>JavaScript and the page</h3>
@@ -502,13 +502,11 @@ footer a { color: var(--accent); }
     if (b.length > MAX_EDIT || b.includes(0)) return null;
     try { return utf8.decode(b); } catch { return null; }
   };
-  const RXPATH = "/usr/lib/ooRexx:/usr/lib/rexx-parser/bin";
-  let parserFiles = null;           // the Rexx Parser, written into every run (rexx-parser.json)
+  const RXPATH = "/usr/lib/ooRexx";
+  let parserFiles = null;           // the editor's highlighting server (rexx-parser.json); the Rexx Parser is in rexx.data
   const parserLoad = fetch("rexx-parser.json").then((r) => r.ok ? r.json() : Promise.reject(new Error(r.status)))
     .then((j) => { const f = {}; for (const k in j) f[k] = enc.encode(j[k]); parserFiles = f; })
     .catch(() => { parserFiles = null; });
-  let parserSettled = false;        // a run started before it arrives waits for it
-  parserLoad.finally(() => { parserSettled = true; });
   const history = [];               // lines sent from the console, oldest first
   let hpos = 0, hdraft = "";
 
@@ -1637,13 +1635,6 @@ footer a { color: var(--accent); }
       }
       if (run) return;
     }
-    if (!parserSettled) {               // every run gets the Rexx Parser: wait for it
-      starting = true;
-      statusEl.innerHTML = "<span>loading the Rexx Parser…</span>";
-      setRunning(true);
-      try { await parserLoad; } finally { starting = false; }
-      if (run) return;
-    }
     if (mounts.size) {
       starting = true;
       try { await diskPull(); } finally { starting = false; }
@@ -1695,7 +1686,7 @@ footer a { color: var(--accent); }
     for (const p of document.querySelectorAll(".orx-dom-panel")) p.remove();   // ADDRESS DOM's panels
     const thisRunRef = {};
     run = thisRunRef.run = rexx.run({
-      args, files: Object.assign({}, parserFiles || {}, debug ? debugFiles : {}, Object.fromEntries(injected)), cwd: HOME,
+      args, files: Object.assign({}, debug ? debugFiles : {}, Object.fromEntries(injected)), cwd: HOME,
       env: rexxPath(),
       stdin: interactive ? undefined : (fixed.endsWith("\n") ? fixed : fixed + "\n"),
       onOut: (t, kind) => term(t, "", kind),
@@ -1860,8 +1851,8 @@ footer a { color: var(--accent); }
   // them), then the preloaded libraries
   function rexxPath() {
     const own = [...mounts.keys()].map((n) => HOME + n);
-    if (!own.length && !parserFiles) return undefined;
-    return { REXX_PATH: own.concat(parserFiles ? [RXPATH] : ["/usr/lib/ooRexx"]).join(":") };
+    if (!own.length) return undefined;
+    return { REXX_PATH: own.concat([RXPATH]).join(":") };
   }
 
   function stop() { if (run) run.stop(); }

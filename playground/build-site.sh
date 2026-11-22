@@ -34,15 +34,12 @@ cp -R "$HERE/examples" "$OUT/examples"
 mkdir -p "$OUT/src"
 cp "$OOREXX"/wasm/web/dom.cls "$OOREXX"/wasm/web/fetch.cls "$OOREXX"/wasm/web/commandwords.cls "$OUT/src/"
 cp "$HERE/src-htaccess" "$OUT/src/.htaccess"
-# the Rexx Parser (vendored subset, import-rexx-parser.sh): CSS for the editor
+# the Rexx Parser comes with ooRexx (parser.cls, in rexx.data): its style
+# sheets, for the editor and the style chooser
 mkdir -p "$OUT/rexx-parser"
-# every style for the style chooser, as on the Parser's site ("test*" are dev fixtures)
-for f in "$HERE"/rexx-parser/css/rexx-*.css; do
-  case "$(basename "$f")" in rexx-test*) ;; *) cp "$f" "$OUT/rexx-parser/" ;; esac
-done
-cp "$HERE"/rexx-parser/LICENSE "$HERE"/rexx-parser/NOTICE "$OUT/rexx-parser/"
+cp "$OOREXX"/extensions/parser/parser/css/rexx-*.css "$OUT/rexx-parser/"
 
-python3 - "$HERE" "$OUT" "$OOREXX" "${OOREXX_REV:-13564}" <<'PY'
+python3 - "$HERE" "$OUT" "$OOREXX" "${OOREXX_REV:-13591}" <<'PY'
 import json, sys, datetime, os
 here, out, oorexx, rev = sys.argv[1:5]
 m = json.load(open(f"{here}/samples.json"))
@@ -69,22 +66,16 @@ for s in m["samples"]:
 m["build"] = (f"This build: ooRexx 5.3.0 (SVN r{rev} with the WebAssembly patches), "
               f"Emscripten 6.0.12, {datetime.date.today().isoformat()}.")
 
-# rexx-parser.json: {path: text}, written into every run under /usr/lib/rexx-parser
-# (REXX_PATH gets /usr/lib/rexx-parser/bin), plus the editor's highlighting server
-rxp = f"{here}/rexx-parser"
-bundle = {}
-for d, _, fs in os.walk(rxp):
-    for f in sorted(fs):
-        rel = os.path.relpath(f"{d}/{f}", rxp)
-        if rel in ("VERSION",): continue
-        bundle["/usr/lib/rexx-parser/" + rel] = read(f"{d}/{f}")
-bundle["/usr/lib/rexx-parser/playground/hlserver.rex"] = read(f"{here}/rexx-parser-support/hlserver.rex")
+# rexx-parser.json: {path: text}, written into every run: the editor's
+# highlighting server (the Rexx Parser itself is in rexx.data, /usr/lib/ooRexx)
+bundle = {"/usr/lib/rexx-parser/playground/hlserver.rex": read(f"{here}/rexx-parser-support/hlserver.rex")}
 json.dump(bundle, open(f"{out}/rexx-parser.json", "w", encoding="utf-8"), ensure_ascii=False, separators=(",", ":"))
-ver = open(f"{rxp}/VERSION").readline().strip().replace("current release is ", "")
+import re
+ver = re.search(r'::Constant version "([^"]+)"', read(f"{oorexx}/extensions/parser/parser.cls")).group(1)
 m["build"] += f" Rexx Parser {ver}."
 m["parser"] = ver
-m["styles"] = sorted(f[5:-4] for f in os.listdir(f"{rxp}/css")
-                     if f.startswith("rexx-") and f.endswith(".css") and not f[5:].startswith("test"))
+css = f"{oorexx}/extensions/parser/parser/css"
+m["styles"] = sorted(f[5:-4] for f in os.listdir(css) if f.startswith("rexx-") and f.endswith(".css"))
 blob = json.dumps(m, ensure_ascii=False).replace("</", "<\\/")
 page = open(f"{here}/index.html", encoding="utf-8").read()
 assert "/*SAMPLES*/" in page

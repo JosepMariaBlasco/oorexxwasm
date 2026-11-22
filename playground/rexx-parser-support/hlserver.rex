@@ -9,8 +9,8 @@
 /* followed by a line '1e'x"id OK", or by '1e'x"id ERR line code text" when   */
 /* the program has a syntax error (nothing else is written then).             */
 /*                                                                            */
-/* Uses the Rexx Parser by Josep Maria Blasco (Apache 2.0),                   */
-/* https://rexx.epbcn.com/rexx-parser/                                        */
+/* Uses the Rexx Parser and Highlighter that come with ooRexx (parser.cls,   */
+/* RFE #878), by Josep Maria Blasco.                                          */
 
 rs = '1e'x
 Do Forever
@@ -40,13 +40,12 @@ Exit
     html = .Highlighter~new("program", source, options.)~parse
     If html~isA(.Array) Then html = html~makeString("L", "0a"x)
     Return "OK" html || "0a"x
-  Catch co = Syntax
-    extra = co~additional~lastItem
-    line  = ""
-    If extra~isA(.Directory) Then line = extra~position
-    Return "ERR" line co~code Ansi.ErrorText(co~code, co~additional)
+  Catch co = User Rexx.Parser.Error -- an error in the program, found by the parser
+    e = co~additional
+    Return "ERR" e~line e~code e~message
+  Catch co = Syntax                 -- anything else
+    Return "ERR" "" co~code co~message
   End
 
-::Requires "Rexx.Parser.cls"
+::Requires "parser.cls"
 ::Requires "parser/Highlighter.cls"
-::Requires "parser/ANSI.ErrorText.cls"
